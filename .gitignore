@@ -41,3 +41,18 @@ example
 # generated native folders
 /ios
 /android
+
+# Dictionary (se regenera con: npm run build:dictionary)
+assets/cedict/
+
+# Generated constants (regenerable con: npm run build:dictionary)
+constants/pinyin-syllables.ts
+
+# IDEs
+.vscode/
+.idea/
+
+# AI tools
+.claude/
+.gemini/
+.agents/
