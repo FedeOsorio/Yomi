@@ -6,37 +6,73 @@ import { bestSegmentation } from './pinyin-segmenter';
 
 export type DictionaryEntry = typeof dictionaryEntries.$inferSelect;
 
+export interface SyllableGroup {
+  syllable: string;
+  candidates: DictionaryEntry[];
+}
+
 export interface SearchResult {
-  entries: DictionaryEntry[];
+  exactMatches: DictionaryEntry[];
+  syllableGroups: SyllableGroup[];
   segmentation?: string[];
   error?: string;
 }
 
 export function searchByPinyin(rawInput: string): SearchResult {
-  if (!rawInput.trim()) return { entries: [] };
+  if (!rawInput.trim()) {
+    return { exactMatches: [], syllableGroups: [] };
+  }
   
   const searchKey = toSearchKey(rawInput);
   
-  const entries = db.select().from(dictionaryEntries).where(eq(dictionaryEntries.pinyinKey, searchKey)).all();
+  // 1. Buscar coincidencias exactas
+  const exactMatches = db
+    .select()
+    .from(dictionaryEntries)
+    .where(eq(dictionaryEntries.pinyinKey, searchKey))
+    .all();
   
-  if (entries.length > 0) {
-    return { entries };
+  if (exactMatches.length > 0) {
+    return { exactMatches, syllableGroups: [] };
   }
 
+  // 2. Si no hay coincidencias exactas, segmentar el pinyin en sílabas
   const segmentation = bestSegmentation(searchKey);
   
   if (segmentation.length === 0) {
-    return { entries: [], error: 'Pinyin no reconocido' };
+    return { exactMatches: [], syllableGroups: [], error: 'Pinyin no reconocido' };
   }
   
-  const segmentedEntries: DictionaryEntry[] = [];
+  // 3. Obtener candidatos de 1 solo carácter para cada sílaba (Deduplicados por caracter simplificado)
+  const syllableGroups: SyllableGroup[] = [];
+  
   for (const syllable of segmentation) {
-    const syllableEntries = db.select().from(dictionaryEntries).where(eq(dictionaryEntries.pinyinKey, syllable)).all();
-    segmentedEntries.push(...syllableEntries);
+    const rawCandidates = db
+      .select()
+      .from(dictionaryEntries)
+      .where(eq(dictionaryEntries.pinyinKey, syllable))
+      .all()
+      .filter((entry) => entry.simplified.length === 1);
+
+    // Deduplicar caracteres repetidos
+    const seen = new Set<string>();
+    const uniqueCandidates: DictionaryEntry[] = [];
+    for (const cand of rawCandidates) {
+      if (!seen.has(cand.simplified)) {
+        seen.add(cand.simplified);
+        uniqueCandidates.push(cand);
+      }
+    }
+
+    syllableGroups.push({
+      syllable,
+      candidates: uniqueCandidates,
+    });
   }
   
   return { 
-    entries: segmentedEntries, 
+    exactMatches: [], 
+    syllableGroups, 
     segmentation 
   };
 }

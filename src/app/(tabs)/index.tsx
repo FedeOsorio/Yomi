@@ -1,179 +1,202 @@
-import React, { useState } from 'react';
-import { View, TextInput, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator } from 'react-native';
-import { searchByPinyin, SearchResult, DictionaryEntry } from '../../../lib/search-engine';
-import { useRouter } from 'expo-router';
-import { Colors, Spacing, Typography, Shadows } from '../../constants/theme';
 import { Ionicons } from '@expo/vector-icons';
-import { saveWords } from '../../../lib/word-service';
-import { getDefaultDeckId } from '../../../lib/deck-service';
+import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useState } from 'react';
+import { FlatList, Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { getDecks } from '../../../lib/deck-service';
+import { Colors, Shadows, Spacing, Typography } from '../../constants/theme';
 
-export default function SearchScreen() {
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<SearchResult | null>(null);
-  const [isSearching, setIsSearching] = useState(false);
+export default function HomeScreen() {
+  const [decks, setDecks] = useState<{ id: string; name: string }[]>([]);
+  const [menuVisible, setMenuVisible] = useState(false);
   const router = useRouter();
 
-  const handleSearch = async (text: string) => {
-    setQuery(text);
-    if (text.trim() === '') {
-      setResults(null);
-      return;
-    }
-    setIsSearching(true);
-    const res = await searchByPinyin(text);
-    setResults(res);
-    setIsSearching(false);
+  const fetchDecks = async () => {
+    const d = await getDecks();
+    setDecks(d);
   };
 
-  const handleQuickSave = async (entry: DictionaryEntry) => {
-    const deckId = await getDefaultDeckId();
-    await saveWords(deckId, [entry]);
-    // TODO: Show toast
+  useFocusEffect(
+    React.useCallback(() => {
+      fetchDecks();
+    }, [])
+  );
+
+  const handleOpenSearch = () => {
+    setMenuVisible(false);
+    router.push('/search');
   };
 
   return (
     <View style={styles.container}>
-      <View style={styles.searchHeader}>
-        <Text style={styles.title}>Yomi</Text>
-        <View style={styles.inputContainer}>
-          <Ionicons name="search" size={20} color={Colors.textMuted} style={styles.searchIcon} />
-          <TextInput
-            style={styles.input}
-            placeholder="Escribí pinyin (ej. xihuan)"
-            placeholderTextColor={Colors.textMuted}
-            value={query}
-            onChangeText={handleSearch}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          {isSearching && <ActivityIndicator color={Colors.primary} style={styles.loader} />}
-        </View>
-      </View>
+      <Text style={styles.title}>Mis Colecciones</Text>
 
-      {results?.error && <Text style={styles.error}>{results.error}</Text>}
-      {results?.segmentation && (
-        <View style={styles.infoBox}>
-          <Ionicons name="information-circle" size={16} color={Colors.primary} />
-          <Text style={styles.infoText}>
-            Detectado: <Text style={{fontWeight: 'bold'}}>{results.segmentation.join(' + ')}</Text>
-          </Text>
-          <TouchableOpacity 
-            style={styles.pickerBtn}
-            onPress={() => router.push({ pathname: '/search/picker', params: { candidates: JSON.stringify(results.entries) } })}
-          >
-            <Text style={styles.pickerBtnText}>Seleccionar...</Text>
-          </TouchableOpacity>
+      {decks.length === 0 ? (
+        <View style={styles.emptyContainer}>
+          <Ionicons name="albums-outline" size={64} color={Colors.textMuted} />
+          <Text style={styles.emptyText}>No tienes mazos creados aún.</Text>
+          <Text style={styles.emptySubtext}>Toca el botón + para buscar o agregar palabras.</Text>
         </View>
+      ) : (
+        <FlatList
+          data={decks}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={{ paddingBottom: 100 }}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              style={styles.card}
+              activeOpacity={0.7}
+              onPress={() => router.push(`/deck/${item.id}`)}
+            >
+              <View style={styles.cardContent}>
+                <View style={styles.iconBox}>
+                  <Ionicons name="journal" size={24} color={Colors.primary} />
+                </View>
+                <View>
+                  <Text style={styles.name}>{item.name}</Text>
+                  <Text style={styles.subtext}>Vocabulario guardado</Text>
+                </View>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color={Colors.textMuted} />
+            </TouchableOpacity>
+          )}
+        />
       )}
 
-      <FlatList
-        data={results?.entries || []}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={{ paddingBottom: Spacing.xl }}
-        renderItem={({ item }) => {
-          const meaningsList = JSON.parse(item.meanings);
-          return (
-            <View style={styles.card}>
-              <View style={styles.cardHeader}>
-                <Text style={styles.char}>{item.simplified}</Text>
-                <View style={styles.pinyinContainer}>
-                  <Text style={styles.pinyin}>{item.pinyinDisplay}</Text>
-                </View>
-                <TouchableOpacity style={styles.saveBtn} onPress={() => handleQuickSave(item)}>
-                  <Ionicons name="add" size={24} color={Colors.background} />
-                </TouchableOpacity>
+      {/* Floating Action Button (+) */}
+      <TouchableOpacity
+        style={styles.fab}
+        activeOpacity={0.8}
+        onPress={() => setMenuVisible(true)}
+      >
+        <Ionicons name="add" size={30} color={Colors.background} />
+      </TouchableOpacity>
+
+      {/* Modal de Opciones Rápidas */}
+      <Modal
+        visible={menuVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setMenuVisible(false)}
+      >
+        <Pressable style={styles.modalOverlay} onPress={() => setMenuVisible(false)}>
+          <View style={styles.menuContainer}>
+            <Text style={styles.menuTitle}>¿Qué deseas agregar?</Text>
+
+            <TouchableOpacity style={styles.menuOption} onPress={handleOpenSearch}>
+              <View style={[styles.menuIconBox, { backgroundColor: '#3B82F6' }]}>
+                <Ionicons name="text-outline" size={24} color="#FFF" />
               </View>
-              <Text style={styles.meanings}>{meaningsList.join(', ')}</Text>
-            </View>
-          );
-        }}
-      />
+              <View style={styles.menuTextContainer}>
+                <Text style={styles.menuOptionTitle}>Agregar pinyin / palabra</Text>
+                <Text style={styles.menuOptionSub}>Busca en el diccionario o construye tu palabra</Text>
+              </View>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: Spacing.md, backgroundColor: Colors.background },
-  searchHeader: { marginBottom: Spacing.lg, marginTop: Spacing.xl },
-  title: { ...Typography.h1, marginBottom: Spacing.md, color: Colors.primary },
-  inputContainer: {
+  title: { ...Typography.h1, marginBottom: Spacing.lg, color: Colors.primary },
+  card: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     backgroundColor: Colors.surface,
-    borderRadius: 12,
-    paddingHorizontal: Spacing.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  searchIcon: { marginRight: Spacing.sm },
-  loader: { marginLeft: Spacing.sm },
-  input: {
-    flex: 1,
-    color: Colors.text,
-    paddingVertical: Spacing.md,
-    fontSize: 16,
-  },
-  card: {
-    backgroundColor: Colors.surface,
-    borderRadius: 16,
     padding: Spacing.md,
+    borderRadius: 16,
     marginBottom: Spacing.md,
     borderWidth: 1,
     borderColor: Colors.border,
     ...Shadows.card,
   },
-  cardHeader: {
+  cardContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: Spacing.sm,
   },
-  char: {
-    ...Typography.chineseMedium,
+  iconBox: {
+    backgroundColor: Colors.surfaceHighlight,
+    padding: Spacing.sm,
+    borderRadius: 12,
     marginRight: Spacing.md,
   },
-  pinyinContainer: {
-    backgroundColor: Colors.surfaceHighlight,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 4,
-    borderRadius: 8,
+  name: { ...Typography.h3, color: Colors.text },
+  subtext: { ...Typography.bodySmall, color: Colors.textMuted },
+  emptyContainer: {
     flex: 1,
-    alignSelf: 'flex-start',
-  },
-  pinyin: {
-    ...Typography.body,
-    fontWeight: '500',
-    color: Colors.primaryHover,
-  },
-  saveBtn: {
-    backgroundColor: Colors.primary,
-    borderRadius: 20,
-    width: 40,
-    height: 40,
     justifyContent: 'center',
     alignItems: 'center',
+    marginTop: 60,
   },
-  meanings: {
+  emptyText: {
+    ...Typography.h3,
+    color: Colors.textMuted,
+    marginTop: Spacing.md,
+  },
+  emptySubtext: {
     ...Typography.bodySmall,
-    lineHeight: 20,
+    color: Colors.textMuted,
+    marginTop: Spacing.xs,
   },
-  error: { color: Colors.danger, marginBottom: Spacing.sm },
-  infoBox: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    backgroundColor: Colors.surfaceHighlight,
-    padding: Spacing.md,
-    borderRadius: 12,
+  fab: {
+    position: 'absolute',
+    bottom: Spacing.xl,
+    right: Spacing.xl,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: Colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...Shadows.card,
+    elevation: 8,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'flex-end',
+  },
+  menuContainer: {
+    backgroundColor: Colors.surface,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: Spacing.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  menuTitle: {
+    ...Typography.h3,
+    color: Colors.text,
     marginBottom: Spacing.md,
   },
-  infoText: { color: Colors.text, marginLeft: Spacing.sm, flex: 1 },
-  pickerBtn: {
-    backgroundColor: Colors.primary,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    borderRadius: 8,
+  menuOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
   },
-  pickerBtnText: {
-    color: Colors.background,
+  menuIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: Spacing.md,
+  },
+  menuTextContainer: {
+    flex: 1,
+  },
+  menuOptionTitle: {
+    ...Typography.body,
     fontWeight: 'bold',
-  }
+    color: Colors.text,
+  },
+  menuOptionSub: {
+    ...Typography.bodySmall,
+    color: Colors.textMuted,
+  },
 });

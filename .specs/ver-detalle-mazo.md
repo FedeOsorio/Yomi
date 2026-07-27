@@ -1,28 +1,33 @@
-# Caso de Uso: Ver Detalle de Mazo
+# Caso de Uso: Ver Detalle de Mazo y Eliminar Palabras
 
 ## Descripción
-El usuario puede ver todas las palabras guardadas dentro de un mazo específico, mostrando caracteres, pinyin y significados.
+El usuario puede ver todas las palabras guardadas dentro de un mazo específico y eliminar individualmente las palabras que ya no desea mantener o repasar.
 
 ## Actores
 - Usuario
 
 ## Precondiciones
-- El usuario navegó a la pestaña "Mazos" y tocó un mazo existente.
+- El usuario navegó a la pantalla principal de Mazos y tocó un mazo existente.
 
-## Flujo Principal
+## Flujo Principal: Ver Palabras
 1. Se carga la pantalla de detalle con el `id` del mazo obtenido de la URL dinámica (`useLocalSearchParams()`).
 2. El sistema consulta la tabla `words` filtrando por `deckId` usando Drizzle ORM.
-3. Se muestra un contador de palabras y la lista de palabras guardadas.
-4. Cada palabra muestra: carácter simplificado, pinyin con diacríticos, y significados.
+3. Se muestra un contador de palabras y la lista de tarjetas de palabras guardadas.
+4. Cada palabra muestra: carácter simplificado, pinyin con diacríticos, significados e ícono de papelera.
 
-## Flujo Alternativo: Mazo Vacío
-1. Si el mazo no tiene palabras, se muestra "Palabras (0)" y la lista queda vacía.
+## Flujo Secundario: Eliminar Palabra
+1. El usuario toca el ícono de papelera (rojo) en la tarjeta de una palabra.
+2. Se muestra un cuadro de diálogo de confirmación: *"¿Estás seguro de que querés eliminar '[palabra]' del mazo y de tus repasos?"*.
+3. Si el usuario confirma:
+   - Se invoca `lib/word-service.ts` → `deleteWord(wordId)`.
+   - Se elimina el registro de la tabla `words` en SQLite.
+   - Se elimina la tarjeta de repaso asociada de la tabla `srs_items`.
+   - La lista se actualiza automáticamente.
 
 ## Archivos Involucrados
-- `src/app/deck/[id].tsx` — Pantalla de detalle del mazo.
-- `db/schema.ts` — Tabla `words`.
-- `db/index.ts` — Conexión a SQLite con Drizzle.
+- `src/app/deck/[id].tsx` — Pantalla de detalle del mazo (UI).
+- `lib/word-service.ts` — Función `deleteWord()`.
+- `db/schema.ts` — Tablas `words` y `srs_items`.
 
 ## Resultado Esperado
-- El usuario ve todas las palabras que guardó en ese mazo.
-- Cada palabra muestra su información completa (carácter, pinyin, significados).
+- El usuario puede ver y eliminar palabras individualmente de sus mazos de forma segura y permanente.

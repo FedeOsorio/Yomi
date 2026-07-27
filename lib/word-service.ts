@@ -46,3 +46,47 @@ export async function saveWords(deckId: string, selectedEntries: DictionaryEntry
     await db.insert(srsItems).values(srsInsert);
   }
 }
+
+export async function saveCustomWord(
+  deckId: string,
+  data: {
+    simplified: string;
+    pinyinDisplay: string;
+    meanings: string; // JSON array or string
+  }
+): Promise<void> {
+  const wordId = crypto.randomUUID();
+  const meaningsJson = data.meanings.startsWith('[') ? data.meanings : JSON.stringify([data.meanings]);
+
+  await db.insert(words).values({
+    id: wordId,
+    deckId,
+    simplified: data.simplified,
+    traditional: data.simplified,
+    pinyinDisplay: data.pinyinDisplay,
+    pinyinNumeric: data.pinyinDisplay.toLowerCase(),
+    meanings: meaningsJson,
+    createdAt: new Date(),
+  });
+
+  const srsInsert = createNewSrsItem('word', wordId, {
+    displayText: data.simplified,
+    displayReading: data.pinyinDisplay,
+    displayMeaning: meaningsJson,
+  });
+
+  await db.insert(srsItems).values(srsInsert);
+}
+
+export async function deleteWord(wordId: string): Promise<void> {
+  // Eliminar la palabra de la tabla words
+  await db.delete(words).where(eq(words.id, wordId));
+  
+  // Eliminar la tarjeta SRS asociada
+  await db.delete(srsItems).where(
+    and(
+      eq(srsItems.itemType, 'word'),
+      eq(srsItems.itemId, wordId)
+    )
+  );
+}

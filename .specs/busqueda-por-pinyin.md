@@ -1,40 +1,34 @@
 # Caso de Uso: Búsqueda por Pinyin
 
 ## Descripción
-El usuario escribe pinyin (con o sin tonos) en la barra de búsqueda y obtiene resultados del diccionario CC-CEDICT en tiempo real.
+El usuario abre la modal de búsqueda desde el botón flotante `+` ("Agregar pinyin") en la pantalla principal de mazos. Escribe pinyin (con o sin tonos) en la barra de búsqueda y obtiene resultados del diccionario CC-CEDICT o la opción de construir una palabra personalizada.
 
 ## Actores
 - Usuario
 
 ## Precondiciones
-- La base de datos `dictionary.db` fue pre-generada con el script `scripts/build-dictionary.ts` y contiene las 124.733 entradas de CC-CEDICT.
-- La app está abierta en la pestaña "Buscar".
+- La base de datos `yomi.db` fue pre-generada y contiene las entradas de CC-CEDICT.
+- La app está abierta en la pantalla principal de Mazos.
 
 ## Flujo Principal
-1. El usuario escribe pinyin en el campo de texto (ej. `nihao`).
-2. El sistema normaliza la entrada usando `lib/pinyin-utils.ts` → `toSearchKey()`:
-   - Convierte a minúsculas.
-   - Remueve tonos numéricos.
-   - Normaliza `ü`/`v`/`u:` a `v`.
-3. El sistema busca coincidencias exactas en `dictionary.db` por `pinyin_key`.
-4. Si hay resultados, los muestra como tarjetas con: caracteres simplificados, pinyin con marcas diacríticas, y traducciones al inglés.
+1. El usuario presiona el botón `+` (FAB) y selecciona "Agregar pinyin".
+2. Se abre el modal de búsqueda `src/app/search.tsx`.
+3. El usuario escribe pinyin en el campo de texto (ej. `nihao`).
+4. El sistema normaliza la entrada usando `lib/pinyin-utils.ts` → `toSearchKey()`.
+5. El sistema busca coincidencias exactas en `yomi.db` por `pinyin_key`.
+6. Si hay resultados exactos, los muestra como tarjetas con: caracteres simplificados, pinyin con marcas diacríticas, traducciones y botón de guardado rápido (+).
 
-## Flujo Alternativo: Segmentación
-1. Si no hay coincidencia exacta, el sistema usa `lib/pinyin-segmenter.ts` → `bestSegmentation()` para separar la entrada en sílabas válidas.
-2. Busca cada sílaba individualmente en el diccionario.
-3. Muestra los resultados agrupados con un banner indicando la segmentación detectada (ej. "xi + huan").
-4. Ofrece un botón "Seleccionar..." que abre el Picker modal.
-
-## Flujo Alternativo: Sin Resultados
-1. Si no se encuentra ninguna coincidencia ni segmentación válida, muestra el mensaje "Pinyin no reconocido".
+## Flujo Alternativo: Word Builder / Sin Coincidencia Exacta
+1. Si no hay coincidencia exacta (o para pinyin combinado como `xiela`), el sistema segmenta la entrada en sílabas (`xie` y `la`).
+2. Busca caracteres individuales de 1 sílaba para cada sílaba detectada.
+3. Presenta la interfaz **Word Builder** con filas de selección de caracteres por sílaba y un campo para el significado en español.
+4. El usuario selecciona los caracteres deseados, ingresa la traducción y presiona "Guardar".
 
 ## Archivos Involucrados
-- `src/app/(tabs)/index.tsx` — Pantalla de búsqueda (UI).
-- `lib/search-engine.ts` — Función `searchByPinyin()`.
-- `lib/pinyin-utils.ts` — Funciones `toSearchKey()`, `numericToDisplay()`.
-- `lib/pinyin-segmenter.ts` — Funciones `segmentPinyin()`, `bestSegmentation()`.
-- `db/schema.ts` — Tabla `dictionary_entries`.
+- `src/app/search.tsx` — Pantalla modal de búsqueda y Word Builder (UI).
+- `lib/search-engine.ts` — Función `searchByPinyin()` y `getSyllableCandidates()`.
+- `lib/word-service.ts` — Funciones `saveWords()`, `saveCustomWord()`.
 
 ## Resultado Esperado
-- El usuario ve una lista de resultados en tiempo real mientras escribe.
-- Cada resultado muestra: carácter simplificado, pinyin con diacríticos, y significados en inglés.
+- Búsqueda en tiempo real de palabras exactas.
+- Si no existe la palabra exacta, opción fluida para construir la palabra por sílabas y asignarle significado.
