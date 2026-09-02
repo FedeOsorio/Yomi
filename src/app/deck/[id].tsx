@@ -1,22 +1,32 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert } from 'react-native';
-import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
-import { db } from '../../../db';
-import { words, decks } from '../../../db/schema';
-import { eq } from 'drizzle-orm';
-import { Colors, Spacing, Typography, Shadows } from '../../constants/theme';
 import { Ionicons } from '@expo/vector-icons';
-import { deleteWord } from '../../../lib/word-service';
+import { eq } from 'drizzle-orm';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useState } from 'react';
+import { Alert, FlatList, Modal, Platform, Pressable, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { db } from '../../../db';
+import { decks, words } from '../../../db/schema';
+import { exportDeckToYomiFormat } from '../../../lib/anki-importer';
 import { speakText } from '../../../lib/audio-service';
-import { SUPPORTED_LANGUAGES } from '../../../lib/deck-service';
-import { getQuickJlptLevel } from '../../../lib/jlpt-data';
+import { SUPPORTED_LANGUAGES, deleteDeck } from '../../../lib/deck-service';
 import { getQuickHskLevel } from '../../../lib/hsk-data';
+import { cleanAndFormatMeanings } from '../../../lib/japanese-search';
+import { getQuickJlptLevel } from '../../../lib/jlpt-data';
+import { deleteWord } from '../../../lib/word-service';
+import { useTheme } from '../../../providers/ThemeProvider';
+import { Shadows, Spacing, Typography } from '../../constants/theme';
 
 export default function DeckDetailScreen() {
+  const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const [deckWords, setDeckWords] = useState<any[]>([]);
   const [deckInfo, setDeckInfo] = useState<any>(null);
+
+  // Cálculo dinámico para garantizar exactamente 16px de separación por encima de la barra en cualquier dispositivo
+  const tabBottomMargin = Platform.OS === 'android' ? Math.max(insets.bottom + 4, 8) : Math.max(insets.bottom, 6);
+  const fabBottomPosition = tabBottomMargin + 60 + 16;
 
   const fetchWords = async () => {
     if (id) {
@@ -34,9 +44,9 @@ export default function DeckDetailScreen() {
           try {
             const parsed = JSON.parse(w.auxiliaryInfo);
             level = parsed.level;
-          } catch {}
+          } catch { }
         }
-        
+
         // Auto-resolución JLPT o HSK
         if (!level) {
           if (isJapaneseDeck) {
@@ -88,6 +98,51 @@ export default function DeckDetailScreen() {
     );
   };
 
+  const [menuVisible, setMenuVisible] = useState(false);
+
+  const handleExportDeck = async () => {
+    setMenuVisible(false);
+    if (!deckInfo || deckWords.length === 0) {
+      Alert.alert('Aviso', 'El mazo no tiene palabras para exportar.');
+      return;
+    }
+
+    try {
+      // Exportar en formato nativo Yomi estructurado
+      const yomiJson = exportDeckToYomiFormat(
+        { name: deckInfo.name, languageCode: deckInfo.languageCode },
+        deckWords
+      );
+
+      await Share.share({
+        title: `${deckInfo.name}.yomi`,
+        message: yomiJson,
+      });
+    } catch (e) {
+      Alert.alert('Error', 'No se pudo exportar el mazo.');
+    }
+  };
+
+  const handleDeleteDeck = () => {
+    setMenuVisible(false);
+    if (!id || !deckInfo) return;
+    Alert.alert(
+      'Eliminar mazo',
+      `¿Estás seguro de que querés eliminar el mazo "${deckInfo.name}" y todas las palabras/repasos que contiene? Esta acción no se puede deshacer.`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar Mazo',
+          style: 'destructive',
+          onPress: async () => {
+            await deleteDeck(id);
+            router.back();
+          },
+        },
+      ]
+    );
+  };
+
   const handleSpeak = (text: string) => {
     const lang = deckInfo?.languageCode || 'zh-CN';
     speakText(text, lang);
@@ -96,32 +151,94 @@ export default function DeckDetailScreen() {
   const langMeta = SUPPORTED_LANGUAGES.find((l) => l.code === deckInfo?.languageCode);
 
   return (
-    <View style={styles.container}>
-      <View style={styles.headerRow}>
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top + 4 }]}>
+      {/* Header superior de punta a punta de la pantalla */}
+      <View style={[styles.headerRow, { borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={24} color={Colors.text} />
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.title} numberOfLines={1}>
-          {langMeta?.flag} {deckInfo?.name || 'Mazo'} ({deckWords.length})
-        </Text>
-        <TouchableOpacity
-          style={styles.addWordBtn}
-          onPress={() => router.push(`/search?deckId=${id}`)}
-        >
-          <Ionicons name="add" size={20} color={Colors.background} />
-          <Text style={styles.addWordBtnText}>Agregar</Text>
-        </TouchableOpacity>
+        <View style={styles.brandTitleContainer}>
+          <Text style={[styles.brandText, { color: colors.primary }]}>Yomi</Text>
+          <Text style={[styles.brandSep, { color: colors.textMuted }]}> • </Text>
+          <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
+            {langMeta?.flag} {deckInfo?.name || 'Mazo'}
+          </Text>
+        </View>
+
+        <View style={styles.headerActions}>
+          {deckWords.length > 0 && (
+            <TouchableOpacity
+              style={[styles.studyDeckBtn, { backgroundColor: colors.primary }]}
+              onPress={() => router.push(`/(tabs)/review?deckId=${id}`)}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="flash" size={14} color="#FFF" style={{ marginRight: 4 }} />
+              <Text style={styles.studyDeckBtnText}>Repasar</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Botón de 3 puntos (...) */}
+          <TouchableOpacity
+            style={styles.moreMenuBtn}
+            onPress={() => setMenuVisible(true)}
+            accessibilityLabel="Opciones del mazo"
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="ellipsis-vertical" size={20} color={colors.text} />
+          </TouchableOpacity>
+        </View>
       </View>
-      
+
+      {/* Menú Modal de Opciones del Mazo */}
+      <Modal
+        visible={menuVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setMenuVisible(false)}
+      >
+        <Pressable style={styles.modalOverlay} onPress={() => setMenuVisible(false)}>
+          <View style={[styles.menuDropdown, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Text style={[styles.menuDropdownTitle, { color: colors.textMuted }]}>Opciones de {deckInfo?.name}</Text>
+
+            <TouchableOpacity
+              style={[styles.menuDropdownItem, { borderBottomColor: colors.border }]}
+              onPress={() => {
+                setMenuVisible(false);
+                router.push(`/deck/import?deckId=${id}`);
+              }}
+            >
+              <Ionicons name="cloud-download-outline" size={20} color={colors.primary} style={{ marginRight: 10 }} />
+              <Text style={[styles.menuDropdownText, { color: colors.text }]}>Importar palabras (Anki / Yomi)</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.menuDropdownItem, { borderBottomColor: colors.border }]}
+              onPress={handleExportDeck}
+            >
+              <Ionicons name="share-outline" size={20} color="#8B5CF6" style={{ marginRight: 10 }} />
+              <Text style={[styles.menuDropdownText, { color: colors.text }]}>Exportar mazo (Yomi)</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.menuDropdownItem, { borderBottomWidth: 0 }]}
+              onPress={handleDeleteDeck}
+            >
+              <Ionicons name="trash-outline" size={20} color={colors.danger} style={{ marginRight: 10 }} />
+              <Text style={[styles.menuDropdownText, { color: colors.danger }]}>Eliminar mazo</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
+
       {deckWords.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <Ionicons name="book-outline" size={48} color={Colors.textMuted} />
-          <Text style={styles.emptyText}>Este mazo no tiene palabras aún.</Text>
+          <Ionicons name="book-outline" size={48} color={colors.textMuted} />
+          <Text style={[styles.emptyText, { color: colors.textMuted }]}>Este mazo no tiene palabras aún.</Text>
           <TouchableOpacity
-            style={styles.emptyAddBtn}
+            style={[styles.emptyAddBtn, { backgroundColor: colors.primary }]}
             onPress={() => router.push(`/search?deckId=${id}`)}
           >
-            <Ionicons name="add" size={18} color={Colors.background} style={{ marginRight: 4 }} />
+            <Ionicons name="add" size={18} color="#FFF" style={{ marginRight: 4 }} />
             <Text style={styles.emptyAddBtnText}>Agregar primera palabra</Text>
           </TouchableOpacity>
         </View>
@@ -129,39 +246,45 @@ export default function DeckDetailScreen() {
         <FlatList
           data={deckWords}
           keyExtractor={item => item.id}
-          contentContainerStyle={{ paddingBottom: Spacing.xl }}
+          contentContainerStyle={{ paddingHorizontal: Spacing.md, paddingBottom: 110 }}
           renderItem={({ item }) => {
-            let meaningsList: string[] = [];
-            try {
-              meaningsList = JSON.parse(item.meanings);
-            } catch {
-              meaningsList = [item.meanings];
-            }
-
             const level = item.resolvedLevel;
             const formattedLevel = level
               ? level.startsWith('N')
                 ? `JLPT ${level}`
                 : level.startsWith('HSK')
-                ? level
-                : level
+                  ? level
+                  : level
               : null;
+
+            // Desduplicar, capitalizar cada elemento y limitar a máximo 3 en el mazo
+            const displayMeanings = cleanAndFormatMeanings(item.meanings).slice(0, 3);
 
             return (
               <TouchableOpacity
-                style={styles.card}
+                style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
                 activeOpacity={0.7}
                 onPress={() => router.push(`/word/${item.id}`)}
               >
                 <View style={styles.cardHeader}>
-                  {/* Izquierda: Palabra + Badge de Lectura/Romaji/Hiragana/Pinyin */}
-                  <View style={styles.row}>
-                    <Text style={styles.char}>{item.simplified}</Text>
+                  {/* Izquierda: Palabra (máx 55% ancho) + Texto de lectura debajo sin contenedor */}
+                  <View style={styles.wordColumn}>
+                    <Text
+                      style={[styles.char, { color: colors.text }]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit={true}
+                    >
+                      {item.simplified}
+                    </Text>
 
                     {item.displayReading && item.displayReading !== item.simplified ? (
-                      <View style={styles.readingContainer}>
-                        <Text style={styles.readingText}>{item.displayReading}</Text>
-                      </View>
+                      <Text
+                        style={[styles.readingText, { color: colors.primaryHover }]}
+                        numberOfLines={1}
+                        adjustsFontSizeToFit={true}
+                      >
+                        {item.displayReading}
+                      </Text>
                     ) : null}
                   </View>
 
@@ -169,7 +292,7 @@ export default function DeckDetailScreen() {
                   <View style={styles.actionsRow}>
                     {formattedLevel ? (
                       <View style={styles.levelBadge}>
-                        <Text style={styles.levelBadgeText}>{formattedLevel}</Text>
+                        <Text style={[styles.levelBadgeText, { color: colors.primary }]}>{formattedLevel}</Text>
                       </View>
                     ) : null}
 
@@ -180,7 +303,7 @@ export default function DeckDetailScreen() {
                         handleSpeak(item.simplified);
                       }}
                     >
-                      <Ionicons name="volume-medium-outline" size={20} color={Colors.primary} />
+                      <Ionicons name="volume-medium-outline" size={20} color={colors.primary} />
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={styles.iconActionBtn}
@@ -189,76 +312,153 @@ export default function DeckDetailScreen() {
                         handleDeleteWord(item.id, item.simplified);
                       }}
                     >
-                      <Ionicons name="trash-outline" size={18} color={Colors.danger} />
+                      <Ionicons name="trash-outline" size={18} color={colors.danger} />
                     </TouchableOpacity>
                   </View>
                 </View>
-                <Text style={styles.meanings} numberOfLines={2}>{meaningsList.join(', ')}</Text>
-                <View style={styles.cardFooter}>
-                  <Text style={styles.viewDetailText}>Tocar para ver detalle y trazado</Text>
-                  <Ionicons name="chevron-forward" size={14} color={Colors.primary} />
+
+                <Text style={[styles.meanings, { color: colors.textMuted }]} numberOfLines={2}>
+                  {displayMeanings.join(', ')}
+                </Text>
+
+                <View style={[styles.cardFooter, { borderTopColor: colors.border }]}>
+                  <Text style={[styles.viewDetailText, { color: colors.primary }]}>Tocar para ver detalle y trazado</Text>
+                  <Ionicons name="chevron-forward" size={14} color={colors.primary} />
                 </View>
               </TouchableOpacity>
             );
           }}
         />
       )}
+
+      {/* Floating Extended FAB (+ Añadir palabra) */}
+      <TouchableOpacity
+        style={[styles.fabExtended, { backgroundColor: colors.primary, bottom: fabBottomPosition }]}
+        activeOpacity={0.8}
+        onPress={() => router.push(`/search?deckId=${id}`)}
+      >
+        <Text style={styles.fabExtendedText}>+ Añadir palabra</Text>
+      </TouchableOpacity>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: Spacing.md, backgroundColor: Colors.background, paddingTop: Spacing.xl },
+  container: { flex: 1 },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingHorizontal: Spacing.md,
     marginBottom: Spacing.md,
+    paddingBottom: Spacing.xs,
+    borderBottomWidth: 1,
   },
   backBtn: {
     padding: Spacing.xs,
-    marginRight: Spacing.sm,
+    marginRight: Spacing.xs,
   },
-  title: { ...Typography.h2, color: Colors.text, flex: 1 },
-  addWordBtn: {
+  brandTitleContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.primary,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 10,
-    marginLeft: Spacing.xs,
+    flex: 1,
   },
-  addWordBtnText: {
-    color: Colors.background,
-    fontWeight: 'bold',
+  brandText: {
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  brandSep: {
+    fontSize: 18,
+  },
+  title: {
+    fontSize: 17,
+    fontWeight: '600',
+    flex: 1,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  studyDeckBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 10,
+    marginRight: Spacing.xs,
+  },
+  studyDeckBtnText: {
+    color: '#FFF',
     fontSize: 12,
+    fontWeight: 'bold',
+  },
+  moreMenuBtn: {
+    padding: Spacing.xs,
+    justifyContent: 'center',
+    alignItems: 'center',
     marginLeft: 2,
   },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    justifyContent: 'flex-start',
+    alignItems: 'flex-end',
+    paddingTop: 80,
+    paddingRight: Spacing.md,
+  },
+  menuDropdown: {
+    width: 260,
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: Spacing.sm,
+    ...Shadows.card,
+    elevation: 10,
+  },
+  menuDropdownTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 6,
+    letterSpacing: 0.5,
+  },
+  menuDropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: Spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  menuDropdownText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
   card: {
-    backgroundColor: Colors.surface,
     padding: Spacing.md,
     borderRadius: 16,
     marginBottom: Spacing.md,
     borderWidth: 1,
-    borderColor: Colors.border,
     ...Shadows.card,
   },
   cardHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     marginBottom: Spacing.xs,
   },
-  row: { flexDirection: 'row', alignItems: 'center' },
-  char: { ...Typography.chineseMedium, marginRight: Spacing.sm },
-  readingContainer: {
-    backgroundColor: Colors.surfaceHighlight,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 4,
-    borderRadius: 8,
-    marginRight: Spacing.xs,
+  wordColumn: {
+    maxWidth: '55%',
+    justifyContent: 'center',
+    alignItems: 'flex-start',
   },
-  readingText: { ...Typography.body, color: Colors.primaryHover, fontWeight: '500' },
+  char: {
+    ...Typography.chineseMedium,
+    fontSize: 26,
+  },
+  readingText: {
+    fontSize: 13,
+    fontWeight: '600',
+    marginTop: 2,
+  },
   actionsRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -275,13 +475,12 @@ const styles = StyleSheet.create({
   levelBadgeText: {
     fontSize: 11,
     fontWeight: '700',
-    color: Colors.primary,
   },
   iconActionBtn: {
     padding: Spacing.xs,
     marginLeft: 2,
   },
-  meanings: { ...Typography.bodySmall, lineHeight: 20, color: Colors.textMuted },
+  meanings: { ...Typography.bodySmall, lineHeight: 20, marginTop: 4 },
   cardFooter: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -289,11 +488,9 @@ const styles = StyleSheet.create({
     marginTop: Spacing.xs,
     paddingTop: Spacing.xs,
     borderTopWidth: 1,
-    borderTopColor: Colors.border,
   },
   viewDetailText: {
     fontSize: 11,
-    color: Colors.primary,
     fontWeight: '600',
     marginRight: 4,
   },
@@ -301,24 +498,39 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 60,
+    paddingHorizontal: Spacing.md,
+    paddingBottom: 70,
   },
   emptyText: {
     ...Typography.body,
-    color: Colors.textMuted,
     marginTop: Spacing.md,
     marginBottom: Spacing.md,
   },
   emptyAddBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.primary,
     paddingHorizontal: Spacing.lg,
     paddingVertical: Spacing.sm,
     borderRadius: 12,
   },
   emptyAddBtnText: {
-    color: Colors.background,
+    color: '#FFF',
     fontWeight: 'bold',
+  },
+  fabExtended: {
+    position: 'absolute',
+    right: Spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 24,
+    ...Shadows.card,
+    elevation: 8,
+  },
+  fabExtendedText: {
+    color: '#FFF',
+    fontWeight: 'bold',
+    fontSize: 15,
   },
 });

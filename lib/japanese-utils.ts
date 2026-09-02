@@ -130,3 +130,163 @@ export function romajiToHiragana(romaji: string): string {
 export function containsJapanese(text: string): boolean {
   return /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/.test(text);
 }
+
+/**
+ * Convierte caracteres Katakana a Hiragana.
+ */
+export function katakanaToHiragana(text: string): string {
+  if (!text) return '';
+  return text.replace(/[\u30a1-\u30f6]/g, (ch) =>
+    String.fromCharCode(ch.charCodeAt(0) - 0x60)
+  );
+}
+
+/**
+ * Normaliza cualquier texto en japonés (Romaji, Katakana o Hiragana) a Hiragana puro sin puntuación.
+ */
+export function toNormalizedHiragana(text: string): string {
+  if (!text) return '';
+  let result = text.toLowerCase().trim();
+  // Si contiene caracteres romaji (a-z), convertir a hiragana
+  if (/[a-z]/.test(result)) {
+    result = romajiToHiragana(result);
+  }
+  // Convertir katakana a hiragana
+  result = katakanaToHiragana(result);
+  // Eliminar signos de puntuación, puntos japoneses y espacios
+  return result.replace(/[\s.,!?;:。、！？・]/g, '');
+}
+
+/**
+ * Reglas de desconjugación verbal y adjetival en japonés para revertir formas conjugadas a su forma de diccionario (Jisho-kei).
+ * Cubre:
+ * - Forma -te (食べて -> 食べる, 待って -> 待つ/待てる, 飲んで -> 飲む, 行って -> 行く, して -> する, きて -> くる)
+ * - Forma -ta (食べた -> 食べる, 待った -> 待つ)
+ * - Forma -nai (食べない -> 食べる, 待たない -> 待つ, しない -> する)
+ * - Forma -masu (食べます -> 食べる, 飲みます -> 飲む, します -> する)
+ * - Adjetivos -i (美味しくて -> 美味しい, 美味しかった -> 美味しい)
+ */
+export function deconjugateJapanese(text: string): string[] {
+  if (!text) return [];
+  const normalized = toNormalizedHiragana(text);
+  const candidates = new Set<string>();
+  candidates.add(text); // Forma original (con kanji si lo tuviera)
+  candidates.add(normalized); // Forma hiragana directa
+
+  // 1. Desconjugación de la forma -te (-て / -で)
+  if (normalized.endsWith('て') || normalized.endsWith('で')) {
+    // Ichidan (Grupo 2): 食べ(て) -> 食べる
+    if (normalized.endsWith('て')) {
+      const stem = normalized.slice(0, -1);
+      candidates.add(stem + 'る');
+
+      // Irregular: して -> する, きて -> くる
+      if (normalized === 'して' || normalized.endsWith('して')) {
+        candidates.add(normalized.replace(/して$/, 'する'));
+      }
+      if (normalized === 'きて' || normalized.endsWith('きて')) {
+        candidates.add(normalized.replace(/きて$/, 'くる'));
+      }
+
+      // Godan (Grupo 1)
+      if (normalized.endsWith('って')) {
+        const base = normalized.slice(0, -2);
+        candidates.add(base + 'う');
+        candidates.add(base + 'つ');
+        candidates.add(base + 'る');
+      }
+      if (normalized.endsWith('いて')) {
+        const base = normalized.slice(0, -2);
+        candidates.add(base + 'く');
+        if (normalized === 'いって' || normalized.endsWith('いって')) {
+          candidates.add(normalized.replace(/いって$/, 'いく'));
+        }
+      }
+      if (normalized.endsWith('して')) {
+        const base = normalized.slice(0, -2);
+        candidates.add(base + 'す');
+      }
+
+      // Adjetivos -i: 美味しくて (oishikute) -> 美味しい (oishii)
+      if (normalized.endsWith('くて')) {
+        candidates.add(normalized.slice(0, -2) + 'い');
+      }
+    }
+
+    if (normalized.endsWith('で')) {
+      if (normalized.endsWith('んで')) {
+        const base = normalized.slice(0, -2);
+        candidates.add(base + 'む');
+        candidates.add(base + 'ぶ');
+        candidates.add(base + 'ぬ');
+      }
+      if (normalized.endsWith('いで')) {
+        const base = normalized.slice(0, -2);
+        candidates.add(base + 'ぐ');
+      }
+    }
+  }
+
+  // 2. Desconjugación de la forma -ta (-た / -だ)
+  if (normalized.endsWith('た') || normalized.endsWith('だ')) {
+    if (normalized.endsWith('た')) {
+      candidates.add(normalized.slice(0, -1) + 'る');
+      if (normalized.endsWith('った')) {
+        const base = normalized.slice(0, -2);
+        candidates.add(base + 'う');
+        candidates.add(base + 'つ');
+        candidates.add(base + 'る');
+      }
+      if (normalized.endsWith('いた')) {
+        candidates.add(normalized.slice(0, -2) + 'く');
+      }
+      if (normalized.endsWith('した')) {
+        candidates.add(normalized.slice(0, -2) + 'す');
+        candidates.add(normalized.replace(/した$/, 'する'));
+      }
+      if (normalized.endsWith('かった')) {
+        candidates.add(normalized.slice(0, -3) + 'い');
+      }
+    }
+    if (normalized.endsWith('だ')) {
+      if (normalized.endsWith('んだ')) {
+        const base = normalized.slice(0, -2);
+        candidates.add(base + 'む');
+        candidates.add(base + 'ぶ');
+        candidates.add(base + 'ぬ');
+      }
+      if (normalized.endsWith('いだ')) {
+        candidates.add(normalized.slice(0, -2) + 'ぐ');
+      }
+    }
+  }
+
+  // 3. Desconjugación de la forma cortés -masu (-ます)
+  if (normalized.endsWith('ます')) {
+    const stem = normalized.slice(0, -2);
+    candidates.add(stem + 'る');
+    candidates.add(stem + 'す');
+    if (normalized === 'します' || normalized.endsWith('します')) {
+      candidates.add(normalized.replace(/します$/, 'する'));
+    }
+    if (normalized === 'きます' || normalized.endsWith('きます')) {
+      candidates.add(normalized.replace(/きます$/, 'くる'));
+    }
+  }
+
+  // 4. Desconjugación de la forma negativa -nai (-ない)
+  if (normalized.endsWith('ない')) {
+    const stem = normalized.slice(0, -2);
+    candidates.add(stem + 'る');
+    if (normalized.endsWith('わない')) candidates.add(normalized.slice(0, -3) + 'う');
+    if (normalized.endsWith('かない')) candidates.add(normalized.slice(0, -3) + 'く');
+    if (normalized.endsWith('さない')) candidates.add(normalized.slice(0, -3) + 'す');
+    if (normalized.endsWith('たない')) candidates.add(normalized.slice(0, -3) + 'つ');
+    if (normalized.endsWith('なない')) candidates.add(normalized.slice(0, -3) + 'ぬ');
+    if (normalized.endsWith('ばない')) candidates.add(normalized.slice(0, -3) + 'ぶ');
+    if (normalized.endsWith('まない')) candidates.add(normalized.slice(0, -3) + 'む');
+    if (normalized.endsWith('らない')) candidates.add(normalized.slice(0, -3) + 'る');
+  }
+
+  return Array.from(candidates);
+}

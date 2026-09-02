@@ -1,16 +1,32 @@
-export const Colors = {
+export const DarkColors = {
   background: '#0B0D17', // Deep space dark
   surface: '#1A1D2D',
   surfaceHighlight: '#2A2E43',
   primary: '#3B82F6', // Vibrant blue
   primaryHover: '#60A5FA',
-  secondary: '#10B981', // Emerald green for success
+  secondary: '#10B981', // Emerald green
   text: '#F3F4F6',
   textMuted: '#9CA3AF',
   border: '#374151',
   danger: '#EF4444',
   warning: '#F59E0B',
 };
+
+export const LightColors = {
+  background: '#F8FAFC', // Slate light
+  surface: '#FFFFFF',
+  surfaceHighlight: '#F1F5F9',
+  primary: '#2563EB', // Blue 600
+  primaryHover: '#3B82F6',
+  secondary: '#059669', // Emerald 600
+  text: '#0F172A', // Slate 900
+  textMuted: '#64748B', // Slate 500
+  border: '#E2E8F0', // Slate 200
+  danger: '#DC2626',
+  warning: '#D97706',
+};
+
+export const Colors = DarkColors;
 
 export const Spacing = {
   xs: 4,
@@ -35,8 +51,8 @@ export const Shadows = {
   card: {
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.15,
     shadowRadius: 6,
-    elevation: 8,
+    elevation: 4,
   }
 };

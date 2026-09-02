@@ -26,23 +26,30 @@ export const JLPT_DICTIONARY: Record<string, string> = {
   '買': 'N5', '聞': 'N5', '読': 'N5', '書': 'N5', '話': 'N5',
   '出': 'N5', '入': 'N5', '立': 'N5', '休': 'N5', '言': 'N5',
   
-  // Palabras comunes N5
+  // Palabras y expresiones cotidianas N5
   '日本': 'N5', '日本人': 'N5', '日本語': 'N5', '本屋': 'N5',
   '今日': 'N5', '明日': 'N5', '昨日': 'N5', '毎日': 'N5',
   '先生': 'N5', '学生': 'N5', '学校': 'N5', '大学': 'N5',
   '友達': 'N5', '時間': 'N5', '天気': 'N5', '電話': 'N5',
-  '電車': 'N5', '車': 'N5', '自転車': 'N5', '食べる': 'N5',
+  '電車': 'N5', '自転車': 'N5', '食べる': 'N5',
   '飲む': 'N5', '行く': 'N5', '来る': 'N5', '見る': 'N5',
   '聞く': 'N5', '話す': 'N5', '読む': 'N5', '書く': 'N5',
   '買う': 'N5', '会う': 'N5', '待つ': 'N5', '持つ': 'N5',
-  '猫': 'N5', 'ありがとう': 'N5', 'こんにちは': 'N5', 'はい': 'N5',
+  '猫': 'N5', 'ありがとう': 'N5', 'ありがとうございます': 'N5',
+  'こんにちは': 'N5', 'はい': 'N5', 'いいえ': 'N5',
+  'お願いします': 'N5', 'おねがいします': 'N5',
+  'おはよう': 'N5', 'おはようございます': 'N5',
+  'こんばんは': 'N5', 'さようなら': 'N5',
+  'すみません': 'N5', 'ごめ息': 'N5', 'ごめんなさい': 'N5',
+  'いただきます': 'N5', 'ごちそうさまでした': 'N5',
 
   // N4 (Elemental)
   '家': 'N4', '族': 'N4', '兄': 'N4', '弟': 'N4', '姉': 'N4',
   '妹': 'N4', '私': 'N4', '町': 'N4', '村': 'N4', '京': 'N4',
   '都': 'N4', '寺': 'N4', '駅': 'N4', '銀': 'N4', '病': 'N4',
   '院': 'N4', '医': 'N4', '者': 'N4', '屋': 'N4', '室': 'N4',
-  '教': 'N4', '室': 'N4', '場': 'N4', '所': 'N4', '海': 'N4',
+  '教': 'N4', '場': 'N4', '所': 'N4', '海': 'N4', '野': 'N4',
+  '菜': 'N4', '心': 'N4', '思': 'N4', '知': 'N4', '答': 'N4',
   '家族': 'N4', '兄弟': 'N4', '病院': 'N4', '医者': 'N4',
   '教室': 'N4', '場所': 'N4', '旅行': 'N4', '写真': 'N4',
   '勉強': 'N4', '仕事': 'N4', '買い物': 'N4', '散歩': 'N4',
@@ -50,8 +57,9 @@ export const JLPT_DICTIONARY: Record<string, string> = {
   '考える': 'N4', '覚える': 'N4', '忘れる': 'N4', '起きる': 'N4',
 
   // N3 (Intermedio)
+  '願': 'N3', '願い': 'N3', '願う': 'N3',
   '政': 'N3', '治': 'N3', '経': 'N3', '済': 'N3', '歴': 'N3',
-  '史': 'N3', '文': 'N3', '化': 'N3', '社': 'N3', '会': 'N3',
+  '史': 'N3', '文': 'N3', '化': 'N3', '求': 'N3', '望': 'N3',
   '政治': 'N3', '経済': 'N3', '歴史': 'N3', '文化': 'N3',
   '社会': 'N3', '関係': 'N3', '経験': 'N3', '準備': 'N3',
   '連絡': 'N3', '案内': 'N3', '紹介': 'N3', '相談': 'N3',
@@ -62,23 +70,31 @@ export const JLPT_DICTIONARY: Record<string, string> = {
 };
 
 /**
- * Busca de forma instantánea el nivel JLPT de una palabra o kanji.
+ * Busca de forma instantánea el nivel JLPT exclusivo de una PALABRA COMPLETA.
+ * No asigna el nivel de Kanjis individuales a palabras compuestas.
  */
 export function getQuickJlptLevel(word: string): string | undefined {
   if (!word) return undefined;
   const trimmed = word.trim();
 
-  // Coincidencia exacta de palabra
+  // Coincidencia exacta de palabra completa
   if (JLPT_DICTIONARY[trimmed]) {
     return JLPT_DICTIONARY[trimmed];
   }
 
-  // Coincidencia por primer kanji representativo
-  for (const char of trimmed) {
-    if (JLPT_DICTIONARY[char]) {
-      return JLPT_DICTIONARY[char];
-    }
+  // Coincidencia removiendo prefijo honorífico
+  const withoutHonorific = trimmed.replace(/^[おご]/, '');
+  if (JLPT_DICTIONARY[withoutHonorific]) {
+    return JLPT_DICTIONARY[withoutHonorific];
   }
 
   return undefined;
+}
+
+/**
+ * Busca el nivel JLPT de un KANJI individual para el desglose.
+ */
+export function getKanjiJlptLevel(char: string): string | undefined {
+  if (!char) return undefined;
+  return JLPT_DICTIONARY[char.trim()];
 }

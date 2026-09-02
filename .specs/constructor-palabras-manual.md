@@ -15,16 +15,17 @@ Permite al usuario armar palabras personalizadas que no están presentes en el d
 3. El sistema segmenta el pinyin en sílabas (`xie`, `la`).
 4. Para cada sílaba, busca en SQLite los caracteres individuales asociados a ese sonido y los renderiza en filas de selección horizontal.
 5. El usuario toca el caracter deseado para cada sílaba (ej. `谢` para `xie`, `啦` para `la`).
-6. El usuario escribe el significado en español en el campo de texto (ej. "Gracias (informal)").
+6. El sistema calcula y obtiene automáticamente el significado en español para la combinación de caracteres Hanzi seleccionada (ej. "¡Gracias!"), mostrándolo en el campo de texto y permitiendo al usuario ajustarlo o editarlo si lo desea.
 7. El usuario presiona el botón "Guardar palabra".
 8. El sistema invoca `lib/word-service.ts` → `saveCustomWord()` para guardar la palabra en el mazo por defecto y crear su tarjeta SRS correspondiente.
 9. Se notifica al usuario y se cierra la modal.
 
 ## Archivos Involucrados
 - `src/app/search.tsx` — Interfaz de búsqueda y Word Builder (UI).
-- `lib/search-engine.ts` — Obtención de candidatos por sílaba.
+- `lib/search-engine.ts` — Obtención de candidatos por sílaba y función `getChineseSpanishMeaning()`.
 - `lib/word-service.ts` — Función `saveCustomWord()`.
 - `db/schema.ts` — Tablas `words` y `srs_items`.
 
 ## Resultado Esperado
-- El usuario puede construir y guardar cualquier palabra o modismo en pocos toques, incluso si no existe en el diccionario.
+- El usuario puede construir y guardar cualquier palabra o modismo en pocos toques, con traducción automática al español calculada en tiempo real según los caracteres seleccionados.
+

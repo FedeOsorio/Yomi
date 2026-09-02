@@ -1,0 +1,484 @@
+/**
+ * Módulo desacoplado para análisis (parsing) y transformación de archivos exportados
+ * desde Anki, CSV, TSV y texto plano hacia estructuras de datos universales de vocabulario.
+ *
+ * Este servicio NO depende de la UI ni de frameworks de presentación para garantizar
+ * máxima escalabilidad, testabilidad y reutilización en cualquier entorno.
+ */
+
+export interface RawImportRow {
+  [key: string]: string;
+}
+
+export interface ParsedVocabularyItem {
+  text: string;
+  reading?: string;
+  meanings: string[];
+  level?: string;
+  rawExtras?: Record<string, string>;
+}
+
+export interface ColumnMapping {
+  textColumnIndex: number;
+  readingColumnIndex?: number;
+  meaningColumnIndex: number;
+  levelColumnIndex?: number;
+}
+
+export interface ParseResult {
+  delimiter: string;
+  hasHeader: boolean;
+  headers: string[];
+  sampleRows: string[][];
+  suggestedMapping: ColumnMapping;
+  items: ParsedVocabularyItem[];
+  totalParsed: number;
+  warnings: string[];
+}
+
+/**
+ * Limpia tags HTML comunes generados por Anki (ej: <div>, <br>, <b>, <span>, etc.)
+ * y entidades HTML básicas (&nbsp;, &amp;, &lt;, &gt;).
+ */
+export function cleanHtmlAndAnkiTags(raw: string): string {
+  if (!raw) return '';
+  return raw
+    .replace(/<br\s*[\/]?>/gi, '\n')
+    .replace(/<\/div>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .trim();
+}
+
+/**
+ * Extrae texto y furigana si el string contiene la sintaxis clásica de Anki:
+ * Ej: "漢字[かんじ]" -> { text: "漢字", reading: "かんじ" }
+ */
+export function parseAnkiFuriganaSyntax(raw: string): { text: string; reading?: string } {
+  const cleaned = cleanHtmlAndAnkiTags(raw);
+  if (!cleaned.includes('[') || !cleaned.includes(']')) {
+    return { text: cleaned };
+  }
+
+  // Regex para emparejar patrones como "漢字[かんじ]" o "私[わたし]"
+  const bracketMatches = cleaned.match(/([^\s\[\]]+)\[([^\s\[\]]+)\]/g);
+  if (bracketMatches && bracketMatches.length > 0) {
+    let mainText = cleaned;
+    const readings: string[] = [];
+
+    bracketMatches.forEach((m) => {
+      const parts = m.match(/([^\s\[\]]+)\[([^\s\[\]]+)\]/);
+      if (parts) {
+        const kanjiPart = parts[1];
+        const kanaPart = parts[2];
+        mainText = mainText.replace(m, kanjiPart);
+        readings.push(kanaPart);
+      }
+    });
+
+    return {
+      text: mainText.trim(),
+      reading: readings.join(''),
+    };
+  }
+
+  return { text: cleaned };
+}
+
+/**
+ * Detecta automáticamente el delimitador más probable (coma, tabulación, punto y coma, pipe).
+ */
+export function detectDelimiter(text: string): string {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return ',';
+
+  const sampleLines = lines.slice(0, 10);
+  const counts = {
+    '\t': 0,
+    ',': 0,
+    ';': 0,
+    '|': 0,
+  };
+
+  sampleLines.forEach((line) => {
+    // Contar ocurrencias fuera de comillas
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (!inQuotes) {
+        if (char === '\t') counts['\t']++;
+        else if (char === ',') counts[',']++;
+        else if (char === ';') counts[';']++;
+        else if (char === '|') counts['|']++;
+      }
+    }
+  });
+
+  // El delimitador con mayor frecuencia consistente
+  let bestDelimiter = ',';
+  let maxCount = -1;
+  for (const [delim, count] of Object.entries(counts)) {
+    if (count > maxCount && count >= sampleLines.length) {
+      maxCount = count;
+      bestDelimiter = delim;
+    }
+  }
+
+  return bestDelimiter;
+}
+
+/**
+ * Parsea una línea respetando comillas y delimitadores.
+ */
+export function parseCsvLine(line: string, delimiter: string): string[] {
+  const result: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    const nextChar = line[i + 1];
+
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        current += '"';
+        i++; // Saltar la comilla escapada
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === delimiter && !inQuotes) {
+      result.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+
+  result.push(current.trim());
+  return result;
+}
+
+/**
+ * Deduce automáticamente qué columna corresponde a la palabra, lectura y significado
+ * según los nombres de los encabezados o los contenidos típicos.
+ */
+export function guessColumnMapping(headers: string[], firstRowSample?: string[]): ColumnMapping {
+  const normalizedHeaders = headers.map((h) => h.toLowerCase().trim());
+
+  let textIdx = -1;
+  let readingIdx = -1;
+  let meaningIdx = -1;
+  let levelIdx = -1;
+
+  // 1. Detección por palabras clave en encabezados
+  normalizedHeaders.forEach((h, idx) => {
+    if (textIdx === -1 && /^(kanji|hanzi|word|vocab|front|término|termino|palabra|caracter|expression|expr)$/i.test(h)) {
+      textIdx = idx;
+    } else if (readingIdx === -1 && /^(furigana|reading|lectura|pronunciación|pronunciacion|pinyin|kana|romaji|kana_reading)$/i.test(h)) {
+      readingIdx = idx;
+    } else if (meaningIdx === -1 && /^(meaning|meanings|significado|significados|translation|traducción|traduccion|definition|back|glossary)$/i.test(h)) {
+      meaningIdx = idx;
+    } else if (levelIdx === -1 && /^(level|jlpt|hsk|nivel|section)$/i.test(h)) {
+      levelIdx = idx;
+    }
+  });
+
+  // 2. Si no se encontró por encabezado exacto, probar coincidencias parciales
+  if (textIdx === -1) {
+    textIdx = normalizedHeaders.findIndex((h) => h.includes('word') || h.includes('kanji') || h.includes('front') || h.includes('term'));
+  }
+  if (readingIdx === -1) {
+    readingIdx = normalizedHeaders.findIndex((h) => h.includes('read') || h.includes('furi') || h.includes('pinyin') || h.includes('kana'));
+  }
+  if (meaningIdx === -1) {
+    meaningIdx = normalizedHeaders.findIndex((h) => h.includes('mean') || h.includes('trad') || h.includes('sign') || h.includes('back') || h.includes('def'));
+  }
+
+  // 3. Si aún no hay mapeo (o no había encabezados válidos), usar posiciones por defecto estándar
+  const totalCols = headers.length > 0 ? headers.length : (firstRowSample?.length || 2);
+  if (textIdx === -1) textIdx = 0;
+  if (meaningIdx === -1) {
+    meaningIdx = totalCols >= 3 ? 2 : (totalCols >= 2 ? 1 : 0);
+  }
+  if (readingIdx === -1 && totalCols >= 3 && textIdx !== 1 && meaningIdx !== 1) {
+    readingIdx = 1;
+  }
+
+  return {
+    textColumnIndex: textIdx >= 0 ? textIdx : 0,
+    readingColumnIndex: readingIdx >= 0 && readingIdx !== textIdx && readingIdx !== meaningIdx ? readingIdx : undefined,
+    meaningColumnIndex: meaningIdx >= 0 ? meaningIdx : 1,
+    levelColumnIndex: levelIdx >= 0 ? levelIdx : undefined,
+  };
+}
+
+/**
+ * Determina si la primera fila representa encabezados descriptivos o datos directos.
+ */
+export function isHeaderRow(row: string[]): boolean {
+  if (!row || row.length === 0) return false;
+  const commonHeaderKeywords = [
+    'kanji', 'furigana', 'romaji', 'meaning', 'section',
+    'word', 'reading', 'translation', 'definition',
+    'front', 'back', 'palabra', 'lectura', 'significado',
+    'hanzi', 'pinyin', 'level', 'jlpt', 'hsk',
+  ];
+
+  const matchCount = row.filter((col) => {
+    const clean = col.toLowerCase().trim();
+    return commonHeaderKeywords.some((kw) => clean === kw || clean.includes(kw));
+  }).length;
+
+  return matchCount >= 1;
+}
+
+/**
+ * Analiza texto completo exportado (CSV, TSV o TXT) y genera el resultado estructurado
+ * con sugerencia de columnas y filas parseadas.
+ */
+export function parseVocabularyFile(content: string, customDelimiter?: string): ParseResult {
+  const warnings: string[] = [];
+  if (!content || !content.trim()) {
+    return {
+      delimiter: ',',
+      hasHeader: false,
+      headers: [],
+      sampleRows: [],
+      suggestedMapping: { textColumnIndex: 0, meaningColumnIndex: 1 },
+      items: [],
+      totalParsed: 0,
+      warnings: ['El contenido está vacío.'],
+    };
+  }
+
+  // Si el archivo es un paquete nativo Yomi (.yomi / JSON)
+  if (isYomiPackage(content)) {
+    try {
+      const pkg = JSON.parse(content) as YomiDeckExportPackage;
+      const items: ParsedVocabularyItem[] = (pkg.cards || []).map((c) => ({
+        text: c.text,
+        reading: c.reading || undefined,
+        meanings: c.meanings,
+        level: c.level || undefined,
+      }));
+
+      return {
+        delimiter: 'Yomi (JSON)',
+        hasHeader: true,
+        headers: ['Palabra / Kanji', 'Lectura', 'Significados', 'Nivel'],
+        sampleRows: items.slice(0, 5).map((it) => [it.text, it.reading || '', it.meanings.join(', '), it.level || '']),
+        suggestedMapping: { textColumnIndex: 0, readingColumnIndex: 1, meaningColumnIndex: 2, levelColumnIndex: 3 },
+        items,
+        totalParsed: items.length,
+        warnings: [],
+      };
+    } catch (e) {
+      warnings.push('Error al procesar paquete Yomi, intentando como texto plano...');
+    }
+  }
+
+  const rawLines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  const delimiter = customDelimiter || detectDelimiter(content);
+
+  const parsedGrid: string[][] = [];
+  for (let i = 0; i < rawLines.length; i++) {
+    const cols = parseCsvLine(rawLines[i], delimiter);
+    if (cols.some((c) => c.length > 0)) {
+      parsedGrid.push(cols);
+    }
+  }
+
+  if (parsedGrid.length === 0) {
+    return {
+      delimiter,
+      hasHeader: false,
+      headers: [],
+      sampleRows: [],
+      suggestedMapping: { textColumnIndex: 0, meaningColumnIndex: 1 },
+      items: [],
+      totalParsed: 0,
+      warnings: ['No se encontraron filas con datos.'],
+    };
+  }
+
+  const firstRow = parsedGrid[0];
+  const hasHeader = isHeaderRow(firstRow);
+  const headers = hasHeader ? firstRow : firstRow.map((_, i) => `Columna ${i + 1}`);
+  const dataRows = hasHeader ? parsedGrid.slice(1) : parsedGrid;
+
+  const mapping = guessColumnMapping(headers, dataRows[0]);
+  const sampleRows = dataRows.slice(0, 5);
+
+  // Convertir las filas a ParsedVocabularyItem
+  const items: ParsedVocabularyItem[] = [];
+
+  dataRows.forEach((row, rowIdx) => {
+    const rawText = row[mapping.textColumnIndex] || '';
+    const rawReading = mapping.readingColumnIndex !== undefined ? row[mapping.readingColumnIndex] : '';
+    const rawMeaning = row[mapping.meaningColumnIndex] || '';
+    const rawLevel = mapping.levelColumnIndex !== undefined ? row[mapping.levelColumnIndex] : '';
+
+    if (!rawText.trim() && !rawMeaning.trim()) {
+      return; // Fila vacía
+    }
+
+    // Limpieza de HTML y furigana
+    const ankiExtracted = parseAnkiFuriganaSyntax(rawText);
+    const mainText = ankiExtracted.text || cleanHtmlAndAnkiTags(rawText);
+    const reading = cleanHtmlAndAnkiTags(rawReading) || ankiExtracted.reading || '';
+    const cleanMeaningStr = cleanHtmlAndAnkiTags(rawMeaning);
+
+    // Separar significados múltiples delimitados por punto y coma, comas internas o saltos de línea
+    const splitMeanings = cleanMeaningStr
+      .split(/[;\n\r\/]+/)
+      .map((m) => m.trim())
+      .filter((m) => m.length > 0);
+
+    const meanings = splitMeanings.length > 0 ? splitMeanings : [cleanMeaningStr];
+
+    items.push({
+      text: mainText,
+      reading: reading || undefined,
+      meanings,
+      level: cleanHtmlAndAnkiTags(rawLevel) || undefined,
+    });
+  });
+
+  return {
+    delimiter,
+    hasHeader,
+    headers,
+    sampleRows,
+    suggestedMapping: mapping,
+    items,
+    totalParsed: items.length,
+    warnings,
+  };
+}
+
+/**
+ * Transforma un lote de ParsedVocabularyItem con un mapeo manual definido por el usuario.
+ */
+export function applyMappingToRows(
+  rows: string[][],
+  mapping: ColumnMapping
+): ParsedVocabularyItem[] {
+  const items: ParsedVocabularyItem[] = [];
+
+  rows.forEach((row) => {
+    const rawText = row[mapping.textColumnIndex] || '';
+    const rawReading = mapping.readingColumnIndex !== undefined ? row[mapping.readingColumnIndex] : '';
+    const rawMeaning = row[mapping.meaningColumnIndex] || '';
+    const rawLevel = mapping.levelColumnIndex !== undefined ? row[mapping.levelColumnIndex] : '';
+
+    if (!rawText.trim() && !rawMeaning.trim()) return;
+
+    const ankiExtracted = parseAnkiFuriganaSyntax(rawText);
+    const mainText = ankiExtracted.text || cleanHtmlAndAnkiTags(rawText);
+    const reading = cleanHtmlAndAnkiTags(rawReading) || ankiExtracted.reading || '';
+    const cleanMeaningStr = cleanHtmlAndAnkiTags(rawMeaning);
+
+    const splitMeanings = cleanMeaningStr
+      .split(/[;\n\r\/]+/)
+      .map((m) => m.trim())
+      .filter((m) => m.length > 0);
+
+    items.push({
+      text: mainText,
+      reading: reading || undefined,
+      meanings: splitMeanings.length > 0 ? splitMeanings : [cleanMeaningStr],
+      level: cleanHtmlAndAnkiTags(rawLevel) || undefined,
+    });
+  });
+
+  return items;
+}
+
+export interface YomiDeckExportPackage {
+  format: 'yomi-deck-v1';
+  version: number;
+  exportedAt: string;
+  deck: {
+    name: string;
+    languageCode: string;
+  };
+  cards: Array<{
+    text: string;
+    reading: string;
+    meanings: string[];
+    level?: string;
+    selectedMeanings?: string[];
+  }>;
+}
+
+/**
+ * Serializa un mazo completo al formato nativo Yomi (.yomi / JSON estructurado).
+ */
+export function exportDeckToYomiFormat(
+  deck: { name: string; languageCode: string },
+  cards: Array<{
+    simplified: string;
+    displayReading?: string;
+    meanings: string;
+    resolvedLevel?: string;
+    auxiliaryInfo?: string | null;
+  }>
+): string {
+  const payload: YomiDeckExportPackage = {
+    format: 'yomi-deck-v1',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    deck: {
+      name: deck.name,
+      languageCode: deck.languageCode,
+    },
+    cards: cards.map((c) => {
+      let meaningsArray: string[] = [];
+      try {
+        const parsed = JSON.parse(c.meanings);
+        meaningsArray = Array.isArray(parsed) ? parsed : [String(c.meanings)];
+      } catch {
+        meaningsArray = [c.meanings];
+      }
+
+      let selected: string[] | undefined;
+      if (c.auxiliaryInfo) {
+        try {
+          const aux = JSON.parse(c.auxiliaryInfo);
+          if (Array.isArray(aux.selectedMeanings)) selected = aux.selectedMeanings;
+        } catch { }
+      }
+
+      return {
+        text: c.simplified,
+        reading: c.displayReading || '',
+        meanings: meaningsArray,
+        level: c.resolvedLevel || undefined,
+        selectedMeanings: selected,
+      };
+    }),
+  };
+
+  return JSON.stringify(payload, null, 2);
+}
+
+/**
+ * Verifica si un texto corresponde al formato nativo de exportación Yomi.
+ */
+export function isYomiPackage(content: string): boolean {
+  if (!content || !content.trim().startsWith('{')) return false;
+  try {
+    const obj = JSON.parse(content);
+    return obj && obj.format === 'yomi-deck-v1';
+  } catch {
+    return false;
+  }
+}
+

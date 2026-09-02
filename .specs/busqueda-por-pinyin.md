@@ -19,16 +19,18 @@ El usuario abre la modal de búsqueda desde el botón flotante `+` ("Agregar pin
 6. Si hay resultados exactos, los muestra como tarjetas con: caracteres simplificados, pinyin con marcas diacríticas, traducciones y botón de guardado rápido (+).
 
 ## Flujo Alternativo: Word Builder / Sin Coincidencia Exacta
-1. Si no hay coincidencia exacta (o para pinyin combinado como `xiela`), el sistema segmenta la entrada en sílabas (`xie` y `la`).
-2. Busca caracteres individuales de 1 sílaba para cada sílaba detectada.
-3. Presenta la interfaz **Word Builder** con filas de selección de caracteres por sílaba y un campo para el significado en español.
-4. El usuario selecciona los caracteres deseados, ingresa la traducción y presiona "Guardar".
+1. Si no hay coincidencia exacta (o para pinyin combinado como `wo hai méi` o `xiela`), el sistema segmenta la entrada en sílabas (`wo`, `hai`, `mei`).
+2. Detecta si alguna sílaba contiene tono específico (con tildes diacríticas o números, ej. `méi` / `mei2` $\rightarrow$ Tono 2).
+3. Busca caracteres individuales de 1 sílaba para cada sílaba detectada, filtrando estrictamente por el tono indicado en caso de haberse especificado.
+4. Presenta la interfaz **Word Builder** con filas de selección de caracteres por sílaba y un campo para el significado en español.
+5. El usuario selecciona los caracteres deseados, el significado en español se calcula y autocompleta automáticamente según la combinación de Hanzi seleccionada (permitiendo edición manual si se desea) y presiona "Guardar".
 
 ## Archivos Involucrados
 - `src/app/search.tsx` — Pantalla modal de búsqueda y Word Builder (UI).
-- `lib/search-engine.ts` — Función `searchByPinyin()` y `getSyllableCandidates()`.
+- `lib/search-engine.ts` — Funciones `searchByPinyin()`, `getChineseSpanishMeaning()`.
 - `lib/word-service.ts` — Funciones `saveWords()`, `saveCustomWord()`.
 
 ## Resultado Esperado
 - Búsqueda en tiempo real de palabras exactas.
-- Si no existe la palabra exacta, opción fluida para construir la palabra por sílabas y asignarle significado.
+- Si no existe la palabra exacta, opción fluida para construir la palabra por sílabas con cálculo automático de su significado en español.
+

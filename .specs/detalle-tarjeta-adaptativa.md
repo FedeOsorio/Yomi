@@ -1,7 +1,7 @@
 # Caso de Uso: Detalle de Tarjeta Adaptativa por Idioma
 
 ## Descripción
-Permite al usuario abrir una tarjeta guardada en un mazo y visualizar una ficha completa y adaptativa según el idioma del mazo (`languageCode`). Muestra caracteres/palabra principal, audio TTS nativo, lecturas fonéticas, significados, trazado ideográfico, 2-3 palabras compuestas comunes obtenidas del diccionario local y el estado de retención SRS (FSRS).
+Permite al usuario abrir una tarjeta guardada en un mazo y visualizar una ficha completa y adaptativa según el idioma del mazo (`languageCode`). Muestra cabecera alineada a la izquierda, etiquetas Ruby de Furigana exactamente sobre cada Kanji con su lectura debajo (limitado al 55% de ancho con auto-escalado), audio TTS nativo, significados desduplicados y capitalizados, vista de trazado en una sola línea al 100%, 2-3 palabras compuestas comunes obtenidas del diccionario local y el estado de retención SRS (FSRS).
 
 ## Actores
 - Usuario que está estudiando vocabulario.
@@ -14,22 +14,25 @@ Permite al usuario abrir una tarjeta guardada en un mazo y visualizar una ficha 
 1. El usuario abre un mazo desde la lista de colecciones ([deck/[id].tsx](file:///e:/Yomi/src/app/deck/%5Bid%5D.tsx)).
 2. El usuario toca cualquier tarjeta de la lista.
 3. El sistema navega a [src/app/word/[id].tsx](file:///e:/Yomi/src/app/word/%5Bid%5D.tsx).
-4. `getWordDetailWithRelations(wordId)` obtiene la palabra, su mazo, su registro FSRS (`srsItems`) y sus relaciones:
-   - Si el idioma es ideográfico (Chino `zh-CN` o Japonés `ja-JP`):
-     - Renderiza el carácter destacado en tamaño grande.
-     - Botón de audio que invoca `speakText(palabra, lang)` vía `expo-speech`.
-     - Lectura con pinyin/furigana.
-     - Sección de Significados.
-     - Sección de Trazado de caracteres y recuento.
-     - Sección de 2 a 3 palabras compuestas comunes del diccionario local que usan ese carácter.
-   - Si el idioma es alfabético (Español `es-ES`, Inglés `en-US`):
-     - Renderiza la palabra principal y botón de pronunciación nativa.
-     - Definición y categoría gramatical limpia (sin cajas de trazado ideográfico).
+4. La cabecera superior despliega `"Yomi • Detalle de Palabra"` alineada a la izquierda junto al botón de retroceso.
+5. `getWordDetailWithRelations(wordId)` obtiene los datos localmente sin latencia de red (0 peticiones HTTP).
+6. Presentación de tarjeta adaptativa:
+    - En Kanji / Hanzi (`ja-JP` / `zh-CN`):
+      - `parseFurigana` renderiza etiquetas Ruby concéntricas sobre cada Kanji con la lectura completa en Hiragana/Pinyin debidamente posicionada debajo.
+      - Ancho de palabra limitado a máx `55%` con auto-escalado de fuente (`adjustsFontSizeToFit`).
+      - Trazado de caracteres configurado a 1 sola línea al `100%` de ancho sin saltos.
+      - Desglose y modal interactivo de trazado paso a paso con motor adaptativo por idioma:
+        - Para Hanzi (`zh-CN`): consulta exclusivamente `AnimCJK` (`svgsZhHans`, `svgsJa`, `svgsZhHant`), renderizando con `<Defs><ClipPath>` y animación de trazo proporcional, garantizando que todos los caracteres del desglose provengan del mismo repositorio sin mezclar con KanjiVG.
+        - Para Kanji (`ja-JP`): consulta `KanjiVG` (109x109) con números de orden de trazo y fallback a `AnimCJK`.
+      - 2 a 3 palabras compuestas comunes del diccionario local que usan ese carácter, presentadas en un contenedor estable con indicador de carga (`ActivityIndicator` y texto descriptivo) durante la consulta asíncrona, y almacenamiento en caché local (`yomi_compounds_cache_v2_`) para despliegue instantáneo en visitas posteriores sin saltos de interfaz (layout shifts).
+   - En idiomas alfabéticos (`en-US`, `es-ES`):
+     - Palabra en tamaño grande, pronunciación nativa y significados formateados.
    - En ambos casos muestra la **Ficha SRS** con su estado FSRS (Nueva, Aprendiendo, En Repaso), número de repasos y fecha del próximo repaso.
-5. El usuario puede tocar el icono de papelera para eliminar la palabra y su tarjeta SRS asociada.
+7. El usuario puede tocar el icono de papelera para eliminar la palabra y su tarjeta SRS asociada.
 
 ## Archivos Involucrados
 - `src/app/word/[id].tsx` — Pantalla de detalle de tarjeta adaptativa.
+- `lib/japanese-search.ts` — `parseFurigana()`, `cleanAndFormatMeanings()`.
 - `src/app/deck/[id].tsx` — Lista de palabras del mazo con navegación a la tarjeta.
 - `lib/word-service.ts` — `getWordDetailWithRelations()`, `getCompoundWordsForChar()`, `deleteWord()`.
 - `lib/audio-service.ts` — `speakText()` con `expo-speech`.

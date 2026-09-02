@@ -12,15 +12,19 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { searchByPinyin, SearchResult, DictionaryEntry } from '../../lib/search-engine';
+import { searchByPinyin, SearchResult, DictionaryEntry, getChineseSpanishMeaning } from '../../lib/search-engine';
 import { searchJapanese, JapaneseEntry } from '../../lib/japanese-search';
 import { saveWords, saveCustomWord, saveGenericWord } from '../../lib/word-service';
 import { getDecksWithStats, DeckWithStats, SUPPORTED_LANGUAGES } from '../../lib/deck-service';
 import { speakText } from '../../lib/audio-service';
-import { Colors, Spacing, Typography, Shadows } from '../constants/theme';
+import { Spacing, Typography, Shadows } from '../constants/theme';
 import { getQuickHskLevel } from '../../lib/hsk-data';
+import { useTheme } from '../../providers/ThemeProvider';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function SearchScreen() {
+  const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ deckId?: string }>();
   const router = useRouter();
 
@@ -39,6 +43,8 @@ export default function SearchScreen() {
   const [chineseResults, setChineseResults] = useState<SearchResult | null>(null);
   const [selectedEntries, setSelectedEntries] = useState<{ [syllableIndex: number]: DictionaryEntry }>({});
   const [chineseCustomMeaning, setChineseCustomMeaning] = useState('');
+  const [isTranslatingChineseMeaning, setIsTranslatingChineseMeaning] = useState(false);
+  const latestBuiltHanziRef = useRef('');
 
   // Estados Japonés
   const [japaneseResults, setJapaneseResults] = useState<JapaneseEntry[]>([]);
@@ -67,10 +73,12 @@ export default function SearchScreen() {
     setCurrentDeck(deck);
     setQuery('');
     latestQueryRef.current = '';
+    latestBuiltHanziRef.current = '';
     setChineseResults(null);
     setJapaneseResults([]);
     setGenericTranslation('');
     setSelectedEntries({});
+    setChineseCustomMeaning('');
   };
 
   const langCode = currentDeck?.languageCode || 'zh-CN';
@@ -90,6 +98,8 @@ export default function SearchScreen() {
       setChineseResults(null);
       setJapaneseResults([]);
       setGenericTranslation('');
+      setChineseCustomMeaning('');
+      latestBuiltHanziRef.current = '';
       setIsSearching(false);
       return;
     }
@@ -225,19 +235,52 @@ export default function SearchScreen() {
     ? chineseResults.syllableGroups.map((_, idx) => selectedEntries[idx]?.pinyinDisplay || '').join(' ')
     : query;
 
+  // Efecto reactivo: calcula y obtiene automáticamente el significado en español para los caracteres Hanzi seleccionados
+  useEffect(() => {
+    if (!isChinese || !builtHanzi || !chineseResults?.syllableGroups || chineseResults.exactMatches.length > 0) {
+      return;
+    }
+
+    latestBuiltHanziRef.current = builtHanzi;
+    setIsTranslatingChineseMeaning(true);
+
+    const currentCandidates = chineseResults.syllableGroups
+      .map((_, idx) => selectedEntries[idx])
+      .filter((entry): entry is DictionaryEntry => Boolean(entry));
+
+    getChineseSpanishMeaning(builtHanzi, currentCandidates)
+      .then((meaning) => {
+        if (latestBuiltHanziRef.current === builtHanzi) {
+          setChineseCustomMeaning(meaning);
+          setIsTranslatingChineseMeaning(false);
+        }
+      })
+      .catch(() => {
+        if (latestBuiltHanziRef.current === builtHanzi) {
+          setIsTranslatingChineseMeaning(false);
+        }
+      });
+  }, [isChinese, builtHanzi, chineseResults?.exactMatches.length]);
+
   return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.topBar}>
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top + 4 }]}>
+      {/* Header superior dinámico Yomi */}
+      <View style={[styles.topBar, { borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={24} color={Colors.text} />
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.topTitle}>Buscar o Reconocer Palabra</Text>
+        
+        <View style={styles.brandTitleContainer}>
+          <Text style={[styles.brandText, { color: colors.primary }]}>Yomi</Text>
+          <Text style={[styles.brandSep, { color: colors.textMuted }]}> • </Text>
+          <Text style={[styles.topTitle, { color: colors.text }]}>Buscar Palabra</Text>
+        </View>
       </View>
 
-      {/* Selector de Mazo */}
-      <View style={styles.deckPickerSection}>
-        <Text style={styles.deckPickerLabel}>Mazo de destino:</Text>
+      <View style={{ flex: 1, paddingHorizontal: Spacing.md }}>
+        {/* Selector de Mazo */}
+        <View style={styles.deckPickerSection}>
+        <Text style={[styles.deckPickerLabel, { color: colors.textMuted }]}>Mazo de destino:</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.deckChipsScroll}>
           {decks.map((d) => {
             const isSelected = d.id === selectedDeckId;
@@ -245,11 +288,15 @@ export default function SearchScreen() {
             return (
               <TouchableOpacity
                 key={d.id}
-                style={[styles.deckChip, isSelected && styles.deckChipSelected]}
+                style={[
+                  styles.deckChip,
+                  { backgroundColor: colors.surface, borderColor: colors.border },
+                  isSelected && { backgroundColor: colors.primary, borderColor: colors.primary }
+                ]}
                 onPress={() => handleSelectDeck(d)}
               >
                 <Text style={styles.deckChipFlag}>{langMeta?.flag || '📚'}</Text>
-                <Text style={[styles.deckChipText, isSelected && styles.deckChipTextSelected]}>
+                <Text style={[styles.deckChipText, { color: colors.text }, isSelected && { color: '#FFF' }]}>
                   {d.name}
                 </Text>
               </TouchableOpacity>
@@ -259,19 +306,19 @@ export default function SearchScreen() {
       </View>
 
       {/* Input Único de Reconocimiento */}
-      <View style={styles.inputContainer}>
-        <Ionicons name="search" size={20} color={Colors.textMuted} style={styles.searchIcon} />
+      <View style={[styles.inputContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <Ionicons name="search" size={20} color={colors.textMuted} style={styles.searchIcon} />
         <TextInput
-          style={styles.input}
+          style={[styles.input, { color: colors.text }]}
           placeholder={currentLangMeta.placeholder}
-          placeholderTextColor={Colors.textMuted}
+          placeholderTextColor={colors.textMuted}
           value={query}
           onChangeText={handleQueryChange}
           autoCapitalize="none"
           autoCorrect={false}
           autoFocus={true}
         />
-        {isSearching && <ActivityIndicator color={Colors.primary} style={styles.loader} />}
+        {isSearching && <ActivityIndicator color={colors.primary} style={styles.loader} />}
       </View>
 
       {/* CASO 1: IDIOMA JAPONÉS */}
@@ -283,11 +330,11 @@ export default function SearchScreen() {
           ListEmptyComponent={
             query.trim().length > 0 && !isSearching ? (
               <View style={styles.emptySearchBox}>
-                <Text style={styles.emptySearchText}>
+                <Text style={[styles.emptySearchText, { color: colors.textMuted }]}>
                   No se encontraron coincidencias para "{query}".
                 </Text>
                 <TouchableOpacity
-                  style={styles.manualAddBtn}
+                  style={[styles.manualAddBtn, { backgroundColor: colors.primary }]}
                   onPress={() =>
                     handleQuickSaveJapanese({
                       id: 'custom',
@@ -299,23 +346,23 @@ export default function SearchScreen() {
                     })
                   }
                 >
-                  <Ionicons name="add-circle" size={18} color={Colors.background} style={{ marginRight: 6 }} />
+                  <Ionicons name="add-circle" size={18} color="#FFF" style={{ marginRight: 6 }} />
                   <Text style={styles.manualAddBtnText}>Guardar "{query}" como tarjeta</Text>
                 </TouchableOpacity>
               </View>
             ) : null
           }
           renderItem={({ item }) => (
-            <View style={styles.card}>
+            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <View style={styles.cardHeader}>
                 <View style={styles.wordMainRow}>
                   {/* Palabra */}
-                  <Text style={styles.japaneseKanji}>{item.kanji}</Text>
+                  <Text style={[styles.japaneseKanji, { color: colors.text }]}>{item.kanji}</Text>
 
                   {/* Badge de Fonética / Hiragana */}
                   {item.reading !== item.kanji && (
-                    <View style={styles.readingBadge}>
-                      <Text style={styles.readingBadgeText}>{item.reading}</Text>
+                    <View style={[styles.readingBadge, { backgroundColor: colors.surfaceHighlight }]}>
+                      <Text style={[styles.readingBadgeText, { color: colors.primaryHover }]}>{item.reading}</Text>
                     </View>
                   )}
                 </View>
@@ -324,19 +371,19 @@ export default function SearchScreen() {
                 <View style={styles.actionButtonsRow}>
                   {item.level && (
                     <View style={styles.levelBadge}>
-                      <Text style={styles.levelBadgeText}>JLPT {item.level}</Text>
+                      <Text style={[styles.levelBadgeText, { color: colors.primary }]}>JLPT {item.level}</Text>
                     </View>
                   )}
-                  <TouchableOpacity style={styles.audioIconBtn} onPress={() => handleSpeak(item.kanji)}>
-                    <Ionicons name="volume-high" size={20} color={Colors.primary} />
+                  <TouchableOpacity style={[styles.audioIconBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]} onPress={() => handleSpeak(item.kanji)}>
+                    <Ionicons name="volume-high" size={20} color={colors.primary} />
                   </TouchableOpacity>
-                  <TouchableOpacity style={styles.saveBtn} onPress={() => handleQuickSaveJapanese(item)}>
-                    <Ionicons name="add" size={24} color={Colors.background} />
+                  <TouchableOpacity style={[styles.saveBtn, { backgroundColor: colors.primary }]} onPress={() => handleQuickSaveJapanese(item)}>
+                    <Ionicons name="add" size={24} color="#FFF" />
                   </TouchableOpacity>
                 </View>
               </View>
 
-              <Text style={styles.meanings}>{item.meanings.join(', ')}</Text>
+              <Text style={[styles.meanings, { color: colors.text }]}>{item.meanings.join(', ')}</Text>
             </View>
           )}
         />
@@ -361,15 +408,15 @@ export default function SearchScreen() {
                 const hskNum = getQuickHskLevel(item.simplified);
 
                 return (
-                  <View style={styles.card}>
+                  <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                     <View style={styles.cardHeader}>
                       <View style={styles.wordMainRow}>
                         {/* Carácter Hanzi */}
-                        <Text style={styles.char}>{item.simplified}</Text>
+                        <Text style={[styles.char, { color: colors.text }]}>{item.simplified}</Text>
 
                         {/* Badge Pinyin */}
-                        <View style={styles.pinyinContainer}>
-                          <Text style={styles.pinyin}>{item.pinyinDisplay}</Text>
+                        <View style={[styles.pinyinContainer, { backgroundColor: colors.surfaceHighlight }]}>
+                          <Text style={[styles.pinyin, { color: colors.primaryHover }]}>{item.pinyinDisplay}</Text>
                         </View>
                       </View>
 
@@ -377,18 +424,18 @@ export default function SearchScreen() {
                       <View style={styles.actionButtonsRow}>
                         {hskNum && (
                           <View style={styles.levelBadge}>
-                            <Text style={styles.levelBadgeText}>HSK {hskNum}</Text>
+                            <Text style={[styles.levelBadgeText, { color: colors.primary }]}>HSK {hskNum}</Text>
                           </View>
                         )}
-                        <TouchableOpacity style={styles.audioIconBtn} onPress={() => handleSpeak(item.simplified)}>
-                          <Ionicons name="volume-high" size={20} color={Colors.primary} />
+                        <TouchableOpacity style={[styles.audioIconBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]} onPress={() => handleSpeak(item.simplified)}>
+                          <Ionicons name="volume-high" size={20} color={colors.primary} />
                         </TouchableOpacity>
-                        <TouchableOpacity style={styles.saveBtn} onPress={() => handleQuickSaveChinese(item)}>
-                          <Ionicons name="add" size={24} color={Colors.background} />
+                        <TouchableOpacity style={[styles.saveBtn, { backgroundColor: colors.primary }]} onPress={() => handleQuickSaveChinese(item)}>
+                          <Ionicons name="add" size={24} color="#FFF" />
                         </TouchableOpacity>
                       </View>
                     </View>
-                    <Text style={styles.meanings}>{meaningsList.join(', ')}</Text>
+                    <Text style={[styles.meanings, { color: colors.text }]}>{meaningsList.join(', ')}</Text>
                   </View>
                 );
               }}
@@ -396,23 +443,23 @@ export default function SearchScreen() {
           ) : (
             /* Constructor por sílabas si no hubo exacta */
             <ScrollView style={styles.builderContainer} contentContainerStyle={{ paddingBottom: 60 }}>
-              <View style={styles.builderHeaderBox}>
-                <Ionicons name="sparkles" size={20} color={Colors.primary} />
-                <Text style={styles.builderHeaderText}>
+              <View style={[styles.builderHeaderBox, { backgroundColor: colors.surfaceHighlight }]}>
+                <Ionicons name="sparkles" size={20} color={colors.primary} />
+                <Text style={[styles.builderHeaderText, { color: colors.text }]}>
                   Palabra armada por sílabas. Seleccioná los caracteres deseados:
                 </Text>
               </View>
 
-              <View style={styles.previewBox}>
-                <Text style={styles.previewLabel}>Resultado:</Text>
-                <Text style={styles.previewHanzi}>{builtHanzi}</Text>
-                <Text style={styles.previewPinyin}>{builtPinyin}</Text>
+              <View style={[styles.previewBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Text style={[styles.previewLabel, { color: colors.textMuted }]}>Resultado:</Text>
+                <Text style={[styles.previewHanzi, { color: colors.primary }]}>{builtHanzi}</Text>
+                <Text style={[styles.previewPinyin, { color: colors.primaryHover }]}>{builtPinyin}</Text>
               </View>
 
               {chineseResults.syllableGroups.map((group, syllableIdx) => (
                 <View key={syllableIdx} style={styles.syllableRow}>
-                  <Text style={styles.syllableLabel}>
-                    Sílaba #{syllableIdx + 1}: <Text style={styles.syllableTag}>{group.syllable}</Text>
+                  <Text style={[styles.syllableLabel, { color: colors.textMuted }]}>
+                    Sílaba #{syllableIdx + 1}: <Text style={[styles.syllableTag, { color: colors.primary }]}>{group.syllable}</Text>
                   </Text>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.candidatesScroll}>
                     {group.candidates.map((cand) => {
@@ -420,13 +467,17 @@ export default function SearchScreen() {
                       return (
                         <TouchableOpacity
                           key={cand.id}
-                          style={[styles.chip, isSelected && styles.chipSelected]}
+                          style={[
+                            styles.chip,
+                            { backgroundColor: colors.surface, borderColor: colors.border },
+                            isSelected && { backgroundColor: colors.primary, borderColor: colors.primary }
+                          ]}
                           onPress={() => setSelectedEntries(prev => ({ ...prev, [syllableIdx]: cand }))}
                         >
-                          <Text style={[styles.chipText, isSelected && styles.chipTextSelected]}>
+                          <Text style={[styles.chipText, { color: colors.text }, isSelected && { color: '#FFF' }]}>
                             {cand.simplified}
                           </Text>
-                          <Text style={[styles.chipPinyin, isSelected && styles.chipPinyinSelected]}>
+                          <Text style={[styles.chipPinyin, { color: colors.textMuted }, isSelected && { color: '#FFF' }]}>
                             {cand.pinyinDisplay}
                           </Text>
                         </TouchableOpacity>
@@ -436,16 +487,21 @@ export default function SearchScreen() {
                 </View>
               ))}
 
-              <TextInput
-                style={[styles.input, { marginTop: Spacing.md, marginBottom: Spacing.md }]}
-                placeholder="Significado en español..."
-                placeholderTextColor={Colors.textMuted}
-                value={chineseCustomMeaning}
-                onChangeText={setChineseCustomMeaning}
-              />
+              <View style={[styles.builderMeaningContainer, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}>
+                <TextInput
+                  style={[styles.builderMeaningInput, { color: colors.text }]}
+                  placeholder={isTranslatingChineseMeaning ? "Obteniendo significado en español..." : "Significado en español..."}
+                  placeholderTextColor={colors.textMuted}
+                  value={chineseCustomMeaning}
+                  onChangeText={setChineseCustomMeaning}
+                />
+                {isTranslatingChineseMeaning && (
+                  <ActivityIndicator size="small" color={colors.primary} style={styles.builderLoader} />
+                )}
+              </View>
 
               <TouchableOpacity
-                style={styles.createBtn}
+                style={[styles.createBtn, { backgroundColor: colors.primary }]}
                 onPress={async () => {
                   if (!selectedDeckId || !builtHanzi) return;
                   const hskNum = getQuickHskLevel(builtHanzi);
@@ -460,7 +516,7 @@ export default function SearchScreen() {
                   ]);
                 }}
               >
-                <Ionicons name="checkmark-circle" size={20} color={Colors.background} style={{ marginRight: 8 }} />
+                <Ionicons name="checkmark-circle" size={20} color="#FFF" style={{ marginRight: 8 }} />
                 <Text style={styles.createBtnText}>Guardar en {currentDeck?.name}</Text>
               </TouchableOpacity>
             </ScrollView>
@@ -468,71 +524,86 @@ export default function SearchScreen() {
         </>
       )}
 
-      {/* CASO 3: OTROS IDIOMAS (Inglés, Español, etc.) -> Reconocimiento Directo + Guardado en 1 Tap */}
+      {/* CASO 3: OTROS IDIOMAS */}
       {!isChinese && !isJapanese && query.trim().length > 0 && (
         <ScrollView contentContainerStyle={{ paddingBottom: 60 }}>
-          <View style={styles.card}>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <View style={styles.cardHeader}>
               <View style={styles.wordMainRow}>
-                <Text style={styles.alphabeticWord}>{query.trim()}</Text>
+                <Text style={[styles.alphabeticWord, { color: colors.text }]}>{query.trim()}</Text>
               </View>
               <View style={styles.actionButtonsRow}>
-                <TouchableOpacity style={styles.audioIconBtn} onPress={() => handleSpeak(query.trim())}>
-                  <Ionicons name="volume-high" size={20} color={Colors.primary} />
+                <TouchableOpacity style={[styles.audioIconBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]} onPress={() => handleSpeak(query.trim())}>
+                  <Ionicons name="volume-high" size={20} color={colors.primary} />
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.saveBtn} onPress={handleSaveGeneric}>
-                  <Ionicons name="add" size={24} color={Colors.background} />
+                <TouchableOpacity style={[styles.saveBtn, { backgroundColor: colors.primary }]} onPress={handleSaveGeneric}>
+                  <Ionicons name="add" size={24} color="#FFF" />
                 </TouchableOpacity>
               </View>
             </View>
 
             <View style={styles.translationRow}>
-              <Text style={styles.translationLabel}>Traducción / Significado:</Text>
+              <Text style={[styles.translationLabel, { color: colors.textMuted }]}>Traducción / Significado:</Text>
               {isGenericTranslating ? (
-                <ActivityIndicator size="small" color={Colors.primary} />
+                <ActivityIndicator size="small" color={colors.primary} />
               ) : (
                 <TextInput
-                  style={styles.editableMeaningInput}
+                  style={[styles.editableMeaningInput, { backgroundColor: colors.surfaceHighlight, color: colors.text }]}
                   value={genericTranslation}
                   onChangeText={setGenericTranslation}
                   placeholder="Escribí el significado..."
-                  placeholderTextColor={Colors.textMuted}
+                  placeholderTextColor={colors.textMuted}
                 />
               )}
             </View>
 
-            <TouchableOpacity style={[styles.createBtn, { marginTop: Spacing.md }]} onPress={handleSaveGeneric}>
-              <Ionicons name="add-circle" size={20} color={Colors.background} style={{ marginRight: 6 }} />
+            <TouchableOpacity style={[styles.createBtn, { backgroundColor: colors.primary, marginTop: Spacing.md }]} onPress={handleSaveGeneric}>
+              <Ionicons name="add-circle" size={20} color="#FFF" style={{ marginRight: 6 }} />
               <Text style={styles.createBtnText}>Guardar tarjeta en {currentDeck?.name}</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
       )}
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: Spacing.md, backgroundColor: Colors.background, paddingTop: Spacing.xl },
+  container: { flex: 1 },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingHorizontal: Spacing.md,
     marginBottom: Spacing.sm,
+    paddingBottom: Spacing.xs,
+    borderBottomWidth: 1,
   },
   backBtn: {
     padding: Spacing.xs,
-    marginRight: Spacing.sm,
+    marginRight: Spacing.xs,
+  },
+  brandTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  brandText: {
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  brandSep: {
+    fontSize: 18,
   },
   topTitle: {
-    ...Typography.h2,
-    color: Colors.text,
+    fontSize: 17,
+    fontWeight: '600',
   },
   deckPickerSection: {
     marginBottom: Spacing.md,
   },
   deckPickerLabel: {
     ...Typography.bodySmall,
-    color: Colors.textMuted,
     marginBottom: 6,
   },
   deckChipsScroll: {
@@ -541,17 +612,11 @@ const styles = StyleSheet.create({
   deckChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.surface,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 20,
     marginRight: Spacing.xs,
     borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  deckChipSelected: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
   },
   deckChipFlag: {
     fontSize: 16,
@@ -560,19 +625,13 @@ const styles = StyleSheet.create({
   deckChipText: {
     fontSize: 13,
     fontWeight: '600',
-    color: Colors.text,
-  },
-  deckChipTextSelected: {
-    color: Colors.background,
   },
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.surface,
     borderRadius: 12,
     paddingHorizontal: Spacing.md,
     borderWidth: 1,
-    borderColor: Colors.border,
     marginBottom: Spacing.md,
   },
   searchIcon: { marginRight: Spacing.sm },
@@ -582,15 +641,12 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     paddingVertical: Spacing.md,
     fontSize: 16,
-    color: Colors.text,
   },
   card: {
-    backgroundColor: Colors.surface,
     borderRadius: 16,
     padding: Spacing.md,
     marginBottom: Spacing.md,
     borderWidth: 1,
-    borderColor: Colors.border,
     ...Shadows.card,
   },
   cardHeader: {
@@ -607,11 +663,9 @@ const styles = StyleSheet.create({
   japaneseKanji: {
     fontSize: 26,
     fontWeight: 'bold',
-    color: Colors.text,
     marginRight: Spacing.xs,
   },
   readingBadge: {
-    backgroundColor: Colors.surfaceHighlight,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 8,
@@ -619,8 +673,19 @@ const styles = StyleSheet.create({
   },
   readingBadgeText: {
     fontSize: 13,
-    color: Colors.primaryHover,
     fontWeight: '600',
+  },
+  levelBadge: {
+    backgroundColor: 'rgba(59, 130, 246, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(59, 130, 246, 0.4)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  levelBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
   },
   char: {
     ...Typography.chineseMedium,
@@ -629,10 +694,8 @@ const styles = StyleSheet.create({
   alphabeticWord: {
     fontSize: 22,
     fontWeight: 'bold',
-    color: Colors.text,
   },
   pinyinContainer: {
-    backgroundColor: Colors.surfaceHighlight,
     paddingHorizontal: Spacing.sm,
     paddingVertical: 4,
     borderRadius: 8,
@@ -641,28 +704,12 @@ const styles = StyleSheet.create({
   pinyin: {
     ...Typography.body,
     fontWeight: '500',
-    color: Colors.primaryHover,
   },
   actionButtonsRow: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  levelBadge: {
-    backgroundColor: 'rgba(59, 130, 246, 0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(59, 130, 246, 0.4)',
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 8,
-    marginRight: 6,
-  },
-  levelBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: Colors.primary,
-  },
   audioIconBtn: {
-    backgroundColor: Colors.surfaceHighlight,
     width: 38,
     height: 38,
     borderRadius: 19,
@@ -670,10 +717,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginRight: Spacing.xs,
     borderWidth: 1,
-    borderColor: Colors.border,
   },
   saveBtn: {
-    backgroundColor: Colors.primary,
     borderRadius: 20,
     width: 40,
     height: 40,
@@ -683,21 +728,17 @@ const styles = StyleSheet.create({
   meanings: {
     ...Typography.bodySmall,
     lineHeight: 20,
-    color: Colors.text,
   },
   translationRow: {
     marginTop: Spacing.xs,
   },
   translationLabel: {
     ...Typography.bodySmall,
-    color: Colors.textMuted,
     marginBottom: 4,
   },
   editableMeaningInput: {
-    backgroundColor: Colors.surfaceHighlight,
     padding: Spacing.sm,
     borderRadius: 10,
-    color: Colors.text,
     fontSize: 15,
   },
   emptySearchBox: {
@@ -706,20 +747,18 @@ const styles = StyleSheet.create({
   },
   emptySearchText: {
     ...Typography.body,
-    color: Colors.textMuted,
     textAlign: 'center',
     marginBottom: Spacing.md,
   },
   manualAddBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.primary,
     paddingHorizontal: Spacing.md,
     paddingVertical: 10,
     borderRadius: 12,
   },
   manualAddBtnText: {
-    color: Colors.background,
+    color: '#FFF',
     fontWeight: 'bold',
     fontSize: 14,
   },
@@ -729,88 +768,63 @@ const styles = StyleSheet.create({
   builderHeaderBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.surfaceHighlight,
     padding: Spacing.md,
     borderRadius: 12,
     marginBottom: Spacing.md,
   },
   builderHeaderText: {
     ...Typography.bodySmall,
-    color: Colors.text,
     marginLeft: Spacing.sm,
     flex: 1,
   },
   previewBox: {
-    backgroundColor: Colors.surface,
     padding: Spacing.md,
     borderRadius: 16,
     alignItems: 'center',
     marginBottom: Spacing.md,
     borderWidth: 1,
-    borderColor: Colors.border,
   },
   previewLabel: {
     ...Typography.bodySmall,
-    color: Colors.textMuted,
   },
   previewHanzi: {
     fontSize: 36,
     fontWeight: 'bold',
-    color: Colors.primary,
     marginVertical: 4,
   },
   previewPinyin: {
     ...Typography.body,
     fontWeight: '600',
-    color: Colors.primaryHover,
   },
   syllableRow: {
     marginBottom: Spacing.md,
   },
   syllableLabel: {
     ...Typography.bodySmall,
-    color: Colors.textMuted,
     marginBottom: Spacing.xs,
   },
   syllableTag: {
-    color: Colors.primary,
     fontWeight: 'bold',
   },
   candidatesScroll: {
     flexDirection: 'row',
   },
   chip: {
-    backgroundColor: Colors.surface,
     borderWidth: 1,
-    borderColor: Colors.border,
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 6,
     alignItems: 'center',
     marginRight: Spacing.xs,
   },
-  chipSelected: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
-  },
   chipText: {
     fontSize: 20,
-    color: Colors.text,
-  },
-  chipTextSelected: {
-    color: Colors.background,
-    fontWeight: 'bold',
   },
   chipPinyin: {
     fontSize: 10,
-    color: Colors.textMuted,
     marginTop: 2,
   },
-  chipPinyinSelected: {
-    color: Colors.background,
-  },
   createBtn: {
-    backgroundColor: Colors.primary,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
@@ -819,8 +833,26 @@ const styles = StyleSheet.create({
     ...Shadows.card,
   },
   createBtnText: {
-    color: Colors.background,
+    color: '#FFF',
     fontSize: 16,
     fontWeight: 'bold',
   },
+  builderMeaningContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: Spacing.md,
+    marginTop: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  builderMeaningInput: {
+    flex: 1,
+    paddingVertical: Spacing.md,
+    fontSize: 16,
+  },
+  builderLoader: {
+    marginLeft: Spacing.xs,
+  },
 });
+
