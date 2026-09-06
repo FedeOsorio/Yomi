@@ -42,11 +42,9 @@ example
 /ios
 /android
 
-# Dictionary (se regenera con: npm run build:dictionary)
-assets/cedict/
-
-# Generated constants (regenerable con: npm run build:dictionary)
-constants/pinyin-syllables.ts
+# Generated constants / database assets are included in git for EAS Build
+# (Uncomment below only if rebuilding locally from source text)
+# assets/cedict/cedict_ts.u8
 
 # IDEs
 .vscode/
