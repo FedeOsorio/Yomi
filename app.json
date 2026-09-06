@@ -2,18 +2,28 @@
   "expo": {
     "name": "Yomi",
     "slug": "Yomi",
-    "version": "1.0.0",
-    "orientation": "portrait",
+    "version": "0.1.0",
+    "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "yomi",
     "userInterfaceStyle": "automatic",
     "android": {
-      "package": "com.yomi.app",
+      "package": "com.kuyi.yomi",
       "adaptiveIcon": {
         "backgroundColor": "#fafaf0",
         "foregroundImage": "./assets/images/android-icon-foreground.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "blockedPermissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.VIBRATE"
+      ]
     },
     "web": {
       "output": "static",
@@ -41,6 +51,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "cad355df-85ed-4f8e-b0e3-af82f2f16107"
+      }
+    },
+    "owner": "fedeosorio24"
   }
 }
