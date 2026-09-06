@@ -1,135 +1,174 @@
 const fs = require('fs');
 const path = require('path');
-const sharp = require('sharp');
 
+const IMAGES_DIR = path.join(__dirname, '../assets/images');
 const WORDS_DIR = path.join(__dirname, '../assets/images/words');
 
-async function convertImages() {
-  console.log('🚀 Iniciando optimización rápida de imágenes...');
+// Intentar cargar sharp o pngjs como fallback
+let sharp = null;
+let PNG = null;
+try {
+  sharp = require('sharp');
+} catch {
+  try {
+    PNG = require('pngjs').PNG;
+  } catch {}
+}
 
-  if (!fs.existsSync(WORDS_DIR)) {
-    console.error(`❌ Directorio no encontrado: ${WORDS_DIR}`);
-    process.exit(1);
-  }
+async function optimizeAppAssets() {
+  console.log('🚀 Iniciando optimización de iconos e imágenes de Yomi...\n');
 
-  const files = fs.readdirSync(WORDS_DIR);
-  const pngOrJpgFiles = files.filter(f => {
-    const ext = path.extname(f).toLowerCase();
-    return ext === '.png' || ext === '.jpg' || ext === '.jpeg';
-  });
-  
-  // Procesamos archivos .webp que superen los 45 KB (que no hayan sido optimizados)
-  // o podemos auditar todos en paralelo a máxima velocidad
-  const webpFiles = files.filter(f => path.extname(f).toLowerCase() === '.webp');
+  let totalOriginal = 0;
+  let totalOptimized = 0;
+  let count = 0;
 
-  const MAX_DIMENSION = 400; // Máxima resolución (ancho/alto) para vocabulario en la app
+  // 1. Optimizar iconos y splash en assets/images
+  if (fs.existsSync(IMAGES_DIR)) {
+    const rootFiles = fs.readdirSync(IMAGES_DIR).filter(f => {
+      const ext = path.extname(f).toLowerCase();
+      const isFile = fs.statSync(path.join(IMAGES_DIR, f)).isFile();
+      return isFile && (ext === '.png' || ext === '.jpg' || ext === '.jpeg' || ext === '.webp');
+    });
 
-  let convertedCount = 0;
-  let recompressedCount = 0;
-  let savedBytes = 0;
+    console.log(`📁 Procesando ${rootFiles.length} imágenes principales en assets/images/...`);
 
-  // 1. Convertir PNG/JPG a WebP, recortar bordes transparentes y redimensionar
-  if (pngOrJpgFiles.length > 0) {
-    console.log(`🖼️  Convirtiendo ${pngOrJpgFiles.length} imágenes PNG/JPG a WebP (recortando bordes transparentes y máx ${MAX_DIMENSION}px)...`);
-    for (const file of pngOrJpgFiles) {
-      const filePath = path.join(WORDS_DIR, file);
-      const fileNameWithoutExt = path.basename(file, path.extname(file));
-      const webpPath = path.join(WORDS_DIR, `${fileNameWithoutExt}.webp`);
+    for (const file of rootFiles) {
+      const filePath = path.join(IMAGES_DIR, file);
+      const originalBuffer = fs.readFileSync(filePath);
+      const originalSize = originalBuffer.length;
+      totalOriginal += originalSize;
+
+      let optimizedBuffer = originalBuffer;
 
       try {
-        const inputBuffer = fs.readFileSync(filePath);
-        const originalSize = inputBuffer.length;
+        if (sharp) {
+          const ext = path.extname(file).toLowerCase();
+          const baseName = path.basename(file, ext).toLowerCase();
+          let pipeline = sharp(originalBuffer);
 
-        let pipeline = sharp(inputBuffer);
-        try {
-          pipeline = pipeline.trim();
-        } catch {
-          pipeline = sharp(inputBuffer);
+          // Dimensiones estándar óptimas según el tipo de asset
+          let targetWidth = null;
+          let targetHeight = null;
+
+          if (baseName === 'favicon') {
+            targetWidth = 48;
+            targetHeight = 48;
+          } else if (baseName === 'android-icon-foreground' || baseName === 'splash-icon') {
+            targetWidth = 512;
+            targetHeight = 512;
+          } else if (baseName === 'icon' || baseName === 'adaptive-icon') {
+            targetWidth = 1024;
+            targetHeight = 1024;
+          } else if (baseName === 'splash') {
+            targetWidth = 1080;
+            targetHeight = 2400;
+          }
+
+          if (targetWidth && targetHeight) {
+            pipeline = pipeline.resize(targetWidth, targetHeight, {
+              fit: 'inside',
+              withoutEnlargement: true,
+            });
+          }
+
+          if (ext === '.png') {
+            optimizedBuffer = await pipeline
+              .png({
+                compressionLevel: 9,
+                adaptiveFiltering: true,
+                palette: true,
+                quality: 90,
+                effort: 10,
+              })
+              .toBuffer();
+          } else if (ext === '.webp') {
+            optimizedBuffer = await pipeline
+              .webp({ quality: 85, effort: 6 })
+              .toBuffer();
+          }
+        } else if (PNG && path.extname(file).toLowerCase() === '.png') {
+          const png = PNG.sync.read(originalBuffer);
+          optimizedBuffer = PNG.sync.write(png, {
+            deflateLevel: 9,
+            deflateStrategy: 3,
+            filterType: 4,
+          });
         }
 
-        const optimizedBuffer = await pipeline
-          .resize(MAX_DIMENSION, MAX_DIMENSION, { fit: 'inside', withoutEnlargement: true })
-          .webp({ quality: 85, effort: 4 })
-          .toBuffer();
-
-        fs.writeFileSync(webpPath, optimizedBuffer);
-        fs.unlinkSync(filePath);
-        convertedCount++;
-        savedBytes += (originalSize - optimizedBuffer.length);
-
-        const savingsPct = (((originalSize - optimizedBuffer.length) / originalSize) * 100).toFixed(1);
-        console.log(`  ✓ ${file} ➔ ${fileNameWithoutExt}.webp (${(originalSize / 1024).toFixed(1)} KB ➔ ${(optimizedBuffer.length / 1024).toFixed(1)} KB, -${savingsPct}%)`);
+        if (optimizedBuffer.length < originalSize) {
+          fs.writeFileSync(filePath, optimizedBuffer);
+          const saved = originalSize - optimizedBuffer.length;
+          const pct = ((saved / originalSize) * 100).toFixed(1);
+          console.log(`  ✓ ${file}: ${(originalSize / 1024).toFixed(1)} KB ➔ ${(optimizedBuffer.length / 1024).toFixed(1)} KB (-${pct}%)`);
+          totalOptimized += optimizedBuffer.length;
+        } else {
+          console.log(`  ✓ ${file}: ${(originalSize / 1024).toFixed(1)} KB (ya optimizado)`);
+          totalOptimized += originalSize;
+        }
+        count++;
       } catch (err) {
-        console.error(`  ❌ Error convirtiendo ${file}:`, err.message);
+        console.error(`  ❌ Error optimizando ${file}:`, err.message);
+        totalOptimized += originalSize;
       }
     }
   }
 
-  // 2. Optimización para WebP existentes: SOLO procesa imágenes que realmente lo necesiten
-  // (aquellas que midan más de MAX_DIMENSION o que pesen más de 50 KB sin optimizar)
-  const candidateWebpFiles = webpFiles.filter(f => {
-    const stat = fs.statSync(path.join(WORDS_DIR, f));
-    return stat.size > 45 * 1024; // Solo candidatas pesadas
-  });
+  // 2. Si existe carpeta words (vocabulario), convertir y optimizar a WebP
+  if (fs.existsSync(WORDS_DIR)) {
+    const wordFiles = fs.readdirSync(WORDS_DIR);
+    console.log(`\n📁 Procesando ${wordFiles.length} imágenes en assets/images/words/...`);
 
-  if (candidateWebpFiles.length > 0) {
-    console.log(`🔍 Inspeccionando ${candidateWebpFiles.length} imágenes .webp potencialmente pesadas...`);
-    await Promise.all(candidateWebpFiles.map(async (file) => {
+    for (const file of wordFiles) {
+      const ext = path.extname(file).toLowerCase();
       const filePath = path.join(WORDS_DIR, file);
-      try {
-        const inputBuffer = fs.readFileSync(filePath);
-        const originalSize = inputBuffer.length;
+      if (!fs.statSync(filePath).isFile()) continue;
 
-        const metadata = await sharp(inputBuffer).metadata();
-        const exceedsDimension = (metadata.width && metadata.width > MAX_DIMENSION) || (metadata.height && metadata.height > MAX_DIMENSION);
-        const isVeryHeavy = originalSize > 50 * 1024;
+      const originalBuffer = fs.readFileSync(filePath);
+      const originalSize = originalBuffer.length;
+      totalOriginal += originalSize;
 
-        // Si la imagen ya tiene tamaño <= 400px y no es excesivamente pesada, NO TOCARLA
-        if (!exceedsDimension && !isVeryHeavy) {
-          return;
-        }
-
-        let pipeline = sharp(inputBuffer);
+      if (sharp && (ext === '.png' || ext === '.jpg' || ext === '.jpeg')) {
         try {
-          pipeline = pipeline.trim();
-        } catch {
-          pipeline = sharp(inputBuffer);
-        }
+          const fileNameWithoutExt = path.basename(file, ext);
+          const webpPath = path.join(WORDS_DIR, `${fileNameWithoutExt}.webp`);
 
-        const optimizedBuffer = await pipeline
-          .resize(MAX_DIMENSION, MAX_DIMENSION, { fit: 'inside', withoutEnlargement: true })
-          .webp({ quality: 85, effort: 4 })
-          .toBuffer();
+          let pipeline = sharp(originalBuffer);
+          try {
+            pipeline = pipeline.trim();
+          } catch {}
 
-        // Solo guardar si ahorra al menos 2 KB para evitar reescrituras innecesarias en Git
-        if (optimizedBuffer.length < originalSize - 2048) {
-          fs.writeFileSync(filePath, optimizedBuffer);
-          recompressedCount++;
-          savedBytes += (originalSize - optimizedBuffer.length);
-          const savingsPct = (((originalSize - optimizedBuffer.length) / originalSize) * 100).toFixed(1);
-          console.log(`  ✓ ${file} (${metadata.width}x${metadata.height}): ${(originalSize / 1024).toFixed(1)} KB ➔ ${(optimizedBuffer.length / 1024).toFixed(1)} KB (-${savingsPct}%)`);
+          const optimizedBuffer = await pipeline
+            .resize(400, 400, { fit: 'inside', withoutEnlargement: true })
+            .webp({ quality: 85, effort: 5 })
+            .toBuffer();
+
+          fs.writeFileSync(webpPath, optimizedBuffer);
+          fs.unlinkSync(filePath);
+          totalOptimized += optimizedBuffer.length;
+
+          const saved = originalSize - optimizedBuffer.length;
+          const pct = ((saved / originalSize) * 100).toFixed(1);
+          console.log(`  ✓ ${file} ➔ ${fileNameWithoutExt}.webp: ${(originalSize / 1024).toFixed(1)} KB ➔ ${(optimizedBuffer.length / 1024).toFixed(1)} KB (-${pct}%)`);
+          count++;
+        } catch (err) {
+          console.error(`  ❌ Error convirtiendo ${file}:`, err.message);
+          totalOptimized += originalSize;
         }
-      } catch (err) {
-        console.error(`  ❌ Error optimizando ${file}:`, err.message);
+      } else {
+        totalOptimized += originalSize;
       }
-    }));
+    }
   }
 
-  if (convertedCount === 0 && recompressedCount === 0) {
-    console.log('✨ Todas las imágenes WebP ya se encuentran optimizadas. No se modificó ningún archivo.');
+  const totalSaved = totalOriginal - totalOptimized;
+  if (totalSaved > 0) {
+    console.log(`\n🎉 ¡Optimización finalizada! Se ahorraron ${(totalSaved / 1024).toFixed(1)} KB en total.`);
   } else {
-    console.log(`\n🎉 ¡Optimización finalizada! Se ahorraron ${(savedBytes / 1024).toFixed(1)} KB.`);
+    console.log('\n✨ Todas las imágenes ya están en su tamaño óptimo.');
   }
-
-  runGenerateMap();
 }
 
-function runGenerateMap() {
-  console.log('🔄 Actualizando src/utils/imageMap.ts...');
-  require('./generateImageMap.js');
-}
-
-convertImages().catch(err => {
-  console.error('❌ Error general durante la optimización:', err);
+optimizeAppAssets().catch(err => {
+  console.error('❌ Error durante la optimización:', err);
   process.exit(1);
 });
