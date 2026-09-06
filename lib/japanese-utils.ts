@@ -290,3 +290,200 @@ export function deconjugateJapanese(text: string): string[] {
 
   return Array.from(candidates);
 }
+
+/**
+ * Clasifica heurísticamente una palabra japonesa en su categoría gramatical (Part of Speech).
+ */
+export function classifyJapaneseWord(word: string, reading?: string): string {
+  if (!word) return 'Sustantivo';
+  const clean = (reading || word).trim();
+  const normalized = toNormalizedHiragana(clean);
+
+  if (normalized.length === 0) return 'Sustantivo';
+
+  // Frase u oración larga
+  if (word.includes(' ') || normalized.length >= 7) {
+    return 'Frase / Expresión';
+  }
+
+  // Verbos Irregulares (Grupo 3: する / くる)
+  if (normalized === 'する' || normalized.endsWith('する')) {
+    return 'Verbo Irregular (Grupo 3)';
+  }
+  if (normalized === 'くる' || normalized.endsWith('くる') || word === '来る') {
+    return 'Verbo Irregular (Grupo 3)';
+  }
+
+  // Adjetivos -i (terminan en い precedido de vocal y no son excepciones sustantivas conocidas)
+  if (normalized.length >= 2 && normalized.endsWith('い')) {
+    const prevChar = normalized[normalized.length - 2];
+    // Excepciones conocidas sustantivos: 綺麗 (kirei -> na), 嫌い (kirai -> na)
+    if (word === '綺麗' || normalized === 'きれい') return 'Adjetivo -na';
+    if (word === '嫌い' || normalized === 'きらい') return 'Adjetivo -na';
+    if (['あ', 'い', 'う', 'え', 'お', 'か', 'き', 'く', 'け', 'こ', 'さ', 'し', 'す', 'せ', 'そ', 'た', 'ち', 'つ', 'て', 'と', 'な', 'に', 'ぬ', 'ね', 'の', 'は', 'ひ', 'ふ', 'へ', 'ほ', 'ま', 'み', 'む', 'め', 'も', 'ら', 'り', 'る', 'れ', 'ろ', 'わ'].includes(prevChar)) {
+      return 'Adjetivo -i';
+    }
+  }
+
+  // Verbos Ichidan (terminados en る precedido de sonido i o e)
+  if (normalized.endsWith('る') && normalized.length >= 2) {
+    const prevChar = normalized[normalized.length - 2];
+    const ichidanPrevs = [
+      'い', 'き', 'し', 'ち', 'に', 'ひ', 'み', 'り', 'ぎ', 'じ', 'ぢ', 'び', 'ぴ',
+      'え', 'け', 'せ', 'て', 'ね', 'へ', 'め', 'れ', 'げ', 'ぜ', 'で', 'べ', 'ぺ'
+    ];
+    // Excepciones conocidas Godan que terminan en iru/eru: 帰る (kaeru), 知る (shiru), 切る (kiru), 入る (hairu), 走る (hashiru)
+    const godanExceptions = ['かえる', 'しる', 'きる', 'はいる', 'はしる', 'へる', 'しゃべる', 'すべる'];
+    if (ichidanPrevs.includes(prevChar) && !godanExceptions.includes(normalized)) {
+      return 'Verbo Ichidan (Grupo 2)';
+    }
+    return 'Verbo Godan (Grupo 1)';
+  }
+
+  // Verbos Godan (Grupo 1: terminados en う, く, ぐ, す, つ, ぬ, ぶ, む)
+  if (/[うくぐすつぬぶむ]/.test(normalized[normalized.length - 1])) {
+    return 'Verbo Godan (Grupo 1)';
+  }
+
+  // Adjetivos -na
+  if (normalized.endsWith('な') && normalized.length > 2) {
+    return 'Adjetivo -na';
+  }
+
+  return 'Sustantivo';
+}
+
+export type JapaneseConjugationForm = 'te' | 'ta' | 'nai' | 'masu';
+
+/**
+ * Conjuga un verbo o adjetivo japonés a la forma deseada (-te, -ta, -nai, -masu).
+ * Devuelve tanto el texto con Kanji como la lectura en Hiragana.
+ */
+export function conjugateJapanese(
+  word: string,
+  reading: string,
+  category: string,
+  form: JapaneseConjugationForm
+): { kanji: string; reading: string } {
+  const cleanWord = word.trim();
+  const cleanReading = (reading || word).trim();
+  const hira = toNormalizedHiragana(cleanReading);
+
+  const isIrregular = category.includes('Irregular') || cleanWord.endsWith('する') || cleanWord.endsWith('くる') || cleanWord === '来る';
+  const isIchidan = category.includes('Ichidan');
+  const isGodan = category.includes('Godan') || (!isIrregular && !isIchidan && /[うくぐすつぬぶむる]$/.test(hira));
+  const isAdjI = category.includes('Adjetivo -i') || (!category.includes('Verbo') && hira.endsWith('い'));
+  const isAdjNa = category.includes('Adjetivo -na');
+
+  // 1. Verbos Irregulares: する y くる
+  if (isIrregular) {
+    if (hira === 'する' || hira.endsWith('する')) {
+      const kStem = cleanWord.endsWith('する') ? cleanWord.slice(0, -2) : '';
+      const rStem = hira.slice(0, -2);
+      if (form === 'te') return { kanji: `${kStem}して`, reading: `${rStem}して` };
+      if (form === 'ta') return { kanji: `${kStem}した`, reading: `${rStem}した` };
+      if (form === 'nai') return { kanji: `${kStem}しない`, reading: `${rStem}しない` };
+      if (form === 'masu') return { kanji: `${kStem}します`, reading: `${rStem}します` };
+    }
+    if (hira === 'くる' || hira.endsWith('くる') || cleanWord.endsWith('来る')) {
+      if (form === 'te') return { kanji: '来て', reading: 'きて' };
+      if (form === 'ta') return { kanji: '来た', reading: 'きた' };
+      if (form === 'nai') return { kanji: '来ない', reading: 'こない' };
+      if (form === 'masu') return { kanji: '来ます', reading: 'きます' };
+    }
+  }
+
+  // 2. Verbos Ichidan (quitar る)
+  if (isIchidan && hira.endsWith('る')) {
+    const kStem = cleanWord.endsWith('る') ? cleanWord.slice(0, -1) : cleanWord;
+    const rStem = hira.slice(0, -1);
+    if (form === 'te') return { kanji: `${kStem}て`, reading: `${rStem}て` };
+    if (form === 'ta') return { kanji: `${kStem}た`, reading: `${rStem}た` };
+    if (form === 'nai') return { kanji: `${kStem}ない`, reading: `${rStem}ない` };
+    if (form === 'masu') return { kanji: `${kStem}ます`, reading: `${rStem}ます` };
+  }
+
+  // 3. Verbos Godan
+  if (isGodan) {
+    const lastChar = hira[hira.length - 1];
+    const kStem = cleanWord.length > 0 ? cleanWord.slice(0, -1) : '';
+    const rStem = hira.slice(0, -1);
+
+    // Caso especial: 行く (iku)
+    if (cleanWord === '行く' || hira === 'いく') {
+      if (form === 'te') return { kanji: '行って', reading: 'いって' };
+      if (form === 'ta') return { kanji: '行った', reading: 'いった' };
+      if (form === 'nai') return { kanji: '行かない', reading: 'いかない' };
+      if (form === 'masu') return { kanji: '行きます', reading: 'いきます' };
+    }
+
+    if (lastChar === 'う') {
+      if (form === 'te') return { kanji: `${kStem}って`, reading: `${rStem}って` };
+      if (form === 'ta') return { kanji: `${kStem}った`, reading: `${rStem}った` };
+      if (form === 'nai') return { kanji: `${kStem}わない`, reading: `${rStem}わない` };
+      if (form === 'masu') return { kanji: `${kStem}います`, reading: `${rStem}います` };
+    }
+    if (lastChar === 'つ') {
+      if (form === 'te') return { kanji: `${kStem}って`, reading: `${rStem}って` };
+      if (form === 'ta') return { kanji: `${kStem}った`, reading: `${rStem}った` };
+      if (form === 'nai') return { kanji: `${kStem}たない`, reading: `${rStem}たない` };
+      if (form === 'masu') return { kanji: `${kStem}ちます`, reading: `${rStem}ちます` };
+    }
+    if (lastChar === 'る') {
+      if (form === 'te') return { kanji: `${kStem}って`, reading: `${rStem}って` };
+      if (form === 'ta') return { kanji: `${kStem}った`, reading: `${rStem}った` };
+      if (form === 'nai') return { kanji: `${kStem}らない`, reading: `${rStem}らない` };
+      if (form === 'masu') return { kanji: `${kStem}ります`, reading: `${rStem}ります` };
+    }
+    if (lastChar === 'く') {
+      if (form === 'te') return { kanji: `${kStem}いて`, reading: `${rStem}いて` };
+      if (form === 'ta') return { kanji: `${kStem}いた`, reading: `${rStem}いた` };
+      if (form === 'nai') return { kanji: `${kStem}かない`, reading: `${rStem}かない` };
+      if (form === 'masu') return { kanji: `${kStem}きます`, reading: `${rStem}きます` };
+    }
+    if (lastChar === 'ぐ') {
+      if (form === 'te') return { kanji: `${kStem}いで`, reading: `${rStem}いで` };
+      if (form === 'ta') return { kanji: `${kStem}いだ`, reading: `${rStem}いだ` };
+      if (form === 'nai') return { kanji: `${kStem}がない`, reading: `${rStem}がない` };
+      if (form === 'masu') return { kanji: `${kStem}ぎます`, reading: `${rStem}ぎます` };
+    }
+    if (lastChar === 'す') {
+      if (form === 'te') return { kanji: `${kStem}して`, reading: `${rStem}して` };
+      if (form === 'ta') return { kanji: `${kStem}した`, reading: `${rStem}した` };
+      if (form === 'nai') return { kanji: `${kStem}さない`, reading: `${rStem}さない` };
+      if (form === 'masu') return { kanji: `${kStem}します`, reading: `${rStem}します` };
+    }
+    if (lastChar === 'む' || lastChar === 'ぶ' || lastChar === 'ぬ') {
+      const naiSuffix = lastChar === 'む' ? 'まない' : lastChar === 'ぶ' ? 'ばない' : 'なない';
+      const masuSuffix = lastChar === 'む' ? 'みます' : lastChar === 'ぶ' ? 'びます' : 'にます';
+      if (form === 'te') return { kanji: `${kStem}んで`, reading: `${rStem}んで` };
+      if (form === 'ta') return { kanji: `${kStem}んだ`, reading: `${rStem}んだ` };
+      if (form === 'nai') return { kanji: `${kStem}${naiSuffix}`, reading: `${rStem}${naiSuffix}` };
+      if (form === 'masu') return { kanji: `${kStem}${masuSuffix}`, reading: `${rStem}${masuSuffix}` };
+    }
+  }
+
+  // 4. Adjetivos -i
+  if (isAdjI && hira.endsWith('い')) {
+    const kStem = cleanWord.endsWith('い') ? cleanWord.slice(0, -1) : cleanWord;
+    const rStem = hira.slice(0, -1);
+    if (form === 'te') return { kanji: `${kStem}くて`, reading: `${rStem}くて` };
+    if (form === 'ta') return { kanji: `${kStem}かった`, reading: `${rStem}かった` };
+    if (form === 'nai') return { kanji: `${kStem}くない`, reading: `${rStem}くない` };
+    if (form === 'masu') return { kanji: `${kStem}いです`, reading: `${rStem}いです` };
+  }
+
+  // 5. Adjetivos -na
+  if (isAdjNa) {
+    const baseK = cleanWord.endsWith('な') ? cleanWord.slice(0, -1) : cleanWord;
+    const baseR = hira.endsWith('な') ? hira.slice(0, -1) : hira;
+    if (form === 'te') return { kanji: `${baseK}で`, reading: `${baseR}で` };
+    if (form === 'ta') return { kanji: `${baseK}だった`, reading: `${baseR}だった` };
+    if (form === 'nai') return { kanji: `${baseK}じゃない`, reading: `${baseR}じゃない` };
+    if (form === 'masu') return { kanji: `${baseK}です`, reading: `${baseR}です` };
+  }
+
+  // Fallback seguro
+  return { kanji: cleanWord, reading: cleanReading };
+}
+

@@ -17,6 +17,7 @@ import { State } from 'ts-fsrs';
 import { speakText } from '../../../lib/audio-service';
 import { getQuickHskLevel } from '../../../lib/hsk-data';
 import { cleanAndFormatMeanings, extractKanjis, parseFurigana } from '../../../lib/japanese-search';
+import { classifyJapaneseWord } from '../../../lib/japanese-utils';
 import { getKanjiJlptLevel, getQuickJlptLevel } from '../../../lib/jlpt-data';
 import { getStorageItem, setStorageItem } from '../../../lib/storage-service';
 import {
@@ -715,7 +716,7 @@ export default function WordDetailScreen() {
     );
   }
 
-  const { word, deck, srsItem, meaningsList, compoundWords, level } = data;
+  const { word, deck, srsItem, meaningsList, compoundWords, level, category } = data;
   const lang = deck?.languageCode || 'zh-CN';
   const isChinese = lang.startsWith('zh');
   const isJapanese = lang.startsWith('ja');
@@ -737,6 +738,9 @@ export default function WordDetailScreen() {
   const cleanReading = lang.startsWith('ja')
     ? rawReading.replace(/\s*\([^)]*\)/g, '').trim()
     : rawReading;
+
+  // Categoría gramatical (explícita o heurística para japonés)
+  const activeCategory = category || (isJapanese ? classifyJapaneseWord(word.simplified, cleanReading) : undefined);
 
   // Formato amigable de estado FSRS
   const getSrsStateLabel = (stateNum?: number) => {
@@ -783,19 +787,26 @@ export default function WordDetailScreen() {
         {/* Tarjeta Principal de la Palabra */}
         <View style={[styles.mainCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
 
-          {/* Fila superior: Badge JLPT (si existe) a la izquierda del parlante, parlante arriba a la derecha */}
+          {/* Fila superior: Badges (Categoría, JLPT/HSK) a la izquierda del parlante */}
           <View style={styles.topActionsRow}>
-            {activeLevel ? (
-              <View style={styles.levelBadge}>
-                <Text style={[styles.levelBadgeText, { color: colors.primary }]}>
-                  {activeLevel.startsWith('HSK') || activeLevel.startsWith('JLPT')
-                    ? activeLevel
-                    : lang.startsWith('ja')
-                      ? `JLPT ${activeLevel}`
-                      : `HSK ${activeLevel}`}
-                </Text>
-              </View>
-            ) : <View />}
+            <View style={styles.topBadgesRow}>
+              {activeCategory ? (
+                <View style={[styles.categoryBadge, { backgroundColor: colors.surfaceHighlight }]}>
+                  <Text style={[styles.categoryBadgeText, { color: colors.primary }]}>{activeCategory}</Text>
+                </View>
+              ) : null}
+              {activeLevel ? (
+                <View style={styles.levelBadge}>
+                  <Text style={[styles.levelBadgeText, { color: colors.primary }]}>
+                    {activeLevel.startsWith('HSK') || activeLevel.startsWith('JLPT')
+                      ? activeLevel
+                      : lang.startsWith('ja')
+                        ? `JLPT ${activeLevel}`
+                        : `HSK ${activeLevel}`}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
 
             <TouchableOpacity
               style={[styles.audioBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}
@@ -1175,7 +1186,7 @@ const styles = StyleSheet.create({
   rubyContainer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    flexWrap: 'nowrap',
+    flexWrap: 'wrap',
   },
   rubyPair: {
     alignItems: 'center',
@@ -1196,6 +1207,24 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginTop: 4,
     letterSpacing: 0.5,
+  },
+  topBadgesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+    flex: 1,
+  },
+  categoryBadge: {
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.35)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  categoryBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
   },
   levelBadge: {
     backgroundColor: 'rgba(59, 130, 246, 0.15)',

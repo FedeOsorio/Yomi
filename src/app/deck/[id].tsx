@@ -13,6 +13,8 @@ import { getQuickHskLevel } from '../../../lib/hsk-data';
 import { cleanAndFormatMeanings } from '../../../lib/japanese-search';
 import { getQuickJlptLevel } from '../../../lib/jlpt-data';
 import { deleteWord } from '../../../lib/word-service';
+import { classifyJapaneseWord } from '../../../lib/japanese-utils';
+import { ConjugationPracticeModal } from '../../components/ConjugationPracticeModal';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { Shadows, Spacing, Typography } from '../../constants/theme';
 
@@ -23,6 +25,7 @@ export default function DeckDetailScreen() {
   const router = useRouter();
   const [deckWords, setDeckWords] = useState<any[]>([]);
   const [deckInfo, setDeckInfo] = useState<any>(null);
+  const [conjugationModalVisible, setConjugationModalVisible] = useState(false);
 
   // Cálculo dinámico para garantizar exactamente 16px de separación por encima de la barra en cualquier dispositivo
   const tabBottomMargin = Platform.OS === 'android' ? Math.max(insets.bottom + 4, 8) : Math.max(insets.bottom, 6);
@@ -40,10 +43,15 @@ export default function DeckDetailScreen() {
 
       const processed = result.map((w) => {
         let level: string | undefined = undefined;
+        let category: string | undefined = undefined;
+        let conjugationEnabled = false;
+
         if (w.auxiliaryInfo) {
           try {
             const parsed = JSON.parse(w.auxiliaryInfo);
             level = parsed.level;
+            category = parsed.category;
+            conjugationEnabled = Boolean(parsed.conjugationEnabled);
           } catch { }
         }
 
@@ -63,10 +71,21 @@ export default function DeckDetailScreen() {
           ? rawReading.replace(/\s*\([^)]*\)/g, '').trim()
           : rawReading;
 
+        // Auto-clasificación si es japonés y no tenía categoría explícita
+        if (!category && isJapaneseDeck) {
+          category = classifyJapaneseWord(w.simplified, cleanReading);
+        }
+
+        const isConjugable =
+          conjugationEnabled ||
+          Boolean(category?.startsWith('Verbo') || category?.startsWith('Adjetivo'));
+
         return {
           ...w,
           resolvedLevel: level,
+          resolvedCategory: category,
           displayReading: cleanReading,
+          isConjugable,
         };
       });
 
@@ -166,6 +185,17 @@ export default function DeckDetailScreen() {
         </View>
 
         <View style={styles.headerActions}>
+          {deckInfo?.languageCode === 'ja-JP' && deckWords.some((w) => w.isConjugable) && (
+            <TouchableOpacity
+              style={[styles.conjugationBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}
+              onPress={() => setConjugationModalVisible(true)}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="sparkles" size={13} color={colors.primary} style={{ marginRight: 4 }} />
+              <Text style={[styles.conjugationBtnText, { color: colors.primary }]}>Conjugaciones</Text>
+            </TouchableOpacity>
+          )}
+
           {deckWords.length > 0 && (
             <TouchableOpacity
               style={[styles.studyDeckBtn, { backgroundColor: colors.primary }]}
@@ -288,8 +318,14 @@ export default function DeckDetailScreen() {
                     ) : null}
                   </View>
 
-                  {/* Derecha: Badge de Nivel JLPT/HSK al lado del Parlante y Borrar */}
+                  {/* Derecha: Badges de Categoría y Nivel JLPT/HSK al lado del Parlante y Borrar */}
                   <View style={styles.actionsRow}>
+                    {item.resolvedCategory ? (
+                      <View style={[styles.categoryBadge, { backgroundColor: colors.surfaceHighlight }]}>
+                        <Text style={[styles.categoryBadgeText, { color: colors.primary }]}>{item.resolvedCategory}</Text>
+                      </View>
+                    ) : null}
+
                     {formattedLevel ? (
                       <View style={styles.levelBadge}>
                         <Text style={[styles.levelBadgeText, { color: colors.primary }]}>{formattedLevel}</Text>
@@ -339,6 +375,16 @@ export default function DeckDetailScreen() {
       >
         <Text style={styles.fabExtendedText}>+ Añadir palabra</Text>
       </TouchableOpacity>
+
+      {/* Modal de Práctica de Conjugaciones */}
+      {id && (
+        <ConjugationPracticeModal
+          visible={conjugationModalVisible}
+          onClose={() => setConjugationModalVisible(false)}
+          deckId={id}
+          deckName={deckInfo?.name || 'Mazo'}
+        />
+      )}
     </View>
   );
 }
@@ -377,6 +423,19 @@ const styles = StyleSheet.create({
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  conjugationBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginRight: Spacing.xs,
+  },
+  conjugationBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
   studyDeckBtn: {
     flexDirection: 'row',
@@ -462,6 +521,18 @@ const styles = StyleSheet.create({
   actionsRow: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  categoryBadge: {
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.35)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginRight: 4,
+  },
+  categoryBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
   },
   levelBadge: {
     backgroundColor: 'rgba(59, 130, 246, 0.15)',

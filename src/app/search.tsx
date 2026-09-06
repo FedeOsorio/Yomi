@@ -14,6 +14,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { searchByPinyin, SearchResult, DictionaryEntry, getChineseSpanishMeaning } from '../../lib/search-engine';
 import { searchJapanese, JapaneseEntry } from '../../lib/japanese-search';
+import { classifyJapaneseWord } from '../../lib/japanese-utils';
 import { saveWords, saveCustomWord, saveGenericWord } from '../../lib/word-service';
 import { getDecksWithStats, DeckWithStats, SUPPORTED_LANGUAGES } from '../../lib/deck-service';
 import { speakText } from '../../lib/audio-service';
@@ -190,20 +191,70 @@ export default function SearchScreen() {
     }
   };
 
-  // --- GUARDADO RÁPIDO JAPONÉS CON JLPT ---
+  // --- GUARDADO RÁPIDO JAPONÉS CON JLPT Y CONJUGACIÓN ---
   const handleQuickSaveJapanese = async (entry: JapaneseEntry) => {
     if (!selectedDeckId) return;
-    try {
-      await saveGenericWord(selectedDeckId, {
-        text: entry.kanji,
-        reading: entry.reading,
-        meanings: JSON.stringify(entry.meanings),
-        level: entry.level,
-      });
-      const levelLabel = entry.level ? ` [JLPT ${entry.level}]` : '';
-      Alert.alert('¡Guardado!', `"${entry.kanji}" (${entry.reading})${levelLabel} fue agregada a "${currentDeck?.name}".`);
-    } catch (e) {
-      Alert.alert('Error', 'No se pudo guardar la palabra.');
+
+    const isConjugable =
+      Boolean(entry.dictionaryForm) ||
+      Boolean(entry.category && (entry.category.startsWith('Verbo') || entry.category.startsWith('Adjetivo')));
+
+    const executeSave = async (withConjugation: boolean) => {
+      try {
+        if (withConjugation && entry.dictionaryForm) {
+          // Guardar la forma diccionario con la práctica de conjugación activada
+          await saveGenericWord(selectedDeckId, {
+            text: entry.dictionaryForm.kanji,
+            reading: entry.dictionaryForm.reading,
+            meanings: JSON.stringify(entry.dictionaryForm.meanings || entry.meanings),
+            level: entry.level,
+            category: entry.category,
+            conjugationEnabled: true,
+          });
+          const levelLabel = entry.level ? ` [JLPT ${entry.level}]` : '';
+          Alert.alert(
+            '¡Guardado para conjugación!',
+            `"${entry.dictionaryForm.kanji}" (${entry.dictionaryForm.reading})${levelLabel} fue agregada a "${currentDeck?.name}" con práctica de conjugaciones habilitada.`
+          );
+        } else {
+          // Guardar palabra directa
+          await saveGenericWord(selectedDeckId, {
+            text: entry.kanji,
+            reading: entry.reading,
+            meanings: JSON.stringify(entry.meanings),
+            level: entry.level,
+            category: entry.category,
+            conjugationEnabled: withConjugation,
+          });
+          const levelLabel = entry.level ? ` [JLPT ${entry.level}]` : '';
+          Alert.alert(
+            '¡Guardado!',
+            `"${entry.kanji}" (${entry.reading})${levelLabel} fue agregada a "${currentDeck?.name}".`
+          );
+        }
+      } catch (e) {
+        Alert.alert('Error', 'No se pudo guardar la palabra.');
+      }
+    };
+
+    if (isConjugable) {
+      Alert.alert(
+        '¿Quieres agregar el verbo al ejercicio de conjugación?',
+        '(esto guarda también automáticamente la forma diccionario)',
+        [
+          {
+            text: 'No, solo tarjeta directa',
+            style: 'cancel',
+            onPress: () => executeSave(false),
+          },
+          {
+            text: 'Sí, agregar con conjugación',
+            onPress: () => executeSave(true),
+          },
+        ]
+      );
+    } else {
+      executeSave(false);
     }
   };
 
@@ -343,6 +394,7 @@ export default function SearchScreen() {
                       romaji: query.trim(),
                       meanings: [query.trim()],
                       isCommon: false,
+                      category: classifyJapaneseWord(query.trim(), query.trim()),
                     })
                   }
                 >
@@ -367,8 +419,13 @@ export default function SearchScreen() {
                   )}
                 </View>
 
-                {/* Acciones: Badge JLPT al lado del Parlante y Guardar */}
+                {/* Acciones: Badges de Categoría y JLPT al lado del Parlante y Guardar */}
                 <View style={styles.actionButtonsRow}>
+                  {item.category && (
+                    <View style={[styles.categoryBadge, { backgroundColor: colors.surfaceHighlight }]}>
+                      <Text style={[styles.categoryBadgeText, { color: colors.primary }]}>{item.category}</Text>
+                    </View>
+                  )}
                   {item.level && (
                     <View style={styles.levelBadge}>
                       <Text style={[styles.levelBadgeText, { color: colors.primary }]}>JLPT {item.level}</Text>
@@ -675,6 +732,18 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
+  categoryBadge: {
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.35)',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginRight: 6,
+  },
+  categoryBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
   levelBadge: {
     backgroundColor: 'rgba(59, 130, 246, 0.15)',
     borderWidth: 1,
@@ -682,6 +751,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,
+    marginRight: Spacing.xs,
   },
   levelBadgeText: {
     fontSize: 11,

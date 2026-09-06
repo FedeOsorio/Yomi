@@ -5,6 +5,7 @@ import { eq, and, like, ne } from 'drizzle-orm';
 import { createNewSrsItem } from './srs-engine';
 import { DictionaryEntry } from './search-engine';
 import { searchJapanese, extractKanjis, cleanAndFormatMeanings } from './japanese-search';
+import { classifyJapaneseWord } from './japanese-utils';
 
 import * as crypto from 'expo-crypto';
 
@@ -33,6 +34,8 @@ export interface WordDetailWithRelations {
   meaningsList: string[];
   compoundWords: CompoundWord[];
   level?: string;
+  category?: string;
+  conjugationEnabled?: boolean;
 }
 
 /**
@@ -159,10 +162,14 @@ export async function getWordDetailWithRelations(
   }
 
   let level: string | undefined;
+  let category: string | undefined;
+  let conjugationEnabled: boolean | undefined;
   if (word.auxiliaryInfo) {
     try {
       const parsedAux = JSON.parse(word.auxiliaryInfo);
       level = parsedAux.level;
+      category = parsedAux.category;
+      conjugationEnabled = parsedAux.conjugationEnabled;
     } catch {}
   }
 
@@ -173,10 +180,17 @@ export async function getWordDetailWithRelations(
     meaningsList,
     compoundWords: [],
     level,
+    category,
+    conjugationEnabled,
   };
 }
 
-export async function saveWords(deckId: string, selectedEntries: DictionaryEntry[], level?: string): Promise<void> {
+export async function saveWords(
+  deckId: string,
+  selectedEntries: DictionaryEntry[],
+  level?: string,
+  category?: string
+): Promise<void> {
   for (const entry of selectedEntries) {
     const pinyinNum = entry.pinyinNumeric || entry.pinyinDisplay || '';
     const existing = await db
@@ -195,7 +209,10 @@ export async function saveWords(deckId: string, selectedEntries: DictionaryEntry
     }
 
     const wordId = generateUUID();
-    const auxInfo = level ? JSON.stringify({ level }) : null;
+    const auxObj: Record<string, any> = {};
+    if (level) auxObj.level = level;
+    if (category) auxObj.category = category;
+    const auxInfo = Object.keys(auxObj).length > 0 ? JSON.stringify(auxObj) : null;
 
     await db.insert(words).values({
       id: wordId,
@@ -226,11 +243,17 @@ export async function saveCustomWord(
     pinyinDisplay: string;
     meanings: string;
     level?: string;
+    category?: string;
+    conjugationEnabled?: boolean;
   }
 ): Promise<void> {
   const wordId = generateUUID();
   const meaningsJson = data.meanings.startsWith('[') ? data.meanings : JSON.stringify([data.meanings]);
-  const auxInfo = data.level ? JSON.stringify({ level: data.level }) : null;
+  const auxObj: Record<string, any> = {};
+  if (data.level) auxObj.level = data.level;
+  if (data.category) auxObj.category = data.category;
+  if (data.conjugationEnabled !== undefined) auxObj.conjugationEnabled = data.conjugationEnabled;
+  const auxInfo = Object.keys(auxObj).length > 0 ? JSON.stringify(auxObj) : null;
 
   await db.insert(words).values({
     id: wordId,
@@ -260,11 +283,17 @@ export async function saveGenericWord(
     reading?: string;
     meanings: string;
     level?: string;
+    category?: string;
+    conjugationEnabled?: boolean;
   }
 ): Promise<void> {
   const wordId = generateUUID();
   const meaningsJson = data.meanings.startsWith('[') ? data.meanings : JSON.stringify([data.meanings]);
-  const auxInfo = data.level ? JSON.stringify({ level: data.level }) : null;
+  const auxObj: Record<string, any> = {};
+  if (data.level) auxObj.level = data.level;
+  if (data.category) auxObj.category = data.category;
+  if (data.conjugationEnabled !== undefined) auxObj.conjugationEnabled = data.conjugationEnabled;
+  const auxInfo = Object.keys(auxObj).length > 0 ? JSON.stringify(auxObj) : null;
 
   await db.insert(words).values({
     id: wordId,
@@ -456,5 +485,69 @@ export async function saveBatchWords(
   }
 
   return { inserted, skipped };
+}
+
+export interface ConjugableWord {
+  id: string;
+  kanji: string;
+  reading: string;
+  meanings: string[];
+  category: string;
+  level?: string;
+}
+
+/**
+ * Obtiene todas las palabras de un mazo que son verbos o adjetivos (o tienen conjugación habilitada)
+ * para realizar la práctica de conjugaciones.
+ */
+export async function getConjugableWordsForDeck(deckId: string): Promise<ConjugableWord[]> {
+  const deckWords = await db.select().from(words).where(eq(words.deckId, deckId));
+  const results: ConjugableWord[] = [];
+
+  for (const w of deckWords) {
+    let category = '';
+    let level = '';
+    let conjugationEnabled = false;
+
+    if (w.auxiliaryInfo) {
+      try {
+        const aux = JSON.parse(w.auxiliaryInfo);
+        category = aux.category || '';
+        level = aux.level || '';
+        conjugationEnabled = Boolean(aux.conjugationEnabled);
+      } catch {}
+    }
+
+    // Si no tiene category explícita, intentar clasificar si es japonés
+    if (!category) {
+      const cleanReading = (w.pinyinDisplay || '').replace(/\s*\([^)]*\)/g, '').trim();
+      category = classifyJapaneseWord(w.simplified, cleanReading);
+    }
+
+    const isConjugable =
+      conjugationEnabled ||
+      category.startsWith('Verbo') ||
+      category.startsWith('Adjetivo');
+
+    if (isConjugable) {
+      let parsedMeanings: string[] = [];
+      try {
+        parsedMeanings = cleanAndFormatMeanings(w.meanings);
+      } catch {
+        parsedMeanings = [w.simplified];
+      }
+
+      results.push({
+        id: w.id,
+        kanji: w.simplified,
+        reading: (w.pinyinDisplay || '').replace(/\s*\([^)]*\)/g, '').trim(),
+        meanings: parsedMeanings,
+        category,
+        level: level || undefined,
+      });
+    }
+  }
+
+  return results;
 }
 

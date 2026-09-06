@@ -106,9 +106,6 @@ class SpeechRecognitionService {
         lang: targetLang,
         interimResults: true,
         continuous: true,
-        androidIntentOptions: {
-          EXTRA_PARTIAL_RESULTS: true,
-        },
       });
 
       this.isListeningActive = true;

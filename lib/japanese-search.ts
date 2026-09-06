@@ -1,4 +1,4 @@
-import { romajiToHiragana, containsJapanese, deconjugateJapanese } from './japanese-utils';
+import { romajiToHiragana, containsJapanese, deconjugateJapanese, classifyJapaneseWord } from './japanese-utils';
 import { getQuickJlptLevel } from './jlpt-data';
 
 export interface JapaneseEntry {
@@ -9,6 +9,13 @@ export interface JapaneseEntry {
   meanings: string[];
   isCommon: boolean;
   level?: string; // 'N5', 'N4', 'N3', 'N2', 'N1'
+  category?: string; // 'Verbo Godan (Grupo 1)', 'Verbo Ichidan (Grupo 2)', 'Verbo Irregular (Grupo 3)', 'Adjetivo -i', 'Adjetivo -na', 'Sustantivo', 'Frase / Expresión'
+  dictionaryForm?: {
+    kanji: string;
+    reading: string;
+    meanings?: string[];
+  };
+  detectedConjugation?: string;
 }
 
 export interface FuriganaPair {
@@ -199,6 +206,42 @@ async function translateToSpanish(text: string, fromLang: 'en' | 'ja' = 'en'): P
 }
 
 /**
+ * Mapea las partes de la oración (parts_of_speech) devueltas por JMdict/Jisho
+ * a categorías estandarizadas en español (Verbo Ichidan, Verbo Godan, etc.)
+ */
+export function mapJishoPartsOfSpeech(partsOfSpeech: string[], word: string, reading: string): string {
+  if (!partsOfSpeech || partsOfSpeech.length === 0) {
+    return classifyJapaneseWord(word, reading);
+  }
+
+  const joined = partsOfSpeech.join(' ').toLowerCase();
+
+  if (joined.includes('suru verb') || joined.includes('kuru verb')) {
+    return 'Verbo Irregular (Grupo 3)';
+  }
+  if (joined.includes('ichidan verb')) {
+    return 'Verbo Ichidan (Grupo 2)';
+  }
+  if (joined.includes('godan verb')) {
+    return 'Verbo Godan (Grupo 1)';
+  }
+  if (joined.includes('i-adjective') || joined.includes('keiyoushi')) {
+    return 'Adjetivo -i';
+  }
+  if (joined.includes('na-adjective') || joined.includes('keiyoudoushi')) {
+    return 'Adjetivo -na';
+  }
+  if (joined.includes('noun')) {
+    return 'Sustantivo';
+  }
+  if (joined.includes('expression') || joined.includes('phrase')) {
+    return 'Frase / Expresión';
+  }
+
+  return classifyJapaneseWord(word, reading);
+}
+
+/**
  * Busca palabras en japonés (usando JMdict/Jisho) con ordenamiento inteligente por relevancia y uso común.
  */
 export async function searchJapanese(rawInput: string): Promise<JapaneseEntry[]> {
@@ -231,6 +274,7 @@ export async function searchJapanese(rawInput: string): Promise<JapaneseEntry[]>
         romaji: input.toLowerCase(),
         meanings: [phraseTranslation || 'Frase / Oración'],
         isCommon: true,
+        category: 'Frase / Expresión',
       };
     }
 
@@ -285,6 +329,7 @@ export async function searchJapanese(rawInput: string): Promise<JapaneseEntry[]>
           romaji: input.toLowerCase(),
           meanings: [translated || 'Frase / Oración'],
           isCommon: true,
+          category: 'Frase / Expresión',
         }
       ];
     }
@@ -391,15 +436,24 @@ export async function searchJapanese(rawInput: string): Promise<JapaneseEntry[]>
         }
       }
 
-      // Extraer definiciones en inglés
+      // Extraer definiciones en inglés y partes de la oración (parts_of_speech)
       const rawEnglishDefinitions: string[] = [];
+      const partsOfSpeechList: string[] = [];
       if (item.senses && item.senses.length > 0) {
+        for (const sense of item.senses) {
+          if (Array.isArray(sense.parts_of_speech)) {
+            partsOfSpeechList.push(...sense.parts_of_speech);
+          }
+        }
         for (const sense of item.senses.slice(0, 2)) {
           if (sense.english_definitions) {
             rawEnglishDefinitions.push(sense.english_definitions.join(', '));
           }
         }
       }
+
+      // Clasificación estandarizada de categoría gramatical
+      const category = mapJishoPartsOfSpeech(partsOfSpeechList, dictionaryWord, dictionaryReading);
 
       // Traducir definiciones al español en paralelo con primera letra mayúscula
       const translatedMeanings = await Promise.all(
@@ -412,6 +466,8 @@ export async function searchJapanese(rawInput: string): Promise<JapaneseEntry[]>
         finalMeanings = [`[${conjugationNote}] ${finalMeanings[0]}`, ...finalMeanings.slice(1)];
       }
 
+      const hasConjugation = Boolean(conjugationNote) || (displayKanji !== dictionaryWord || displayReading !== dictionaryReading);
+
       entries.push({
         id: `ja_${i}_${displayKanji}_${displayReading}`,
         kanji: displayKanji,
@@ -420,6 +476,13 @@ export async function searchJapanese(rawInput: string): Promise<JapaneseEntry[]>
         meanings: finalMeanings.length > 0 ? finalMeanings : ['Sin definición disponible'],
         isCommon: item.is_common === true,
         level: jlptLevel,
+        category,
+        detectedConjugation: conjugationNote || undefined,
+        dictionaryForm: hasConjugation ? {
+          kanji: dictionaryWord,
+          reading: dictionaryReading,
+          meanings: cleanAndFormatMeanings(translatedMeanings),
+        } : undefined,
       });
     }
 
