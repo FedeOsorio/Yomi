@@ -21,6 +21,7 @@ import {
   deleteDeck,
   DeckWithStats,
   SUPPORTED_LANGUAGES,
+  ALL_LANGUAGES,
 } from '../../../lib/deck-service';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { Shadows, Spacing, Typography } from '../../constants/theme';
@@ -32,7 +33,7 @@ export default function HomeScreen() {
   const [menuVisible, setMenuVisible] = useState(false);
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [newDeckName, setNewDeckName] = useState('');
-  const [selectedLang, setSelectedLang] = useState('zh-CN');
+  const [selectedLang, setSelectedLang] = useState('ja-JP');
   const [isCreating, setIsCreating] = useState(false);
 
   const router = useRouter();
@@ -113,7 +114,7 @@ export default function HomeScreen() {
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ paddingBottom: 110 }}
           renderItem={({ item }) => {
-            const langMeta = SUPPORTED_LANGUAGES.find((l) => l.code === item.languageCode);
+            const langMeta = ALL_LANGUAGES.find((l) => l.code === item.languageCode) || SUPPORTED_LANGUAGES[0];
             return (
               <TouchableOpacity
                 style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
@@ -188,7 +189,7 @@ export default function HomeScreen() {
               <View style={styles.menuTextContainer}>
                 <Text style={[styles.menuOptionTitle, { color: colors.text }]}>Crear nuevo mazo</Text>
                 <Text style={[styles.menuOptionSub, { color: colors.textMuted }]}>
-                  Elige un idioma (Chino, Japonés, Inglés, Español, etc.)
+                  Elige un idioma (Japonés o Chino)
                 </Text>
               </View>
             </TouchableOpacity>

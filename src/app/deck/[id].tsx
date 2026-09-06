@@ -8,7 +8,7 @@ import { db } from '../../../db';
 import { decks, words } from '../../../db/schema';
 import { exportDeckToYomiFormat } from '../../../lib/anki-importer';
 import { speakText } from '../../../lib/audio-service';
-import { SUPPORTED_LANGUAGES, deleteDeck } from '../../../lib/deck-service';
+import { ALL_LANGUAGES, deleteDeck } from '../../../lib/deck-service';
 import { getQuickHskLevel } from '../../../lib/hsk-data';
 import { cleanAndFormatMeanings } from '../../../lib/japanese-search';
 import { getQuickJlptLevel } from '../../../lib/jlpt-data';
@@ -167,7 +167,7 @@ export default function DeckDetailScreen() {
     speakText(text, lang);
   };
 
-  const langMeta = SUPPORTED_LANGUAGES.find((l) => l.code === deckInfo?.languageCode);
+  const langMeta = ALL_LANGUAGES.find((l) => l.code === deckInfo?.languageCode) || ALL_LANGUAGES[0];
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top + 4 }]}>

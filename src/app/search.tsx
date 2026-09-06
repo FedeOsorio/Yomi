@@ -16,7 +16,7 @@ import { searchByPinyin, SearchResult, DictionaryEntry, getChineseSpanishMeaning
 import { searchJapanese, JapaneseEntry } from '../../lib/japanese-search';
 import { classifyJapaneseWord } from '../../lib/japanese-utils';
 import { saveWords, saveCustomWord, saveGenericWord } from '../../lib/word-service';
-import { getDecksWithStats, DeckWithStats, SUPPORTED_LANGUAGES } from '../../lib/deck-service';
+import { getDecksWithStats, DeckWithStats, SUPPORTED_LANGUAGES, ALL_LANGUAGES } from '../../lib/deck-service';
 import { speakText } from '../../lib/audio-service';
 import { Spacing, Typography, Shadows } from '../constants/theme';
 import { getQuickHskLevel } from '../../lib/hsk-data';
@@ -86,7 +86,7 @@ export default function SearchScreen() {
   const isChinese = langCode.startsWith('zh');
   const isJapanese = langCode.startsWith('ja');
 
-  const currentLangMeta = SUPPORTED_LANGUAGES.find(l => l.code === langCode) || {
+  const currentLangMeta = ALL_LANGUAGES.find(l => l.code === langCode) || {
     label: 'Idioma',
     flag: '🌐',
     placeholder: 'Escribí una palabra...',
@@ -335,7 +335,7 @@ export default function SearchScreen() {
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.deckChipsScroll}>
           {decks.map((d) => {
             const isSelected = d.id === selectedDeckId;
-            const langMeta = SUPPORTED_LANGUAGES.find(l => l.code === d.languageCode);
+            const langMeta = ALL_LANGUAGES.find(l => l.code === d.languageCode);
             return (
               <TouchableOpacity
                 key={d.id}

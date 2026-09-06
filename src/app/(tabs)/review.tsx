@@ -35,12 +35,12 @@ import {
 import { romajiToHiragana } from '../../../lib/japanese-utils';
 import { cleanAndFormatMeanings } from '../../../lib/japanese-search';
 import { calculateChineseAccuracyScore, PinyinBreakdownItem, ChineseAccuracyResult } from '../../../lib/pinyin-utils';
-import { getDecksWithStats, DeckWithStats, SUPPORTED_LANGUAGES } from '../../../lib/deck-service';
+import { getDecksWithStats, DeckWithStats, SUPPORTED_LANGUAGES, ALL_LANGUAGES } from '../../../lib/deck-service';
 import { getCompoundWordsForChar, CompoundWord } from '../../../lib/word-service';
 import { speakText } from '../../../lib/audio-service';
 import { speechService } from '../../../lib/speech-recognition-service';
 import { useTheme } from '../../../providers/ThemeProvider';
-import { Spacing, Typography, Shadows } from '../../constants/theme';
+import { Spacing, Typography, Shadows, getFloatingTabBarStyle } from '../../constants/theme';
 import { Rating } from 'ts-fsrs';
 import Svg, { Circle } from 'react-native-svg';
 
@@ -197,26 +197,24 @@ export default function ReviewScreen() {
     ],
   }), [cardFlipAnim]);
 
-  // Ocultar la barra de pestañas (tab bar) durante la sesión de repaso y restaurarla al salir
+  // Ocultar la barra de pestañas (tab bar) durante la sesión activa de estudio y restaurarla fielmente con estilo flotante
   useEffect(() => {
-    navigation.setOptions({
-      tabBarStyle: selectedDeckId
-        ? { display: 'none' }
-        : undefined,
-    });
-    const parent = navigation.getParent();
-    if (parent) {
-      parent.setOptions({
-        tabBarStyle: selectedDeckId ? { display: 'none' } : undefined,
+    const defaultTabBarStyle = getFloatingTabBarStyle(colors, insets.bottom);
+    if (selectedDeckId) {
+      navigation.setOptions({
+        tabBarStyle: { display: 'none' },
+      });
+    } else {
+      navigation.setOptions({
+        tabBarStyle: defaultTabBarStyle,
       });
     }
     return () => {
-      navigation.setOptions({ tabBarStyle: undefined });
-      if (parent) {
-        parent.setOptions({ tabBarStyle: undefined });
-      }
+      navigation.setOptions({
+        tabBarStyle: defaultTabBarStyle,
+      });
     };
-  }, [selectedDeckId, navigation]);
+  }, [selectedDeckId, navigation, colors, insets.bottom]);
 
   // Interceptar el botón de retroceso de Android: si hay sesión activa, salir en lugar de navegar
   useEffect(() => {
@@ -832,7 +830,7 @@ export default function ReviewScreen() {
   }
 
   const renderDeckGridItem = ({ item }: { item: DeckWithStats }) => {
-    const langMeta = SUPPORTED_LANGUAGES.find((l) => l.code === item.languageCode);
+    const langMeta = ALL_LANGUAGES.find((l) => l.code === item.languageCode) || SUPPORTED_LANGUAGES[0];
     const dueCount = item.dueCount || 0;
     const wordCount = item.wordCount || 0;
     const hasDue = dueCount > 0;

@@ -18,6 +18,7 @@ import {
   deleteDeck,
   DeckWithStats,
   SUPPORTED_LANGUAGES,
+  ALL_LANGUAGES,
 } from '../../../lib/deck-service';
 import { Colors, Shadows, Spacing, Typography } from '../../constants/theme';
 
@@ -107,7 +108,7 @@ export default function DecksScreen() {
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ paddingBottom: Spacing.xl }}
           renderItem={({ item }) => {
-            const langMeta = SUPPORTED_LANGUAGES.find((l) => l.code === item.languageCode);
+            const langMeta = ALL_LANGUAGES.find((l) => l.code === item.languageCode);
             return (
               <TouchableOpacity
                 style={styles.card}

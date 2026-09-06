@@ -12,9 +12,10 @@ export interface DeckWithStats {
   dueCount: number;
 }
 
-export const SUPPORTED_LANGUAGES = [
-  { code: 'zh-CN', label: 'Chino', flag: '🇨🇳', placeholder: 'ej. xihuan, ni hao' },
+// Catálogo completo de idiomas soportados para resolución de metadata
+export const ALL_LANGUAGES = [
   { code: 'ja-JP', label: 'Japonés', flag: '🇯🇵', placeholder: 'ej. hon, arigato, 本' },
+  { code: 'zh-CN', label: 'Chino', flag: '🇨🇳', placeholder: 'ej. xihuan, ni hao' },
   { code: 'en-US', label: 'Inglés', flag: '🇺🇸', placeholder: 'ej. serendipity, book' },
   { code: 'es-ES', label: 'Español', flag: '🇪🇸', placeholder: 'ej. efímero, biblioteca' },
   { code: 'fr-FR', label: 'Francés', flag: '🇫🇷', placeholder: 'ej. bonjour, livre' },
@@ -25,12 +26,23 @@ export const SUPPORTED_LANGUAGES = [
   { code: 'ru-RU', label: 'Ruso', flag: '🇷🇺', placeholder: 'ej. privet, kniga' },
 ];
 
-export async function createDeck(name: string, languageCode: string = 'zh-CN'): Promise<string> {
+// Idiomas habilitados para creación de mazos (exclusivamente Japonés y Chino)
+export const SUPPORTED_LANGUAGES = ALL_LANGUAGES.filter(
+  (lang) => lang.code === 'ja-JP' || lang.code === 'zh-CN'
+);
+
+export function getLanguageMeta(code?: string) {
+  return ALL_LANGUAGES.find((l) => l.code === code) || ALL_LANGUAGES[0];
+}
+
+export async function createDeck(name: string, languageCode: string = 'ja-JP'): Promise<string> {
+  const allowed = ['ja-JP', 'zh-CN'];
+  const finalLang = allowed.includes(languageCode) ? languageCode : 'ja-JP';
   const id = crypto.randomUUID();
   await db.insert(decks).values({
     id,
     name: name.trim(),
-    languageCode,
+    languageCode: finalLang,
     createdAt: new Date(),
   });
   return id;

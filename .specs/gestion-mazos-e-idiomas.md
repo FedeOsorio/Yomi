@@ -11,7 +11,8 @@ Permite al usuario crear, organizar y eliminar sus mazos según el idioma de est
 
 ## Flujo Principal
 1. **Creación de Mazos**:
-   - El usuario abre el modal (+), ingresa un nombre y selecciona un idioma soportado (ej. Chino, Japonés, Inglés).
+   - El usuario abre el modal (+), ingresa un nombre y selecciona un idioma soportado.
+   - **Restricción Temporal**: La creación de nuevos mazos está habilitada exclusivamente para **Japonés (`ja-JP`)** y **Chino (`zh-CN`)**, ya que son los idiomas probados y testeados. Los idiomas restantes se conservan en el catálogo de resolución de metadata (`ALL_LANGUAGES`) para garantizar total compatibilidad con mazos existentes creados con anterioridad.
 2. **Reconocimiento Fonético y Búsqueda Multidioma**:
    - En Chino (`zh-CN`): Reconocimiento por Pinyin y constructor de sílabas.
    - En Japonés (`ja-JP`): Conversión Romaji $\rightarrow$ Hiragana y consulta en JMdict en español.

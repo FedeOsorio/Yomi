@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+
 export const DarkColors = {
   background: '#0B0D17', // Deep space dark
   surface: '#1A1D2D',
@@ -56,3 +58,26 @@ export const Shadows = {
     elevation: 4,
   }
 };
+
+export function getFloatingTabBarStyle(colors: { surface: string; border: string }, bottomInset: number = 0) {
+  const bottomMargin = Platform.OS === 'android' ? Math.max(bottomInset + 4, 8) : Math.max(bottomInset, 6);
+  return {
+    backgroundColor: colors.surface,
+    borderTopColor: colors.border,
+    height: 60,
+    paddingBottom: 0,
+    paddingTop: 0,
+    marginBottom: bottomMargin,
+    marginHorizontal: 16,
+    borderRadius: 20,
+    position: 'absolute' as const,
+    borderWidth: 1,
+    borderColor: colors.border,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+  };
+}
+

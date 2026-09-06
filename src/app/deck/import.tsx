@@ -21,6 +21,7 @@ import {
   createDeck,
   DeckWithStats,
   SUPPORTED_LANGUAGES,
+  ALL_LANGUAGES,
 } from '../../../lib/deck-service';
 import {
   parseVocabularyFile,
@@ -256,7 +257,7 @@ export default function ImportDeckScreen() {
                   <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Seleccionar mazo:</Text>
                   {decks.map((d) => {
                     const isSelected = selectedDeckId === d.id;
-                    const langMeta = SUPPORTED_LANGUAGES.find((l) => l.code === d.languageCode);
+                    const langMeta = ALL_LANGUAGES.find((l) => l.code === d.languageCode) || SUPPORTED_LANGUAGES[0];
                     return (
                       <TouchableOpacity
                         key={d.id}

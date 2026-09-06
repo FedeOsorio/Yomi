@@ -3,12 +3,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { View, Text, StyleSheet, Platform, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { getFloatingTabBarStyle } from '../../constants/theme';
 
 export default function TabLayout() {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
-
-  const bottomMargin = Platform.OS === 'android' ? Math.max(insets.bottom + 4, 8) : Math.max(insets.bottom, 6);
 
   const renderYomiHeaderTitle = (subtitle: string) => (
     <View style={styles.headerTitleRow}>
@@ -45,24 +44,7 @@ export default function TabLayout() {
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textMuted,
         tabBarButton: (props) => <CircularTabButton {...props} />,
-        tabBarStyle: {
-          backgroundColor: colors.surface,
-          borderTopColor: colors.border,
-          height: 60,
-          paddingBottom: 0,
-          paddingTop: 0,
-          marginBottom: bottomMargin,
-          marginHorizontal: 16,
-          borderRadius: 20,
-          position: 'absolute',
-          borderWidth: 1,
-          borderColor: colors.border,
-          elevation: 8,
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 4 },
-          shadowOpacity: 0.2,
-          shadowRadius: 8,
-        },
+        tabBarStyle: getFloatingTabBarStyle(colors, insets.bottom),
         headerStyle: {
           backgroundColor: colors.background,
           elevation: 0,
