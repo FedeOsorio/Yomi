@@ -11,7 +11,7 @@
       "package": "com.kuyi.yomi",
       "adaptiveIcon": {
         "backgroundColor": "#fafaf0",
-        "foregroundImage": "./assets/images/adaptive-icon.png"
+        "foregroundImage": "./assets/images/icon.png"
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
@@ -35,7 +35,8 @@
         "expo-splash-screen",
         {
           "backgroundColor": "#fdfaec",
-          "image": "./assets/images/splash.png",
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 200,
           "resizeMode": "contain"
         }
       ],
