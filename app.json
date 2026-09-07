@@ -11,7 +11,7 @@
       "package": "com.kuyi.yomi",
       "adaptiveIcon": {
         "backgroundColor": "#fafaf0",
-        "foregroundImage": "./assets/images/android-icon-foreground.png"
+        "foregroundImage": "./assets/images/adaptive-icon.png"
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
