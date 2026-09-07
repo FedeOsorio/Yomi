@@ -17,8 +17,9 @@ export default function TabLayout() {
     </View>
   );
 
-  // Botón circular máximo (58x58): radio de animación ripple de 29px (diámetro 58px) que llena casi la barra completa de 60px
-  const CircularTabButton = (props: any) => {
+  // Botón adaptativo para la barra flotante: ocupa el ancho y alto completo de la celda
+  // sin forzar una máscara circular de 58x58 ni overflow: 'hidden' que recorte el texto con fuentes grandes
+  const AdaptiveTabButton = (props: any) => {
     const { children, onPress } = props;
     return (
       <View style={styles.tabCellWrapper}>
@@ -26,10 +27,10 @@ export default function TabLayout() {
           onPress={onPress}
           android_ripple={{
             color: isDark ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.08)',
-            borderless: true,
-            radius: 29,
+            borderless: false,
+            foreground: true,
           }}
-          style={styles.circularPressable}
+          style={styles.tabPressable}
         >
           {children}
         </Pressable>
@@ -43,8 +44,13 @@ export default function TabLayout() {
         headerStatusBarHeight: insets.top,
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textMuted,
-        tabBarButton: (props) => <CircularTabButton {...props} />,
+        tabBarButton: (props) => <AdaptiveTabButton {...props} />,
         tabBarStyle: getFloatingTabBarStyle(colors, insets.bottom),
+        tabBarLabelStyle: {
+          fontSize: 11,
+          fontWeight: '600',
+          maxFontSizeMultiplier: 1.25,
+        },
         headerStyle: {
           backgroundColor: colors.background,
           elevation: 0,
@@ -119,15 +125,17 @@ const styles = StyleSheet.create({
   },
   tabCellWrapper: {
     flex: 1,
+    height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  circularPressable: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
+  tabPressable: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
-    overflow: 'hidden',
+    borderRadius: 16,
+    paddingVertical: 3,
   },
 });
