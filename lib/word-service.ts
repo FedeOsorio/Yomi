@@ -1,4 +1,4 @@
-import { db } from '../db';
+import { db, dictDb } from '../db';
 import { words, decks, srsItems } from '../db/schema';
 import { dictionaryEntries } from '../db/dict-schema';
 import { eq, and, like, ne } from 'drizzle-orm';
@@ -83,7 +83,9 @@ export async function getCompoundWordsForChar(
       ? like(dictionaryEntries.simplified, `%${trimmed}%`)
       : like(dictionaryEntries.simplified, `%${kanjis[0] || trimmed}%`);
 
-    const rawMatches = await db
+    if (!dictDb) return [];
+
+    const rawMatches = await dictDb
       .select()
       .from(dictionaryEntries)
       .where(

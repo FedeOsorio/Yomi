@@ -2,33 +2,45 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { SQLiteProvider, useSQLiteContext } from 'expo-sqlite';
 import { useMigrations } from 'drizzle-orm/expo-sqlite/migrator';
-import { db, initGlobalDb } from '../db';
+import { db, initUserDb, initDictDb } from '../db';
 import migrations from '../db/migrations/migrations';
 
 export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return (
-    // Expo SQLiteProvider automáticamente se encarga de:
-    // 1. Crear el archivo de base de datos si no existe.
-    // 2. Si definimos assetSource, lo copia al dispositivo la primera vez.
-    // 3. Proveer la conexión a través del hook useSQLiteContext.
+    // 1. Base de datos de solo lectura para el diccionario (estática, ~19MB)
     <SQLiteProvider 
-      databaseName="yomi.db" 
+      databaseName="dictionary.db" 
       assetSource={{ assetId: require('../assets/cedict/dictionary.db') }}
     >
-      <InnerProvider>{children}</InnerProvider>
+      <DictInitProvider>
+        {/* 2. Base de datos viva del usuario (mazos, palabras, SRS, <100KB) */}
+        <SQLiteProvider databaseName="user_data.db">
+          <InnerProvider>{children}</InnerProvider>
+        </SQLiteProvider>
+      </DictInitProvider>
     </SQLiteProvider>
   );
 };
 
-const InnerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const expoDb = useSQLiteContext();
-  
-  // 1. Inicializar la instancia global de Drizzle síncronamente antes de las migraciones
-  React.useMemo(() => {
-    initGlobalDb(expoDb);
-  }, [expoDb]);
+const DictInitProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const dictExpoDb = useSQLiteContext();
 
-  // 2. Correr migraciones sobre la base de datos
+  React.useMemo(() => {
+    initDictDb(dictExpoDb);
+  }, [dictExpoDb]);
+
+  return <>{children}</>;
+};
+
+const InnerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const userExpoDb = useSQLiteContext();
+  
+  // Inicializar Drizzle para datos de usuario síncronamente antes de las migraciones
+  React.useMemo(() => {
+    initUserDb(userExpoDb);
+  }, [userExpoDb]);
+
+  // Correr migraciones exclusivamente sobre user_data.db
   const { success: migrationsReady, error: migrationsError } = useMigrations(db, migrations);
 
   if (migrationsError) {

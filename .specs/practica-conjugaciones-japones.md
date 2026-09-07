@@ -27,7 +27,7 @@ Permite categorizar automáticamente las palabras japonesas ingresadas (`categor
    - `Sustantivo`
    - `Frase / Expresión`
 3. Si la palabra es personalizada o no se encuentra en el diccionario, la función heurística `classifyJapaneseWord` determina la categoría analizando las terminaciones morfológicas.
-4. **Optimización de Coincidencia Exacta**: Si la búsqueda coincide con una palabra exacta o su forma de diccionario (ej. *tabete* $\rightarrow$ 食べる, *kesu* $\rightarrow$ 消す), se descartan compuestos largos no relacionados (como *tabesugiru*) y solo se procesan/traducen las acepciones de las coincidencias exactas.
+4. **Optimización y Desconjugación Profunda**: Si la búsqueda es una forma conjugada o compuesta (ej. progresivo *sundeimasu* $\rightarrow$ 住む, *tabemashita* $\rightarrow$ 食べる, *kesu* $\rightarrow$ 消す), el motor revierte a la forma base de diccionario (Jisho-kei) para extraer su Kanji, lectura y nivel JLPT, mostrando en la tarjeta el Kanji correspondiente (`住んでいます`) con su nota gramatical explicativa.
 5. Cada resultado muestra visualmente un badge con su categoría gramatical junto a su nivel JLPT.
 
 ---

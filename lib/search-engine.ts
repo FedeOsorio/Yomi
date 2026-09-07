@@ -1,4 +1,4 @@
-import { db } from '../db';
+import { dictDb } from '../db';
 import { dictionaryEntries } from '../db/dict-schema';
 import { eq, or, like } from 'drizzle-orm';
 import { toSearchKey, getExplicitTone, extractToneNumber, extractTonesFromDisplay } from './pinyin-utils';
@@ -19,7 +19,7 @@ export interface SearchResult {
 }
 
 export function searchByPinyin(rawInput: string): SearchResult {
-  if (!rawInput || !rawInput.trim()) {
+  if (!rawInput || !rawInput.trim() || !dictDb) {
     return { exactMatches: [], syllableGroups: [] };
   }
 
@@ -28,7 +28,7 @@ export function searchByPinyin(rawInput: string): SearchResult {
 
   // A) Búsqueda directa por caracteres Chinos (Hanzi / Ideogramas)
   if (containsHanzi) {
-    const exactHanzi = db
+    const exactHanzi = dictDb
       .select()
       .from(dictionaryEntries)
       .where(
@@ -43,7 +43,7 @@ export function searchByPinyin(rawInput: string): SearchResult {
       return { exactMatches: exactHanzi, syllableGroups: [] };
     }
 
-    const partialHanzi = db
+    const partialHanzi = dictDb
       .select()
       .from(dictionaryEntries)
       .where(
@@ -65,7 +65,7 @@ export function searchByPinyin(rawInput: string): SearchResult {
   }
   
   // 1. Coincidencias exactas por clave de Pinyin
-  const exactMatches = db
+  const exactMatches = dictDb
     .select()
     .from(dictionaryEntries)
     .where(eq(dictionaryEntries.pinyinKey, searchKey))
@@ -132,7 +132,7 @@ export function searchByPinyin(rawInput: string): SearchResult {
   const syllableGroups: SyllableGroup[] = [];
   
   for (const info of syllableInfos) {
-    const rawCandidates = db
+    const rawCandidates = dictDb
       .select()
       .from(dictionaryEntries)
       .where(eq(dictionaryEntries.pinyinKey, info.syllable))
@@ -207,7 +207,8 @@ export async function getChineseSpanishMeaning(
 
   // 2. Fallback: Buscar si la palabra completa está en la base de datos local
   try {
-    const exactWord = db
+    if (!dictDb) return '';
+    const exactWord = dictDb
       .select()
       .from(dictionaryEntries)
       .where(

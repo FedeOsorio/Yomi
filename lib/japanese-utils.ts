@@ -238,6 +238,8 @@ const KANJI_READINGS_MAP: Record<string, string> = {
   '早': 'はや', '速': 'はや',
   // Yoi / Ii
   '良': 'よ',
+  // Sumu / Sunde
+  '住': 'す',
 };
 
 /**
@@ -440,6 +442,51 @@ export function deconjugateJapanese(text: string): string[] {
     if (normalized.endsWith('ばない')) candidates.add(normalized.slice(0, -3) + 'ぶ');
     if (normalized.endsWith('まない')) candidates.add(normalized.slice(0, -3) + 'む');
     if (normalized.endsWith('らない')) candidates.add(normalized.slice(0, -3) + 'る');
+  }
+
+  // 5. Desconjugación de la forma progresiva / estado (-te imasu / -te iru / -te ita / -te imashita)
+  // Ejemplos: 住んでいます (sundeimasu) -> 住む (sumu), 食べています -> 食べる, 知っています -> 知る
+  if (/(ています|でいます|ている|でいる|ていた|でいた|ていました|でいました)$/.test(normalized)) {
+    const teForm = normalized.replace(/(ています|でいます|ている|でいる|ていた|でいた|ていました|でいました)$/, (m) => m.startsWith('で') ? 'で' : 'て');
+    for (const c of deconjugateJapanese(teForm)) {
+      candidates.add(c);
+    }
+    if (/(ています|でいます|ている|でいる|ていた|でいた|ていました|でいました)$/.test(text)) {
+      const kTeForm = text.replace(/(ています|でいます|ている|でいる|ていた|でいた|ていました|でいました)$/, (m) => m.startsWith('で') ? 'で' : 'て');
+      for (const c of deconjugateJapanese(kTeForm)) {
+        candidates.add(c);
+      }
+    }
+  }
+
+  // 6. Desconjugación de formas corteses derivadas (-mashita, -masen, -masendeshita, -mashou, -tai, -takunai)
+  // Ejemplos: 食べました -> 食べる, 飲みません -> 飲む, 行きましょう -> 行く
+  if (/(ました|ませんでした|ません|ましょう|たい|たくない)$/.test(normalized)) {
+    const masuForm = normalized.replace(/(ました|ませんでした|ません|ましょう|たい|たくない)$/, 'ます');
+    for (const c of deconjugateJapanese(masuForm)) {
+      candidates.add(c);
+    }
+    if (/(ました|ませんでした|ません|ましょう|たい|たくない)$/.test(text)) {
+      const kMasuForm = text.replace(/(ました|ませんでした|ません|ましょう|たい|たくない)$/, 'ます');
+      for (const c of deconjugateJapanese(kMasuForm)) {
+        candidates.add(c);
+      }
+    }
+  }
+
+  // 7. Desconjugación de formas negativas derivadas (-nakatta, -nakute, -naide)
+  // Ejemplos: 食べなかった -> 食べる, 食べなくて / 食べないで -> 食べる
+  if (/(なかった|なくて|ないで)$/.test(normalized)) {
+    const naiForm = normalized.replace(/(なかった|なくて|ないで)$/, 'ない');
+    for (const c of deconjugateJapanese(naiForm)) {
+      candidates.add(c);
+    }
+    if (/(なかった|なくて|ないで)$/.test(text)) {
+      const kNaiForm = text.replace(/(なかった|なくて|ないで)$/, 'ない');
+      for (const c of deconjugateJapanese(kNaiForm)) {
+        candidates.add(c);
+      }
+    }
   }
 
   return Array.from(candidates);

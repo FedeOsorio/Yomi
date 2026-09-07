@@ -3,12 +3,24 @@ import { drizzle } from 'drizzle-orm/expo-sqlite';
 import * as userSchema from './schema';
 import * as dictSchema from './dict-schema';
 
-const fullSchema = { ...userSchema, ...dictSchema };
+// Base de datos del usuario (mazos, palabras, oraciones, tarjetas SRS)
+export let db: ReturnType<typeof drizzle<typeof userSchema>>;
 
-// Base de datos global unificada
-export let db: ReturnType<typeof drizzle<typeof fullSchema>>;
+// Base de datos de solo lectura del diccionario (CC-CEDICT)
+export let dictDb: ReturnType<typeof drizzle<typeof dictSchema>>;
 
-// Se llama desde el DatabaseProvider una vez que Expo provee la conexión SQLite
-export function initGlobalDb(expoDb: SQLiteDatabase) {
-  db = drizzle(expoDb, { schema: fullSchema });
+// Inicializa la base de datos de usuario viva
+export function initUserDb(expoDb: SQLiteDatabase) {
+  db = drizzle(expoDb, { schema: userSchema });
 }
+
+// Inicializa la base de datos de solo lectura del diccionario
+export function initDictDb(expoDb: SQLiteDatabase) {
+  dictDb = drizzle(expoDb, { schema: dictSchema });
+}
+
+// Alias de compatibilidad
+export function initGlobalDb(expoDb: SQLiteDatabase) {
+  initUserDb(expoDb);
+}
+

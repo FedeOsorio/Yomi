@@ -611,25 +611,57 @@ export async function searchJapanese(rawInput: string): Promise<JapaneseEntry[]>
         (input.toLowerCase() !== dictionaryWord.toLowerCase() && input.toLowerCase() !== dictionaryReading.toLowerCase()) &&
         (hiragana !== dictionaryWord && hiragana !== dictionaryReading)
       ) {
-        const forms: Array<{ type: JapaneseConjugationForm; note: string }> = [
-          { type: 'masu', note: `Forma cortés (-masu) de ${dictionaryWord}` },
-          { type: 'te', note: `Forma -te de ${dictionaryWord}` },
-          { type: 'ta', note: `Forma pasado (-ta) de ${dictionaryWord}` },
-          { type: 'nai', note: `Forma negativa (-nai) de ${dictionaryWord}` },
-        ];
+        // 1. Forma progresiva / estado: -te imasu / -te iru
+        const teConj = conjugateJapanese(dictionaryWord, dictionaryReading, category, 'te');
+        const teImasuKanji = teConj.kanji + 'います';
+        const teImasuReading = teConj.reading + 'います';
+        const teIruKanji = teConj.kanji + 'いる';
+        const teIruReading = teConj.reading + 'いる';
+        const normHira = toNormalizedHiragana(hiragana);
 
-        for (const f of forms) {
-          const conj = conjugateJapanese(dictionaryWord, dictionaryReading, category, f.type);
-          if (
-            conj.reading === hiragana ||
-            conj.kanji === input ||
-            conj.kanji === hiragana ||
-            toNormalizedHiragana(conj.reading) === toNormalizedHiragana(hiragana)
-          ) {
-            displayKanji = conj.kanji;
-            displayReading = conj.reading;
-            conjugationNote = f.note;
-            break;
+        if (
+          normHira === toNormalizedHiragana(teImasuReading) ||
+          input === teImasuKanji ||
+          hiragana === teImasuReading
+        ) {
+          displayKanji = teImasuKanji;
+          displayReading = teImasuReading;
+          conjugationNote = `Forma progresiva (-te imasu) de ${dictionaryWord}`;
+        } else if (
+          normHira === toNormalizedHiragana(teIruReading) ||
+          input === teIruKanji ||
+          hiragana === teIruReading
+        ) {
+          displayKanji = teIruKanji;
+          displayReading = teIruReading;
+          conjugationNote = `Forma progresiva (-te iru) de ${dictionaryWord}`;
+        } else {
+          const forms: Array<{ type: JapaneseConjugationForm; note: string }> = [
+            { type: 'masu', note: `Forma formal (-masu) de ${dictionaryWord}` },
+            { type: 'mashita', note: `Pasado formal (-mashita) de ${dictionaryWord}` },
+            { type: 'masen', note: `Negativo formal (-masen) de ${dictionaryWord}` },
+            { type: 'mashou', note: `Volitiva (-mashou) de ${dictionaryWord}` },
+            { type: 'te', note: `Forma -te de ${dictionaryWord}` },
+            { type: 'ta', note: `Pasado (-ta) de ${dictionaryWord}` },
+            { type: 'nai', note: `Negativo (-nai) de ${dictionaryWord}` },
+            { type: 'nakatta', note: `Pasado negativo (-nakatta) de ${dictionaryWord}` },
+            { type: 'nakute', note: `Forma -te negativa de ${dictionaryWord}` },
+            { type: 'adverbial', note: `Forma adverbial de ${dictionaryWord}` },
+          ];
+
+          for (const f of forms) {
+            const conj = conjugateJapanese(dictionaryWord, dictionaryReading, category, f.type);
+            if (
+              conj.reading === hiragana ||
+              conj.kanji === input ||
+              conj.kanji === hiragana ||
+              toNormalizedHiragana(conj.reading) === normHira
+            ) {
+              displayKanji = conj.kanji;
+              displayReading = conj.reading;
+              conjugationNote = f.note;
+              break;
+            }
           }
         }
       }
