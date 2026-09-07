@@ -1,4 +1,4 @@
-import { romajiToHiragana, containsJapanese, deconjugateJapanese, classifyJapaneseWord } from './japanese-utils';
+import { romajiToHiragana, containsJapanese, deconjugateJapanese, classifyJapaneseWord, conjugateJapanese, JapaneseConjugationForm, toNormalizedHiragana } from './japanese-utils';
 import { getQuickJlptLevel } from './jlpt-data';
 
 export interface JapaneseEntry {
@@ -139,7 +139,42 @@ export function capitalizeFirst(str: string): string {
 }
 
 /**
- * Limpia, desduplica y capitaliza cada significado individual de un array o string.
+ * Divide un texto de significados separando por comas o puntos y coma
+ * ÚNICAMENTE si no están dentro de paréntesis (...) o corchetes [...].
+ * Esto previene romper aclaraciones como "(de una persona, animal)" en fragmentos separados.
+ */
+export function splitMeaningsSafely(text: string): string[] {
+  if (!text) return [];
+  const parts: string[] = [];
+  let current = '';
+  let parenDepth = 0;
+  let bracketDepth = 0;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (char === '(' || char === '（') parenDepth++;
+    else if (char === ')' || char === '）') parenDepth = Math.max(0, parenDepth - 1);
+    else if (char === '[' || char === '【') bracketDepth++;
+    else if (char === ']' || char === '】') bracketDepth = Math.max(0, bracketDepth - 1);
+
+    if ((char === ',' || char === ';' || char === '、' || char === '；') && parenDepth === 0 && bracketDepth === 0) {
+      const trimmed = current.trim();
+      if (trimmed) parts.push(trimmed);
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+
+  const lastTrimmed = current.trim();
+  if (lastTrimmed) parts.push(lastTrimmed);
+
+  return parts;
+}
+
+/**
+ * Limpia, desduplica y capitaliza cada significado individual de un array o string,
+ * preservando íntegras las aclaraciones entre paréntesis.
  */
 export function cleanAndFormatMeanings(meanings: string[] | string): string[] {
   if (!meanings) return [];
@@ -161,18 +196,25 @@ export function cleanAndFormatMeanings(meanings: string[] | string): string[] {
 
   for (const item of rawList) {
     if (!item) continue;
-    let cleanedStr = String(item);
-    // Separar palabras compuestas concatenadas sin espacio tras traduccion
+    let cleanedStr = String(item).trim();
+    if (!cleanedStr) continue;
+
+    // Separar palabras compuestas concatenadas sin espacio tras traducción automática
     cleanedStr = cleanedStr
       .replace(/buquehospital/gi, 'buque hospital')
       .replace(/hospitalgeneral/gi, 'hospital general')
       .replace(/([a-záéíóúñ])([A-ZÁÉÍÓÚÑ])/g, '$1 $2');
 
-    const parts = cleanedStr.split(/[,;]/);
+    // Usar división segura que respeta paréntesis
+    const parts = splitMeaningsSafely(cleanedStr);
     for (const part of parts) {
-      const trimmed = part.trim();
+      let trimmed = part.trim();
       if (!trimmed) continue;
       
+      // Quitar puntos finales innecesarios en significados de diccionario
+      trimmed = trimmed.replace(/\.+$/, '').trim();
+      if (!trimmed) continue;
+
       const capitalized = trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
       const key = capitalized.toLowerCase();
       
@@ -186,28 +228,106 @@ export function cleanAndFormatMeanings(meanings: string[] | string): string[] {
   return result;
 }
 
+const translationCache = new Map<string, string>();
+
+/**
+ * Traduce un conjunto de textos al español en 1 sola solicitud HTTP por lotes,
+ * utilizando caché en memoria para evitar llamadas redundantes y prevenir rate limits (HTTP 429).
+ */
+export async function translateBatchToSpanish(texts: string[], fromLang: 'en' | 'ja' = 'en'): Promise<string[]> {
+  if (!texts || texts.length === 0) return [];
+
+  const results: string[] = new Array(texts.length);
+  const pendingIndices: number[] = [];
+  const pendingTexts: string[] = [];
+
+  for (let i = 0; i < texts.length; i++) {
+    const raw = texts[i]?.trim();
+    if (!raw) {
+      results[i] = '';
+      continue;
+    }
+    const cacheKey = `${fromLang}::${raw.toLowerCase()}`;
+    if (translationCache.has(cacheKey)) {
+      results[i] = translationCache.get(cacheKey)!;
+    } else {
+      pendingIndices.push(i);
+      pendingTexts.push(raw);
+    }
+  }
+
+  if (pendingTexts.length === 0) {
+    return results;
+  }
+
+  // Dividir en grupos de hasta 15 frases por llamada para máxima estabilidad y evitar rate limits
+  const CHUNK_SIZE = 15;
+  for (let c = 0; c < pendingTexts.length; c += CHUNK_SIZE) {
+    const chunkTexts = pendingTexts.slice(c, c + CHUNK_SIZE);
+    const chunkIndices = pendingIndices.slice(c, c + CHUNK_SIZE);
+    const joinedQuery = chunkTexts.join(' \n\n ');
+
+    try {
+      const res = await fetch(
+        `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${fromLang}&tl=es&dt=t&q=${encodeURIComponent(joinedQuery)}`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data[0] && Array.isArray(data[0])) {
+          const fullTranslated = data[0].map((item: any) => item[0] || '').join('');
+          const parts = fullTranslated.split(/\n\s*\n/);
+          for (let j = 0; j < chunkIndices.length; j++) {
+            const originalIndex = chunkIndices[j];
+            const originalText = chunkTexts[j];
+            const translatedPart = (parts[j] || '').trim() || originalText;
+            const capitalized = capitalizeFirst(translatedPart);
+            translationCache.set(`${fromLang}::${originalText.toLowerCase()}`, capitalized);
+            results[originalIndex] = capitalized;
+          }
+          continue;
+        }
+      }
+    } catch (err) {
+      console.warn('Error en traducción por lotes:', err);
+    }
+
+    // Fallback individual si el lote falló
+    for (let j = 0; j < chunkIndices.length; j++) {
+      const originalIndex = chunkIndices[j];
+      const originalText = chunkTexts[j];
+      try {
+        const singleRes = await fetch(
+          `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${fromLang}&tl=es&dt=t&q=${encodeURIComponent(originalText)}`
+        );
+        if (singleRes.ok) {
+          const singleData = await singleRes.json();
+          if (singleData && singleData[0] && singleData[0][0] && singleData[0][0][0]) {
+            const translated = capitalizeFirst(singleData[0][0][0].trim());
+            translationCache.set(`${fromLang}::${originalText.toLowerCase()}`, translated);
+            results[originalIndex] = translated;
+            continue;
+          }
+        }
+      } catch { }
+      results[originalIndex] = capitalizeFirst(originalText);
+    }
+  }
+
+  return results;
+}
+
 /**
  * Traduce un texto al español (desde inglés por defecto o japonés si se especifica).
  */
-async function translateToSpanish(text: string, fromLang: 'en' | 'ja' = 'en'): Promise<string> {
-  try {
-    const res = await fetch(
-      `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${fromLang}&tl=es&dt=t&q=${encodeURIComponent(text)}`
-    );
-    const data = await res.json();
-    if (data && data[0] && data[0][0] && data[0][0][0]) {
-      const translated = data[0][0][0].trim();
-      return capitalizeFirst(translated);
-    }
-  } catch (e) {
-    // Si falla, se devuelve el texto original capitalizado
-  }
-  return capitalizeFirst(text);
+export async function translateToSpanish(text: string, fromLang: 'en' | 'ja' = 'en'): Promise<string> {
+  if (!text) return text;
+  const [translated] = await translateBatchToSpanish([text], fromLang);
+  return translated || capitalizeFirst(text);
 }
 
 /**
  * Mapea las partes de la oración (parts_of_speech) devueltas por JMdict/Jisho
- * a categorías estandarizadas en español (Verbo Ichidan, Verbo Godan, etc.)
+ * a categorías estandarizadas y simplificadas (Verbo Godan (-u), Verbo Ichidan (-ru), etc.)
  */
 export function mapJishoPartsOfSpeech(partsOfSpeech: string[], word: string, reading: string): string {
   if (!partsOfSpeech || partsOfSpeech.length === 0) {
@@ -217,13 +337,16 @@ export function mapJishoPartsOfSpeech(partsOfSpeech: string[], word: string, rea
   const joined = partsOfSpeech.join(' ').toLowerCase();
 
   if (joined.includes('suru verb') || joined.includes('kuru verb')) {
-    return 'Verbo Irregular (Grupo 3)';
+    return 'Verbo Irregular';
   }
   if (joined.includes('ichidan verb')) {
-    return 'Verbo Ichidan (Grupo 2)';
+    return 'Verbo Ichidan (-ru)';
   }
   if (joined.includes('godan verb')) {
-    return 'Verbo Godan (Grupo 1)';
+    if (reading.endsWith('る') || word.endsWith('る')) {
+      return 'Verbo Godan (-ru)';
+    }
+    return 'Verbo Godan (-u)';
   }
   if (joined.includes('i-adjective') || joined.includes('keiyoushi')) {
     return 'Adjetivo -i';
@@ -256,7 +379,7 @@ export async function searchJapanese(rawInput: string): Promise<JapaneseEntry[]>
   // Obtener formas de diccionario posibles (ej: "tabete" -> ["たべて", "たべる"])
   const searchTerms = deconjugateJapanese(input);
 
-  // Consultar en Jisho EXCLUSIVAMENTE en Kana/Kanji japonés (nunca en romaji difuso que trae basura en inglés/química)
+  // Consultar en Jisho EXCLUSIVAMENTE en Kana/Kanji japonés
   const queryTerms = Array.from(new Set([
     hiragana,
     ...searchTerms.map((t) => (containsJapanese(t) ? t : romajiToHiragana(t)))
@@ -278,19 +401,17 @@ export async function searchJapanese(rawInput: string): Promise<JapaneseEntry[]>
       };
     }
 
-    // Buscar en paralelo tanto la consulta directa como las formas de diccionario desconjugadas
-    const queryPromises = queryTerms.map(async (term) => {
-      try {
-        const res = await fetch(
-          `https://jisho.org/api/v1/search/words?keyword=${encodeURIComponent(term)}`
-        );
-        if (!res.ok) return [];
-        const json = await res.json();
-        return Array.isArray(json?.data) ? json.data : [];
-      } catch {
-        return [];
-      }
-    });
+    // Consultar primero palabras comunes (#common) para que los términos cotidianos aparezcan primero
+    const queryPromises = queryTerms.flatMap((term) => [
+      fetch(`https://jisho.org/api/v1/search/words?keyword=${encodeURIComponent(term + ' #common')}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((json) => (Array.isArray(json?.data) ? json.data : []))
+        .catch(() => []),
+      fetch(`https://jisho.org/api/v1/search/words?keyword=${encodeURIComponent(term)}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((json) => (Array.isArray(json?.data) ? json.data : []))
+        .catch(() => []),
+    ]);
 
     const resultsArray = await Promise.all(queryPromises);
     const combinedData: any[] = [];
@@ -299,13 +420,28 @@ export async function searchJapanese(rawInput: string): Promise<JapaneseEntry[]>
     for (const dataList of resultsArray) {
       for (const item of dataList) {
         const japaneseObj = item.japanese && item.japanese[0] ? item.japanese[0] : {};
-        const word = japaneseObj.word || '';
-        const reading = japaneseObj.reading || '';
-        
-        // FILTRADO ESTRICTO: Descartar entradas que no tengan ninguna relación con los caracteres japoneses buscados
-        const matchesQuery = queryTerms.some((qt) => 
-          word.includes(qt) || reading.includes(qt) || qt.includes(reading) || qt.includes(word)
-        );
+        const word = (japaneseObj.word || '').trim();
+        const reading = (japaneseObj.reading || '').trim();
+        const cleanWord = word.toLowerCase();
+        const cleanReading = reading.toLowerCase();
+
+        // FILTRADO ESTRICTO:
+        // Descartar coincidencias espurias de 1 solo carácter si la búsqueda tenía 2 o más caracteres
+        const isSingleCharResult = (cleanReading.length <= 1 && cleanWord.length <= 1);
+        const hasMultiCharQuery = queryTerms.some((qt) => qt.length >= 2);
+        if (isSingleCharResult && hasMultiCharQuery) {
+          continue;
+        }
+
+        // Descartar entradas que no tengan coincidencia directa o prefija con la búsqueda
+        const matchesQuery = queryTerms.some((qt) => {
+          const lowerQt = qt.toLowerCase();
+          if (cleanWord === lowerQt || cleanReading === lowerQt) return true;
+          if (cleanWord.startsWith(lowerQt) || cleanReading.startsWith(lowerQt)) return true;
+          if (lowerQt.includes(cleanReading) && cleanReading.length >= 2) return true;
+          if (lowerQt.includes(cleanWord) && cleanWord.length >= 2) return true;
+          return cleanWord.includes(lowerQt) || cleanReading.includes(lowerQt);
+        });
 
         if (!matchesQuery) continue;
 
@@ -339,46 +475,72 @@ export async function searchJapanese(rawInput: string): Promise<JapaneseEntry[]>
       queryTerms.map((t) => t.toLowerCase())
     );
 
-    // Ordenar resultados con máxima prioridad a la palabra exacta o su forma de diccionario común:
-    // 1. Coincidencia exacta de lectura o kanji con alguna forma desconjugada + es común (ej. 食べる)
-    // 2. Coincidencia exacta con alguna forma desconjugada
-    // 3. Palabra común general
-    // 4. Frases o compuestos largos (penalizados por longitud)
-    const sortedData = combinedData.sort((a, b) => {
-      const aObj = a.japanese && a.japanese[0] ? a.japanese[0] : {};
-      const bObj = b.japanese && b.japanese[0] ? b.japanese[0] : {};
+    // Identificar si existen coincidencias exactas con el término buscado o su forma de diccionario
+    const isExactMatchItem = (item: any) => {
+      const jObj = item.japanese && item.japanese[0] ? item.japanese[0] : {};
+      const w = (jObj.word || '').toLowerCase();
+      const r = (jObj.reading || '').toLowerCase();
+      return matchTargets.has(w) || matchTargets.has(r);
+    };
 
-      const aWord = (aObj.word || '').toLowerCase();
-      const aReading = (aObj.reading || '').toLowerCase();
-      const bWord = (bObj.word || '').toLowerCase();
-      const bReading = (bObj.reading || '').toLowerCase();
+    const exactMatches = combinedData.filter(isExactMatchItem);
 
-      const aExact = matchTargets.has(aWord) || matchTargets.has(aReading);
-      const bExact = matchTargets.has(bWord) || matchTargets.has(bReading);
+    // OPTIMIZACIÓN: Si existe al menos una coincidencia exacta (ej. "tabete" -> 食べる o "kesu" -> 消す),
+    // descartar compuestos largos (como tabesugiru) y procesar/traducir ÚNICAMENTE las palabras exactas.
+    const filteredData = exactMatches.length > 0 ? exactMatches : combinedData;
 
-      const aCommon = a.is_common === true;
-      const bCommon = b.is_common === true;
+    // Scoring y ordenamiento determinista por popularidad y relevancia:
+    const getScore = (item: any): number => {
+      const jObj = item.japanese && item.japanese[0] ? item.japanese[0] : {};
+      const w = (jObj.word || '').toLowerCase();
+      const r = (jObj.reading || '').toLowerCase();
 
-      const aLen = (aObj.word || aObj.reading || '').length;
-      const bLen = (bObj.word || bObj.reading || '').length;
+      let score = 0;
+      const isExact = matchTargets.has(w) || matchTargets.has(r);
+      const isPrefix = Array.from(matchTargets).some((mt) => w.startsWith(mt) || r.startsWith(mt));
 
-      // Puesto 1: Palabra exacta y común (ej: 食べる)
-      if (aExact && aCommon && (!bExact || !bCommon)) return -1;
-      if (bExact && bCommon && (!aExact || !aCommon)) return 1;
+      if (isExact) score += 200;
+      else if (isPrefix) score += 50;
 
-      // Puesto 2: Palabra exacta aunque no tenga etiqueta is_common
-      if (aExact && !bExact) return -1;
-      if (bExact && !aExact) return 1;
+      // Prioridad máxima a palabras de uso común popular
+      if (item.is_common === true) score += 100;
 
-      // Puesto 3: Palabras comunes más cortas
-      if (aCommon && !bCommon) return -1;
-      if (bCommon && !aCommon) return 1;
+      // Puntos extra por nivel JLPT (vocabulario estudiado y popular)
+      const jlptStr = (Array.isArray(item.jlpt) && item.jlpt.length > 0) ? item.jlpt[0].toLowerCase() : '';
+      const quickJlpt = getQuickJlptLevel(jObj.word || '') || getQuickJlptLevel(jObj.reading || '');
+      const effectiveJlpt = quickJlpt ? quickJlpt.toLowerCase() : jlptStr;
 
-      return aLen - bLen;
-    });
+      if (effectiveJlpt.includes('n5')) score += 50;
+      else if (effectiveJlpt.includes('n4')) score += 40;
+      else if (effectiveJlpt.includes('n3')) score += 30;
+      else if (effectiveJlpt.includes('n2')) score += 20;
+      else if (effectiveJlpt.includes('n1')) score += 10;
 
-    const topResults = sortedData.slice(0, 8);
-    const entries: JapaneseEntry[] = [];
+      // Penalización por longitud extra (prefiere palabras más directas)
+      const len = (jObj.word || jObj.reading || '').length;
+      score -= len * 2;
+
+      return score;
+    };
+
+    const sortedData = filteredData.sort((a, b) => getScore(b) - getScore(a));
+
+    // Si hay coincidencias exactas, limitar a máximo 3 (variantes Kanji de la misma palabra),
+    // si no hay exacta, hasta 4 resultados para sugerencias mientras el usuario escribe.
+    const topResults = sortedData.slice(0, exactMatches.length > 0 ? 3 : 4);
+    const preparedItems: Array<{
+      item: any;
+      dictionaryWord: string;
+      dictionaryReading: string;
+      jlptLevel?: string;
+      category: string;
+      displayKanji: string;
+      displayReading: string;
+      conjugationNote: string;
+      rawDefinitions: string[];
+    }> = [];
+
+    const allDefinitionsToTranslate: string[] = [];
 
     for (let i = 0; i < topResults.length; i++) {
       const item = topResults[i];
@@ -386,46 +548,6 @@ export async function searchJapanese(rawInput: string): Promise<JapaneseEntry[]>
       
       const dictionaryWord = japaneseObj.word || japaneseObj.reading || input;
       const dictionaryReading = japaneseObj.reading || japaneseObj.word || hiragana;
-
-      // Si el usuario buscó una forma conjugada específica (ej. "tabete" / "たべて"),
-      // y la entrada encontrada es su forma de diccionario (ej. 食べる),
-      // adaptamos el título para que muestre exactamente lo que buscó el usuario con su kanji conjugado
-      let displayKanji = dictionaryWord;
-      let displayReading = dictionaryReading;
-      let conjugationNote = '';
-
-      if (
-        (input.toLowerCase() !== dictionaryWord.toLowerCase() && input.toLowerCase() !== dictionaryReading.toLowerCase()) &&
-        (hiragana !== dictionaryWord && hiragana !== dictionaryReading)
-      ) {
-        // Ejemplo: Si buscó "tabete" / "たべて" y el diccionario devolvió "食べる"
-        if (hiragana.endsWith('て') && dictionaryReading.endsWith('る')) {
-          const kanjiStem = dictionaryWord.endsWith('る') ? dictionaryWord.slice(0, -1) : dictionaryWord;
-          displayKanji = `${kanjiStem}て`;
-          displayReading = hiragana;
-          conjugationNote = `Forma -te de ${dictionaryWord}`;
-        } else if (hiragana.endsWith('で') && dictionaryReading.endsWith('む')) {
-          const kanjiStem = dictionaryWord.endsWith('む') ? dictionaryWord.slice(0, -1) : dictionaryWord;
-          displayKanji = `${kanjiStem}で`;
-          displayReading = hiragana;
-          conjugationNote = `Forma -te de ${dictionaryWord}`;
-        } else if (hiragana.endsWith('た') && dictionaryReading.endsWith('る')) {
-          const kanjiStem = dictionaryWord.endsWith('る') ? dictionaryWord.slice(0, -1) : dictionaryWord;
-          displayKanji = `${kanjiStem}た`;
-          displayReading = hiragana;
-          conjugationNote = `Forma pasado (-ta) de ${dictionaryWord}`;
-        } else if (hiragana.endsWith('ない') && dictionaryReading.endsWith('る')) {
-          const kanjiStem = dictionaryWord.endsWith('る') ? dictionaryWord.slice(0, -1) : dictionaryWord;
-          displayKanji = `${kanjiStem}ない`;
-          displayReading = hiragana;
-          conjugationNote = `Forma negativa (-nai) de ${dictionaryWord}`;
-        } else if (hiragana.endsWith('ます') && dictionaryReading.endsWith('る')) {
-          const kanjiStem = dictionaryWord.endsWith('る') ? dictionaryWord.slice(0, -1) : dictionaryWord;
-          displayKanji = `${kanjiStem}ます`;
-          displayReading = hiragana;
-          conjugationNote = `Forma cortés (-masu) de ${dictionaryWord}`;
-        }
-      }
 
       // Extraer nivel JLPT (priorizando diccionario de expresiones cotidianas N5/N4)
       let jlptLevel: string | undefined = getQuickJlptLevel(dictionaryWord) || getQuickJlptLevel(dictionaryReading);
@@ -436,18 +558,42 @@ export async function searchJapanese(rawInput: string): Promise<JapaneseEntry[]>
         }
       }
 
-      // Extraer definiciones en inglés y partes de la oración (parts_of_speech)
+      // Extraer definiciones en inglés refinadas y partes de la oración
       const rawEnglishDefinitions: string[] = [];
       const partsOfSpeechList: string[] = [];
+
       if (item.senses && item.senses.length > 0) {
         for (const sense of item.senses) {
           if (Array.isArray(sense.parts_of_speech)) {
             partsOfSpeechList.push(...sense.parts_of_speech);
           }
         }
-        for (const sense of item.senses.slice(0, 2)) {
-          if (sense.english_definitions) {
-            rawEnglishDefinitions.push(sense.english_definitions.join(', '));
+
+        // Filtrar sentidos poco usados, arcaicos u obsoletos
+        const cleanSenses = item.senses.filter((sense: any) => {
+          const tags = (sense.tags || []).map((t: string) => String(t).toLowerCase());
+          return !tags.some((t: string) =>
+            t.includes('archaic') || t.includes('obsolete') || t.includes('rare') || t.includes('vulgar') || t.includes('historical')
+          );
+        });
+
+        const validSenses = cleanSenses.length > 0 ? cleanSenses : item.senses;
+
+        // Extraer definiciones representativas de las acepciones principales (hasta 3 acepciones)
+        for (let sIdx = 0; sIdx < Math.min(validSenses.length, 3); sIdx++) {
+          const sense = validSenses[sIdx];
+          if (sense && Array.isArray(sense.english_definitions)) {
+            // De la acepción 1 tomamos hasta 2 definiciones; de las siguientes tomamos la principal
+            const countToTake = sIdx === 0 ? 2 : 1;
+            const defs = sense.english_definitions.slice(0, countToTake);
+            for (const def of defs) {
+              if (def && typeof def === 'string') {
+                const trimmed = def.trim();
+                if (trimmed && !rawEnglishDefinitions.includes(trimmed)) {
+                  rawEnglishDefinitions.push(trimmed);
+                }
+              }
+            }
           }
         }
       }
@@ -455,44 +601,137 @@ export async function searchJapanese(rawInput: string): Promise<JapaneseEntry[]>
       // Clasificación estandarizada de categoría gramatical
       const category = mapJishoPartsOfSpeech(partsOfSpeechList, dictionaryWord, dictionaryReading);
 
-      // Traducir definiciones al español en paralelo con primera letra mayúscula
-      const translatedMeanings = await Promise.all(
-        rawEnglishDefinitions.map((def) => translateToSpanish(def))
-      );
+      // Si el usuario buscó una forma conjugada específica (ej. "nomimasu" / "のみます" / "飲みます"),
+      // adaptamos el título de la tarjeta para que muestre exactamente lo que buscó el usuario en su forma conjugada
+      let displayKanji = dictionaryWord;
+      let displayReading = dictionaryReading;
+      let conjugationNote = '';
 
-      // Limpiar, desduplicar y capitalizar cada significado
-      let finalMeanings = cleanAndFormatMeanings(translatedMeanings);
-      if (conjugationNote && finalMeanings.length > 0) {
-        finalMeanings = [`[${conjugationNote}] ${finalMeanings[0]}`, ...finalMeanings.slice(1)];
+      if (
+        (input.toLowerCase() !== dictionaryWord.toLowerCase() && input.toLowerCase() !== dictionaryReading.toLowerCase()) &&
+        (hiragana !== dictionaryWord && hiragana !== dictionaryReading)
+      ) {
+        const forms: Array<{ type: JapaneseConjugationForm; note: string }> = [
+          { type: 'masu', note: `Forma cortés (-masu) de ${dictionaryWord}` },
+          { type: 'te', note: `Forma -te de ${dictionaryWord}` },
+          { type: 'ta', note: `Forma pasado (-ta) de ${dictionaryWord}` },
+          { type: 'nai', note: `Forma negativa (-nai) de ${dictionaryWord}` },
+        ];
+
+        for (const f of forms) {
+          const conj = conjugateJapanese(dictionaryWord, dictionaryReading, category, f.type);
+          if (
+            conj.reading === hiragana ||
+            conj.kanji === input ||
+            conj.kanji === hiragana ||
+            toNormalizedHiragana(conj.reading) === toNormalizedHiragana(hiragana)
+          ) {
+            displayKanji = conj.kanji;
+            displayReading = conj.reading;
+            conjugationNote = f.note;
+            break;
+          }
+        }
       }
 
-      const hasConjugation = Boolean(conjugationNote) || (displayKanji !== dictionaryWord || displayReading !== dictionaryReading);
+      const topDefs = rawEnglishDefinitions.slice(0, 4);
+      allDefinitionsToTranslate.push(...topDefs);
+
+      preparedItems.push({
+        item,
+        dictionaryWord,
+        dictionaryReading,
+        jlptLevel,
+        category,
+        displayKanji,
+        displayReading,
+        conjugationNote,
+        rawDefinitions: topDefs,
+      });
+    }
+
+    // Traducir todas las definiciones en una única llamada por lotes (con caché inteligente)
+    await translateBatchToSpanish(allDefinitionsToTranslate, 'en');
+
+    // Construir las entradas con sus traducciones garantizadas al español
+    const entries: JapaneseEntry[] = [];
+
+    for (let i = 0; i < preparedItems.length; i++) {
+      const p = preparedItems[i];
+      const translatedMeanings = await translateBatchToSpanish(p.rawDefinitions, 'en');
+
+      // Limpiar, desduplicar y capitalizar cada significado preservando paréntesis
+      let finalMeanings = cleanAndFormatMeanings(translatedMeanings);
+      if (p.conjugationNote && finalMeanings.length > 0) {
+        finalMeanings = [`[${p.conjugationNote}] ${finalMeanings[0]}`, ...finalMeanings.slice(1)];
+      }
+
+      const hasConjugation = Boolean(p.conjugationNote) || (p.displayKanji !== p.dictionaryWord || p.displayReading !== p.dictionaryReading);
 
       entries.push({
-        id: `ja_${i}_${displayKanji}_${displayReading}`,
-        kanji: displayKanji,
-        reading: displayReading,
+        id: `ja_${i}_${p.displayKanji}_${p.displayReading}`,
+        kanji: p.displayKanji,
+        reading: p.displayReading,
         romaji: input.toLowerCase(),
         meanings: finalMeanings.length > 0 ? finalMeanings : ['Sin definición disponible'],
-        isCommon: item.is_common === true,
-        level: jlptLevel,
-        category,
-        detectedConjugation: conjugationNote || undefined,
+        isCommon: p.item.is_common === true,
+        level: p.jlptLevel,
+        category: p.category,
+        detectedConjugation: p.conjugationNote || undefined,
         dictionaryForm: hasConjugation ? {
-          kanji: dictionaryWord,
-          reading: dictionaryReading,
+          kanji: p.dictionaryWord,
+          reading: p.dictionaryReading,
           meanings: cleanAndFormatMeanings(translatedMeanings),
         } : undefined,
       });
     }
 
-    if (phraseEntry) {
-      return [phraseEntry, ...entries];
+    // Desduplicación estricta de entradas idénticas o duplicadas (Kana vs Kanji o mismo significado)
+    const uniqueEntries: JapaneseEntry[] = [];
+    const seenKeys = new Map<string, JapaneseEntry>();
+
+    for (const entry of entries) {
+      const lowerReading = entry.reading.toLowerCase();
+      const firstMeaning = (entry.meanings[0] || '').toLowerCase().trim();
+      const hasKanji = /[\u4e00-\u9faf]/.test(entry.kanji);
+
+      // Clave 1: Mismo kanji y misma lectura (duplicado directo)
+      const exactKey = `${entry.kanji.toLowerCase()}_${lowerReading}`;
+      // Clave 2: Misma lectura y mismo significado principal (variante redundante)
+      const semanticKey = `${lowerReading}_${firstMeaning}`;
+
+      if (seenKeys.has(exactKey)) {
+        continue;
+      }
+
+      const existingSemantic = seenKeys.get(semanticKey);
+      if (existingSemantic) {
+        const existingHasKanji = /[\u4e00-\u9faf]/.test(existingSemantic.kanji);
+        if (!existingHasKanji && hasKanji) {
+          // Reemplazar versión Kana-only por la versión con Kanji
+          const idx = uniqueEntries.indexOf(existingSemantic);
+          if (idx !== -1) {
+            uniqueEntries[idx] = entry;
+          }
+          seenKeys.set(semanticKey, entry);
+          seenKeys.set(exactKey, entry);
+        }
+        continue;
+      }
+
+      seenKeys.set(exactKey, entry);
+      seenKeys.set(semanticKey, entry);
+      uniqueEntries.push(entry);
     }
 
-    return entries;
+    if (phraseEntry) {
+      return [phraseEntry, ...uniqueEntries];
+    }
+
+    return uniqueEntries;
   } catch (error) {
     console.warn('Error en búsqueda de japonés:', error);
     return [];
   }
 }
+

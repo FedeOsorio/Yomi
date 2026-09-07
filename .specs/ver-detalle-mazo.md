@@ -24,10 +24,15 @@ El usuario puede ver todas las palabras guardadas dentro de un mazo específico 
    - Se elimina la tarjeta de repaso asociada de la tabla `srs_items`.
    - La lista se actualiza automáticamente.
 
+## Optimización de Rendimiento y Desplazamiento (60 FPS)
+- **Componente Memoizado (`DeckWordCard`)**: Las tarjetas individuales de palabra se aíslan mediante `React.memo` con callbacks estables (`handlePressWord`, `handleSpeak`, `handleDeleteWord`), evitando re-renders masivos de elementos fuera de pantalla durante el scroll.
+- **Pre-procesamiento de Significados (`displayMeanings`)**: Los significados se limpian, formatean y limitan a un máximo de 3 acepciones durante el mapeo de consulta inicial en `fetchWords`, previniendo ejecuciones repetidas de regex o JSON en cada fotograma del scroll.
+- **Configuración de Renderizado FlatList**: Se configuran `removeClippedSubviews={Platform.OS === 'android'}`, `maxToRenderPerBatch={10}`, `windowSize={5}` e `initialNumToRender={8}` para garantizar fluidez nativa a 60 FPS sin saltos de altura ni recortes visuales.
+
 ## Archivos Involucrados
-- `src/app/deck/[id].tsx` — Pantalla de detalle del mazo (UI).
+- `src/app/deck/[id].tsx` — Pantalla de detalle del mazo (UI optimizada con `DeckWordCard` memoizado y props de batch).
 - `lib/word-service.ts` — Función `deleteWord()`.
 - `db/schema.ts` — Tablas `words` y `srs_items`.
 
 ## Resultado Esperado
-- El usuario puede ver y eliminar palabras individualmente de sus mazos de forma segura y permanente.
+- El usuario puede ver y eliminar palabras individualmente de sus mazos de forma fluida a 60 FPS, segura y permanente.

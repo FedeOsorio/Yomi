@@ -28,7 +28,11 @@ Permite al usuario abrir una tarjeta guardada en un mazo y visualizar una ficha 
    - En idiomas alfabéticos (`en-US`, `es-ES`):
      - Palabra en tamaño grande, pronunciación nativa y significados formateados.
    - En ambos casos muestra la **Ficha SRS** con su estado FSRS (Nueva, Aprendiendo, En Repaso), número de repasos y fecha del próximo repaso.
-7. El usuario puede tocar el icono de papelera para eliminar la palabra y su tarjeta SRS asociada.
+7. **Gestión de Significados**:
+   - Cada significado listado permite edición directa (icono de lápiz) mediante modal con campo de texto interactivo para corregir o personalizar la definición a gusto del usuario.
+   - Si la palabra tiene más de un significado, permite eliminar acepciones no deseadas (icono de papelera).
+   - Ambos cambios sincronizan inmediatamente el JSON de `words.meanings`, la selección activa en `words.auxiliaryInfo` y el ítem de repaso en `srsItems.displayMeaning`.
+8. El usuario puede tocar el icono de papelera en la barra superior para eliminar la palabra y su tarjeta SRS asociada por completo.
 
 ## Archivos Involucrados
 - `src/app/word/[id].tsx` — Pantalla de detalle de tarjeta adaptativa.

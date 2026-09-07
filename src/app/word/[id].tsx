@@ -8,6 +8,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -28,6 +29,7 @@ import {
   WordDetailWithRelations,
   updateWordSelectedMeanings,
   deleteWordMeaning,
+  updateWordMeaningText,
 } from '../../../lib/word-service';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { Shadows, Spacing, Typography } from '../../constants/theme';
@@ -502,6 +504,8 @@ export default function WordDetailScreen() {
   const [asyncCompounds, setAsyncCompounds] = useState<CompoundWord[]>([]);
   const [compoundsLoading, setCompoundsLoading] = useState(false);
   const [selectedMeanings, setSelectedMeanings] = useState<string[]>([]);
+  const [editingMeaning, setEditingMeaning] = useState<string | null>(null);
+  const [editMeaningText, setEditMeaningText] = useState('');
 
   const fetchDetail = async () => {
     if (typeof id === 'string') {
@@ -596,6 +600,39 @@ export default function WordDetailScreen() {
         },
       ]
     );
+  };
+
+  const handleStartEditMeaning = (meaning: string) => {
+    setEditingMeaning(meaning);
+    setEditMeaningText(meaning);
+  };
+
+  const handleSaveEditedMeaning = async () => {
+    if (!data || !editingMeaning) return;
+    const trimmed = editMeaningText.trim();
+    if (!trimmed) {
+      Alert.alert('Aviso', 'El significado no puede estar vacío.');
+      return;
+    }
+
+    try {
+      const res = await updateWordMeaningText(data.word.id, editingMeaning, trimmed);
+      setData((prev) => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          word: {
+            ...prev.word,
+            meanings: JSON.stringify(res.updatedMeanings),
+          },
+        };
+      });
+      setSelectedMeanings(res.updatedSelected);
+      setEditingMeaning(null);
+      setEditMeaningText('');
+    } catch (e) {
+      Alert.alert('Error', 'No se pudo actualizar el significado.');
+    }
   };
 
   useEffect(() => {
@@ -790,7 +827,7 @@ export default function WordDetailScreen() {
           {/* Fila superior: Badges (Categoría, JLPT/HSK) a la izquierda del parlante */}
           <View style={styles.topActionsRow}>
             <View style={styles.topBadgesRow}>
-              {activeCategory ? (
+              {activeCategory && !activeCategory.includes('Frase') ? (
                 <View style={[styles.categoryBadge, { backgroundColor: colors.surfaceHighlight }]}>
                   <Text style={[styles.categoryBadgeText, { color: colors.primary }]}>{activeCategory}</Text>
                 </View>
@@ -904,15 +941,25 @@ export default function WordDetailScreen() {
                       </Text>
                     </TouchableOpacity>
 
-                    {allMeaningsCount > 1 && (
+                    <View style={styles.meaningActionsContainer}>
                       <TouchableOpacity
-                        style={styles.meaningDeleteBtn}
+                        style={styles.meaningActionBtn}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        onPress={() => handleDeleteSingleMeaning(meaning)}
+                        onPress={() => handleStartEditMeaning(meaning)}
                       >
-                        <Ionicons name="trash-outline" size={16} color={colors.danger} />
+                        <Ionicons name="pencil-outline" size={16} color={colors.primary} />
                       </TouchableOpacity>
-                    )}
+
+                      {allMeaningsCount > 1 && (
+                        <TouchableOpacity
+                          style={styles.meaningActionBtn}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          onPress={() => handleDeleteSingleMeaning(meaning)}
+                        >
+                          <Ionicons name="trash-outline" size={16} color={colors.danger} />
+                        </TouchableOpacity>
+                      )}
+                    </View>
                   </View>
                 );
               })}
@@ -1121,6 +1168,58 @@ export default function WordDetailScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Modal interactivo para editar significado */}
+      <Modal
+        visible={Boolean(editingMeaning)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setEditingMeaning(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.editModalCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View style={styles.editModalHeader}>
+              <Text style={[styles.editModalTitle, { color: colors.text }]}>Editar Significado</Text>
+              <TouchableOpacity onPress={() => setEditingMeaning(null)} style={styles.modalCloseBtn}>
+                <Ionicons name="close" size={20} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+
+            <TextInput
+              style={[
+                styles.editMeaningInput,
+                {
+                  backgroundColor: colors.surfaceHighlight,
+                  color: colors.text,
+                  borderColor: colors.border,
+                },
+              ]}
+              value={editMeaningText}
+              onChangeText={setEditMeaningText}
+              placeholder="Ingresa el significado..."
+              placeholderTextColor={colors.textMuted}
+              multiline
+              autoFocus
+            />
+
+            <View style={styles.editModalActionsRow}>
+              <TouchableOpacity
+                style={[styles.editModalCancelBtn, { borderColor: colors.border }]}
+                onPress={() => setEditingMeaning(null)}
+              >
+                <Text style={[styles.editModalCancelText, { color: colors.textMuted }]}>Cancelar</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.editModalSaveBtn, { backgroundColor: colors.primary }]}
+                onPress={handleSaveEditedMeaning}
+              >
+                <Text style={styles.editModalSaveText}>Guardar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1218,24 +1317,24 @@ const styles = StyleSheet.create({
   categoryBadge: {
     borderWidth: 1,
     borderColor: 'rgba(99, 102, 241, 0.35)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
   },
   categoryBadgeText: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
   },
   levelBadge: {
     backgroundColor: 'rgba(59, 130, 246, 0.15)',
     borderWidth: 1,
     borderColor: 'rgba(59, 130, 246, 0.4)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
   },
   levelBadgeText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
   },
   mainCharIdeographic: {
@@ -1249,9 +1348,9 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   audioBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
@@ -1291,11 +1390,78 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
   },
+  meaningActionsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginLeft: 6,
+  },
+  meaningActionBtn: {
+    padding: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   meaningDeleteBtn: {
     padding: 6,
     marginLeft: 6,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  editModalCard: {
+    width: '90%',
+    maxWidth: 400,
+    borderRadius: 16,
+    padding: Spacing.md + 4,
+    borderWidth: 1,
+    ...Shadows.card,
+  },
+  editModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
+  editModalTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  editMeaningInput: {
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: Spacing.sm + 4,
+    fontSize: 14,
+    minHeight: 70,
+    textAlignVertical: 'top',
+    marginBottom: Spacing.md,
+  },
+  editModalActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: Spacing.sm,
+  },
+  editModalCancelBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editModalCancelText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  editModalSaveBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editModalSaveText: {
+    color: '#FFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
   meaningCheckbox: {
     width: 20,

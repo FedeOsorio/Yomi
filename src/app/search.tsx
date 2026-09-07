@@ -1,27 +1,27 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { 
-  View, 
-  TextInput, 
-  Text, 
-  StyleSheet, 
-  FlatList, 
-  TouchableOpacity, 
-  ActivityIndicator, 
-  ScrollView, 
-  Alert 
-} from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { searchByPinyin, SearchResult, DictionaryEntry, getChineseSpanishMeaning } from '../../lib/search-engine';
-import { searchJapanese, JapaneseEntry } from '../../lib/japanese-search';
-import { classifyJapaneseWord } from '../../lib/japanese-utils';
-import { saveWords, saveCustomWord, saveGenericWord } from '../../lib/word-service';
-import { getDecksWithStats, DeckWithStats, SUPPORTED_LANGUAGES, ALL_LANGUAGES } from '../../lib/deck-service';
-import { speakText } from '../../lib/audio-service';
-import { Spacing, Typography, Shadows } from '../constants/theme';
-import { getQuickHskLevel } from '../../lib/hsk-data';
-import { useTheme } from '../../providers/ThemeProvider';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useEffect, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { speakText } from '../../lib/audio-service';
+import { ALL_LANGUAGES, DeckWithStats, getDecksWithStats } from '../../lib/deck-service';
+import { getQuickHskLevel } from '../../lib/hsk-data';
+import { JapaneseEntry, searchJapanese } from '../../lib/japanese-search';
+import { classifyJapaneseWord, isJapaneseDictionaryForm } from '../../lib/japanese-utils';
+import { DictionaryEntry, getChineseSpanishMeaning, searchByPinyin, SearchResult } from '../../lib/search-engine';
+import { saveCustomWord, saveGenericWord, saveWords } from '../../lib/word-service';
+import { useTheme } from '../../providers/ThemeProvider';
+import { Shadows, Spacing, Typography } from '../constants/theme';
 
 export default function SearchScreen() {
   const { colors } = useTheme();
@@ -142,7 +142,7 @@ export default function SearchScreen() {
         if (latestQueryRef.current === text && data && data[0] && data[0][0] && data[0][0][0]) {
           setGenericTranslation(data[0][0][0].trim());
         }
-      } catch (e) {}
+      } catch (e) { }
       if (latestQueryRef.current === text) {
         setIsGenericTranslating(false);
         setIsSearching(false);
@@ -199,10 +199,26 @@ export default function SearchScreen() {
       Boolean(entry.dictionaryForm) ||
       Boolean(entry.category && (entry.category.startsWith('Verbo') || entry.category.startsWith('Adjetivo')));
 
+    const itemTypeLabel = entry.category?.startsWith('Verbo')
+      ? 'el verbo'
+      : entry.category?.startsWith('Adjetivo')
+        ? 'el adjetivo'
+        : 'la palabra';
+
     const executeSave = async (withConjugation: boolean) => {
       try {
-        if (withConjugation && entry.dictionaryForm) {
-          // Guardar la forma diccionario con la práctica de conjugación activada
+        if (withConjugation && entry.dictionaryForm && entry.kanji !== entry.dictionaryForm.kanji) {
+          // 1. Guardar la tarjeta con la forma exacta que eligió el usuario (ej. 飲みます) sin habilitar conjugación
+          await saveGenericWord(selectedDeckId, {
+            text: entry.kanji,
+            reading: entry.reading,
+            meanings: JSON.stringify(entry.meanings),
+            level: entry.level,
+            category: entry.category,
+            conjugationEnabled: false,
+          });
+
+          // 2. Guardar también la forma diccionario para la práctica de conjugación (ej. 飲む)
           await saveGenericWord(selectedDeckId, {
             text: entry.dictionaryForm.kanji,
             reading: entry.dictionaryForm.reading,
@@ -211,20 +227,22 @@ export default function SearchScreen() {
             category: entry.category,
             conjugationEnabled: true,
           });
+
           const levelLabel = entry.level ? ` [JLPT ${entry.level}]` : '';
           Alert.alert(
-            '¡Guardado para conjugación!',
-            `"${entry.dictionaryForm.kanji}" (${entry.dictionaryForm.reading})${levelLabel} fue agregada a "${currentDeck?.name}" con práctica de conjugaciones habilitada.`
+            '¡Guardado doble!',
+            `Se agregaron "${entry.kanji}" (${entry.reading}) y la forma diccionario "${entry.dictionaryForm.kanji}" (${entry.dictionaryForm.reading})${levelLabel} a "${currentDeck?.name}".`
           );
         } else {
-          // Guardar palabra directa
+          // Solo habilitar conjugación si es una forma base/diccionario
+          const isBase = isJapaneseDictionaryForm(entry.kanji, entry.reading, entry.category || '');
           await saveGenericWord(selectedDeckId, {
             text: entry.kanji,
             reading: entry.reading,
             meanings: JSON.stringify(entry.meanings),
             level: entry.level,
             category: entry.category,
-            conjugationEnabled: withConjugation,
+            conjugationEnabled: withConjugation && isBase,
           });
           const levelLabel = entry.level ? ` [JLPT ${entry.level}]` : '';
           Alert.alert(
@@ -239,16 +257,16 @@ export default function SearchScreen() {
 
     if (isConjugable) {
       Alert.alert(
-        '¿Quieres agregar el verbo al ejercicio de conjugación?',
-        '(esto guarda también automáticamente la forma diccionario)',
+        `¿Quieres agregar ${itemTypeLabel} al ejercicio de conjugación?`,
+        'Al presionar Sí, se guardará la tarjeta que elegiste y también la forma diccionario para la práctica.',
         [
           {
-            text: 'No, solo tarjeta directa',
+            text: 'No',
             style: 'cancel',
             onPress: () => executeSave(false),
           },
           {
-            text: 'Sí, agregar con conjugación',
+            text: 'Sí',
             onPress: () => executeSave(true),
           },
         ]
@@ -320,7 +338,7 @@ export default function SearchScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        
+
         <View style={styles.brandTitleContainer}>
           <Text style={[styles.brandText, { color: colors.primary }]}>Yomi</Text>
           <Text style={[styles.brandSep, { color: colors.textMuted }]}> • </Text>
@@ -331,296 +349,302 @@ export default function SearchScreen() {
       <View style={{ flex: 1, paddingHorizontal: Spacing.md }}>
         {/* Selector de Mazo */}
         <View style={styles.deckPickerSection}>
-        <Text style={[styles.deckPickerLabel, { color: colors.textMuted }]}>Mazo de destino:</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.deckChipsScroll}>
-          {decks.map((d) => {
-            const isSelected = d.id === selectedDeckId;
-            const langMeta = ALL_LANGUAGES.find(l => l.code === d.languageCode);
-            return (
-              <TouchableOpacity
-                key={d.id}
-                style={[
-                  styles.deckChip,
-                  { backgroundColor: colors.surface, borderColor: colors.border },
-                  isSelected && { backgroundColor: colors.primary, borderColor: colors.primary }
-                ]}
-                onPress={() => handleSelectDeck(d)}
-              >
-                <Text style={styles.deckChipFlag}>{langMeta?.flag || '📚'}</Text>
-                <Text style={[styles.deckChipText, { color: colors.text }, isSelected && { color: '#FFF' }]}>
-                  {d.name}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      </View>
-
-      {/* Input Único de Reconocimiento */}
-      <View style={[styles.inputContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-        <Ionicons name="search" size={20} color={colors.textMuted} style={styles.searchIcon} />
-        <TextInput
-          style={[styles.input, { color: colors.text }]}
-          placeholder={currentLangMeta.placeholder}
-          placeholderTextColor={colors.textMuted}
-          value={query}
-          onChangeText={handleQueryChange}
-          autoCapitalize="none"
-          autoCorrect={false}
-          autoFocus={true}
-        />
-        {isSearching && <ActivityIndicator color={colors.primary} style={styles.loader} />}
-      </View>
-
-      {/* CASO 1: IDIOMA JAPONÉS */}
-      {isJapanese && (
-        <FlatList
-          data={japaneseResults}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={{ paddingBottom: Spacing.xl }}
-          ListEmptyComponent={
-            query.trim().length > 0 && !isSearching ? (
-              <View style={styles.emptySearchBox}>
-                <Text style={[styles.emptySearchText, { color: colors.textMuted }]}>
-                  No se encontraron coincidencias para "{query}".
-                </Text>
+          <Text style={[styles.deckPickerLabel, { color: colors.textMuted }]}>Mazo de destino:</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.deckChipsScroll}>
+            {decks.map((d) => {
+              const isSelected = d.id === selectedDeckId;
+              const langMeta = ALL_LANGUAGES.find(l => l.code === d.languageCode);
+              return (
                 <TouchableOpacity
-                  style={[styles.manualAddBtn, { backgroundColor: colors.primary }]}
-                  onPress={() =>
-                    handleQuickSaveJapanese({
-                      id: 'custom',
-                      kanji: query.trim(),
-                      reading: query.trim(),
-                      romaji: query.trim(),
-                      meanings: [query.trim()],
-                      isCommon: false,
-                      category: classifyJapaneseWord(query.trim(), query.trim()),
-                    })
-                  }
+                  key={d.id}
+                  style={[
+                    styles.deckChip,
+                    { backgroundColor: colors.surface, borderColor: colors.border },
+                    isSelected && { backgroundColor: colors.primary, borderColor: colors.primary }
+                  ]}
+                  onPress={() => handleSelectDeck(d)}
                 >
-                  <Ionicons name="add-circle" size={18} color="#FFF" style={{ marginRight: 6 }} />
-                  <Text style={styles.manualAddBtnText}>Guardar "{query}" como tarjeta</Text>
+                  <Text style={styles.deckChipFlag}>{langMeta?.flag || '📚'}</Text>
+                  <Text style={[styles.deckChipText, { color: colors.text }, isSelected && { color: '#FFF' }]}>
+                    {d.name}
+                  </Text>
                 </TouchableOpacity>
-              </View>
-            ) : null
-          }
-          renderItem={({ item }) => (
-            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              <View style={styles.cardHeader}>
-                <View style={styles.wordMainRow}>
-                  {/* Palabra */}
-                  <Text style={[styles.japaneseKanji, { color: colors.text }]}>{item.kanji}</Text>
+              );
+            })}
+          </ScrollView>
+        </View>
 
-                  {/* Badge de Fonética / Hiragana */}
-                  {item.reading !== item.kanji && (
-                    <View style={[styles.readingBadge, { backgroundColor: colors.surfaceHighlight }]}>
-                      <Text style={[styles.readingBadgeText, { color: colors.primaryHover }]}>{item.reading}</Text>
+        {/* Input Único de Reconocimiento */}
+        <View style={[styles.inputContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <Ionicons name="search" size={20} color={colors.textMuted} style={styles.searchIcon} />
+          <TextInput
+            style={[styles.input, { color: colors.text }]}
+            placeholder={currentLangMeta.placeholder}
+            placeholderTextColor={colors.textMuted}
+            value={query}
+            onChangeText={handleQueryChange}
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoFocus={true}
+          />
+          {isSearching && <ActivityIndicator color={colors.primary} style={styles.loader} />}
+        </View>
+
+        {/* CASO 1: IDIOMA JAPONÉS */}
+        {isJapanese && (
+          <FlatList
+            data={japaneseResults}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={{ paddingBottom: Spacing.xl }}
+            ListEmptyComponent={
+              query.trim().length > 0 && !isSearching ? (
+                <View style={styles.emptySearchBox}>
+                  <Text style={[styles.emptySearchText, { color: colors.textMuted }]}>
+                    No se encontraron coincidencias para "{query}".
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.manualAddBtn, { backgroundColor: colors.primary }]}
+                    onPress={() =>
+                      handleQuickSaveJapanese({
+                        id: 'custom',
+                        kanji: query.trim(),
+                        reading: query.trim(),
+                        romaji: query.trim(),
+                        meanings: [query.trim()],
+                        isCommon: false,
+                        category: classifyJapaneseWord(query.trim(), query.trim()),
+                      })
+                    }
+                  >
+                    <Ionicons name="add-circle" size={18} color="#FFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.manualAddBtnText}>Guardar "{query}" como tarjeta</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null
+            }
+            renderItem={({ item }) => (
+              <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                {/* Badges superiores (JLPT y Categoría) */}
+                {(item.level || (item.category && !item.category.includes('Frase'))) && (
+                  <View style={styles.cardBadgesRow}>
+                    {item.category && !item.category.includes('Frase') && (
+                      <View style={[styles.categoryBadge, { backgroundColor: colors.surfaceHighlight }]}>
+                        <Text style={[styles.categoryBadgeText, { color: colors.primary }]}>{item.category}</Text>
+                      </View>
+                    )}
+                    {item.level && (
+                      <View style={styles.levelBadge}>
+                        <Text style={[styles.levelBadgeText, { color: colors.primary }]}>JLPT {item.level}</Text>
+                      </View>
+                    )}
+
+                  </View>
+                )}
+
+                {/* Fila principal: Palabra + Lectura a la izquierda, Botón + a la derecha */}
+                <View style={styles.wordMainRow}>
+                  <View style={styles.wordTextGroup}>
+                    <Text style={[styles.japaneseKanji, { color: colors.text }]}>{item.kanji}</Text>
+                    {item.reading !== item.kanji && (
+                      <View style={[styles.readingBadge, { backgroundColor: colors.surfaceHighlight }]}>
+                        <Text style={[styles.readingBadgeText, { color: colors.primaryHover }]}>{item.reading}</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.saveBtn, { backgroundColor: colors.primary }]}
+                    onPress={() => handleQuickSaveJapanese(item)}
+                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                  >
+                    <Ionicons name="add" size={22} color="#FFF" />
+                  </TouchableOpacity>
+                </View>
+
+                {/* Significados legibles */}
+                <Text style={[styles.meanings, { color: colors.text }]}>{item.meanings.join(', ')}</Text>
+              </View>
+            )}
+          />
+        )}
+
+        {/* CASO 2: IDIOMA CHINO */}
+        {isChinese && chineseResults && (
+          <>
+            {chineseResults.exactMatches.length > 0 ? (
+              <FlatList
+                data={chineseResults.exactMatches}
+                keyExtractor={(item) => item.id}
+                contentContainerStyle={{ paddingBottom: Spacing.xl }}
+                renderItem={({ item }) => {
+                  let meaningsList: string[] = [];
+                  try {
+                    meaningsList = JSON.parse(item.meanings);
+                  } catch {
+                    meaningsList = [item.meanings];
+                  }
+
+                  const hskNum = getQuickHskLevel(item.simplified);
+
+                  return (
+                    <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                      {/* Badge HSK superior */}
+                      {hskNum && (
+                        <View style={styles.cardBadgesRow}>
+                          <View style={styles.levelBadge}>
+                            <Text style={[styles.levelBadgeText, { color: colors.primary }]}>HSK {hskNum}</Text>
+                          </View>
+                        </View>
+                      )}
+
+                      {/* Fila principal: Carácter + Pinyin a la izquierda, Botón + a la derecha */}
+                      <View style={styles.wordMainRow}>
+                        <View style={styles.wordTextGroup}>
+                          <Text style={[styles.char, { color: colors.text }]}>{item.simplified}</Text>
+
+                          <View style={[styles.pinyinContainer, { backgroundColor: colors.surfaceHighlight }]}>
+                            <Text style={[styles.pinyin, { color: colors.primaryHover }]}>{item.pinyinDisplay}</Text>
+                          </View>
+                        </View>
+
+                        <TouchableOpacity
+                          style={[styles.saveBtn, { backgroundColor: colors.primary }]}
+                          onPress={() => handleQuickSaveChinese(item)}
+                          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                        >
+                          <Ionicons name="add" size={22} color="#FFF" />
+                        </TouchableOpacity>
+                      </View>
+
+                      <Text style={[styles.meanings, { color: colors.text }]}>{meaningsList.join(', ')}</Text>
                     </View>
+                  );
+                }}
+              />
+            ) : (
+              /* Constructor por sílabas si no hubo exacta */
+              <ScrollView style={styles.builderContainer} contentContainerStyle={{ paddingBottom: 60 }}>
+                <View style={[styles.builderHeaderBox, { backgroundColor: colors.surfaceHighlight }]}>
+                  <Ionicons name="sparkles" size={20} color={colors.primary} />
+                  <Text style={[styles.builderHeaderText, { color: colors.text }]}>
+                    Palabra armada por sílabas. Seleccioná los caracteres deseados:
+                  </Text>
+                </View>
+
+                <View style={[styles.previewBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                  <Text style={[styles.previewLabel, { color: colors.textMuted }]}>Resultado:</Text>
+                  <Text style={[styles.previewHanzi, { color: colors.primary }]}>{builtHanzi}</Text>
+                  <Text style={[styles.previewPinyin, { color: colors.primaryHover }]}>{builtPinyin}</Text>
+                </View>
+
+                {chineseResults.syllableGroups.map((group, syllableIdx) => (
+                  <View key={syllableIdx} style={styles.syllableRow}>
+                    <Text style={[styles.syllableLabel, { color: colors.textMuted }]}>
+                      Sílaba #{syllableIdx + 1}: <Text style={[styles.syllableTag, { color: colors.primary }]}>{group.syllable}</Text>
+                    </Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.candidatesScroll}>
+                      {group.candidates.map((cand) => {
+                        const isSelected = selectedEntries[syllableIdx]?.id === cand.id;
+                        return (
+                          <TouchableOpacity
+                            key={cand.id}
+                            style={[
+                              styles.chip,
+                              { backgroundColor: colors.surface, borderColor: colors.border },
+                              isSelected && { backgroundColor: colors.primary, borderColor: colors.primary }
+                            ]}
+                            onPress={() => setSelectedEntries(prev => ({ ...prev, [syllableIdx]: cand }))}
+                          >
+                            <Text style={[styles.chipText, { color: colors.text }, isSelected && { color: '#FFF' }]}>
+                              {cand.simplified}
+                            </Text>
+                            <Text style={[styles.chipPinyin, { color: colors.textMuted }, isSelected && { color: '#FFF' }]}>
+                              {cand.pinyinDisplay}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                ))}
+
+                <View style={[styles.builderMeaningContainer, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}>
+                  <TextInput
+                    style={[styles.builderMeaningInput, { color: colors.text }]}
+                    placeholder={isTranslatingChineseMeaning ? "Obteniendo significado en español..." : "Significado en español..."}
+                    placeholderTextColor={colors.textMuted}
+                    value={chineseCustomMeaning}
+                    onChangeText={setChineseCustomMeaning}
+                  />
+                  {isTranslatingChineseMeaning && (
+                    <ActivityIndicator size="small" color={colors.primary} style={styles.builderLoader} />
                   )}
                 </View>
 
-                {/* Acciones: Badges de Categoría y JLPT al lado del Parlante y Guardar */}
+                <TouchableOpacity
+                  style={[styles.createBtn, { backgroundColor: colors.primary }]}
+                  onPress={async () => {
+                    if (!selectedDeckId || !builtHanzi) return;
+                    const hskNum = getQuickHskLevel(builtHanzi);
+                    await saveCustomWord(selectedDeckId, {
+                      simplified: builtHanzi,
+                      pinyinDisplay: builtPinyin,
+                      meanings: chineseCustomMeaning || 'Sin significado',
+                      level: hskNum ? `HSK ${hskNum}` : undefined,
+                    });
+                    Alert.alert('¡Palabra Creada!', `"${builtHanzi}" guardada en tu mazo.`, [
+                      { text: 'OK', onPress: () => router.back() }
+                    ]);
+                  }}
+                >
+                  <Ionicons name="checkmark-circle" size={20} color="#FFF" style={{ marginRight: 8 }} />
+                  <Text style={styles.createBtnText}>Guardar en {currentDeck?.name}</Text>
+                </TouchableOpacity>
+              </ScrollView>
+            )}
+          </>
+        )}
+
+        {/* CASO 3: OTROS IDIOMAS */}
+        {!isChinese && !isJapanese && query.trim().length > 0 && (
+          <ScrollView contentContainerStyle={{ paddingBottom: 60 }}>
+            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <View style={styles.cardHeader}>
+                <View style={styles.wordMainRow}>
+                  <Text style={[styles.alphabeticWord, { color: colors.text }]}>{query.trim()}</Text>
+                </View>
                 <View style={styles.actionButtonsRow}>
-                  {item.category && (
-                    <View style={[styles.categoryBadge, { backgroundColor: colors.surfaceHighlight }]}>
-                      <Text style={[styles.categoryBadgeText, { color: colors.primary }]}>{item.category}</Text>
-                    </View>
-                  )}
-                  {item.level && (
-                    <View style={styles.levelBadge}>
-                      <Text style={[styles.levelBadgeText, { color: colors.primary }]}>JLPT {item.level}</Text>
-                    </View>
-                  )}
-                  <TouchableOpacity style={[styles.audioIconBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]} onPress={() => handleSpeak(item.kanji)}>
+                  <TouchableOpacity style={[styles.audioIconBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]} onPress={() => handleSpeak(query.trim())}>
                     <Ionicons name="volume-high" size={20} color={colors.primary} />
                   </TouchableOpacity>
-                  <TouchableOpacity style={[styles.saveBtn, { backgroundColor: colors.primary }]} onPress={() => handleQuickSaveJapanese(item)}>
+                  <TouchableOpacity style={[styles.saveBtn, { backgroundColor: colors.primary }]} onPress={handleSaveGeneric}>
                     <Ionicons name="add" size={24} color="#FFF" />
                   </TouchableOpacity>
                 </View>
               </View>
 
-              <Text style={[styles.meanings, { color: colors.text }]}>{item.meanings.join(', ')}</Text>
-            </View>
-          )}
-        />
-      )}
-
-      {/* CASO 2: IDIOMA CHINO */}
-      {isChinese && chineseResults && (
-        <>
-          {chineseResults.exactMatches.length > 0 ? (
-            <FlatList
-              data={chineseResults.exactMatches}
-              keyExtractor={(item) => item.id}
-              contentContainerStyle={{ paddingBottom: Spacing.xl }}
-              renderItem={({ item }) => {
-                let meaningsList: string[] = [];
-                try {
-                  meaningsList = JSON.parse(item.meanings);
-                } catch {
-                  meaningsList = [item.meanings];
-                }
-
-                const hskNum = getQuickHskLevel(item.simplified);
-
-                return (
-                  <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                    <View style={styles.cardHeader}>
-                      <View style={styles.wordMainRow}>
-                        {/* Carácter Hanzi */}
-                        <Text style={[styles.char, { color: colors.text }]}>{item.simplified}</Text>
-
-                        {/* Badge Pinyin */}
-                        <View style={[styles.pinyinContainer, { backgroundColor: colors.surfaceHighlight }]}>
-                          <Text style={[styles.pinyin, { color: colors.primaryHover }]}>{item.pinyinDisplay}</Text>
-                        </View>
-                      </View>
-
-                      {/* Acciones: Badge HSK al lado del Parlante y Guardar */}
-                      <View style={styles.actionButtonsRow}>
-                        {hskNum && (
-                          <View style={styles.levelBadge}>
-                            <Text style={[styles.levelBadgeText, { color: colors.primary }]}>HSK {hskNum}</Text>
-                          </View>
-                        )}
-                        <TouchableOpacity style={[styles.audioIconBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]} onPress={() => handleSpeak(item.simplified)}>
-                          <Ionicons name="volume-high" size={20} color={colors.primary} />
-                        </TouchableOpacity>
-                        <TouchableOpacity style={[styles.saveBtn, { backgroundColor: colors.primary }]} onPress={() => handleQuickSaveChinese(item)}>
-                          <Ionicons name="add" size={24} color="#FFF" />
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                    <Text style={[styles.meanings, { color: colors.text }]}>{meaningsList.join(', ')}</Text>
-                  </View>
-                );
-              }}
-            />
-          ) : (
-            /* Constructor por sílabas si no hubo exacta */
-            <ScrollView style={styles.builderContainer} contentContainerStyle={{ paddingBottom: 60 }}>
-              <View style={[styles.builderHeaderBox, { backgroundColor: colors.surfaceHighlight }]}>
-                <Ionicons name="sparkles" size={20} color={colors.primary} />
-                <Text style={[styles.builderHeaderText, { color: colors.text }]}>
-                  Palabra armada por sílabas. Seleccioná los caracteres deseados:
-                </Text>
-              </View>
-
-              <View style={[styles.previewBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                <Text style={[styles.previewLabel, { color: colors.textMuted }]}>Resultado:</Text>
-                <Text style={[styles.previewHanzi, { color: colors.primary }]}>{builtHanzi}</Text>
-                <Text style={[styles.previewPinyin, { color: colors.primaryHover }]}>{builtPinyin}</Text>
-              </View>
-
-              {chineseResults.syllableGroups.map((group, syllableIdx) => (
-                <View key={syllableIdx} style={styles.syllableRow}>
-                  <Text style={[styles.syllableLabel, { color: colors.textMuted }]}>
-                    Sílaba #{syllableIdx + 1}: <Text style={[styles.syllableTag, { color: colors.primary }]}>{group.syllable}</Text>
-                  </Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.candidatesScroll}>
-                    {group.candidates.map((cand) => {
-                      const isSelected = selectedEntries[syllableIdx]?.id === cand.id;
-                      return (
-                        <TouchableOpacity
-                          key={cand.id}
-                          style={[
-                            styles.chip,
-                            { backgroundColor: colors.surface, borderColor: colors.border },
-                            isSelected && { backgroundColor: colors.primary, borderColor: colors.primary }
-                          ]}
-                          onPress={() => setSelectedEntries(prev => ({ ...prev, [syllableIdx]: cand }))}
-                        >
-                          <Text style={[styles.chipText, { color: colors.text }, isSelected && { color: '#FFF' }]}>
-                            {cand.simplified}
-                          </Text>
-                          <Text style={[styles.chipPinyin, { color: colors.textMuted }, isSelected && { color: '#FFF' }]}>
-                            {cand.pinyinDisplay}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </ScrollView>
-                </View>
-              ))}
-
-              <View style={[styles.builderMeaningContainer, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}>
-                <TextInput
-                  style={[styles.builderMeaningInput, { color: colors.text }]}
-                  placeholder={isTranslatingChineseMeaning ? "Obteniendo significado en español..." : "Significado en español..."}
-                  placeholderTextColor={colors.textMuted}
-                  value={chineseCustomMeaning}
-                  onChangeText={setChineseCustomMeaning}
-                />
-                {isTranslatingChineseMeaning && (
-                  <ActivityIndicator size="small" color={colors.primary} style={styles.builderLoader} />
+              <View style={styles.translationRow}>
+                <Text style={[styles.translationLabel, { color: colors.textMuted }]}>Traducción / Significado:</Text>
+                {isGenericTranslating ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <TextInput
+                    style={[styles.editableMeaningInput, { backgroundColor: colors.surfaceHighlight, color: colors.text }]}
+                    value={genericTranslation}
+                    onChangeText={setGenericTranslation}
+                    placeholder="Escribí el significado..."
+                    placeholderTextColor={colors.textMuted}
+                  />
                 )}
               </View>
 
-              <TouchableOpacity
-                style={[styles.createBtn, { backgroundColor: colors.primary }]}
-                onPress={async () => {
-                  if (!selectedDeckId || !builtHanzi) return;
-                  const hskNum = getQuickHskLevel(builtHanzi);
-                  await saveCustomWord(selectedDeckId, {
-                    simplified: builtHanzi,
-                    pinyinDisplay: builtPinyin,
-                    meanings: chineseCustomMeaning || 'Sin significado',
-                    level: hskNum ? `HSK ${hskNum}` : undefined,
-                  });
-                  Alert.alert('¡Palabra Creada!', `"${builtHanzi}" guardada en tu mazo.`, [
-                    { text: 'OK', onPress: () => router.back() }
-                  ]);
-                }}
-              >
-                <Ionicons name="checkmark-circle" size={20} color="#FFF" style={{ marginRight: 8 }} />
-                <Text style={styles.createBtnText}>Guardar en {currentDeck?.name}</Text>
+              <TouchableOpacity style={[styles.createBtn, { backgroundColor: colors.primary, marginTop: Spacing.md }]} onPress={handleSaveGeneric}>
+                <Ionicons name="add-circle" size={20} color="#FFF" style={{ marginRight: 6 }} />
+                <Text style={styles.createBtnText}>Guardar tarjeta en {currentDeck?.name}</Text>
               </TouchableOpacity>
-            </ScrollView>
-          )}
-        </>
-      )}
-
-      {/* CASO 3: OTROS IDIOMAS */}
-      {!isChinese && !isJapanese && query.trim().length > 0 && (
-        <ScrollView contentContainerStyle={{ paddingBottom: 60 }}>
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <View style={styles.cardHeader}>
-              <View style={styles.wordMainRow}>
-                <Text style={[styles.alphabeticWord, { color: colors.text }]}>{query.trim()}</Text>
-              </View>
-              <View style={styles.actionButtonsRow}>
-                <TouchableOpacity style={[styles.audioIconBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]} onPress={() => handleSpeak(query.trim())}>
-                  <Ionicons name="volume-high" size={20} color={colors.primary} />
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.saveBtn, { backgroundColor: colors.primary }]} onPress={handleSaveGeneric}>
-                  <Ionicons name="add" size={24} color="#FFF" />
-                </TouchableOpacity>
-              </View>
             </View>
-
-            <View style={styles.translationRow}>
-              <Text style={[styles.translationLabel, { color: colors.textMuted }]}>Traducción / Significado:</Text>
-              {isGenericTranslating ? (
-                <ActivityIndicator size="small" color={colors.primary} />
-              ) : (
-                <TextInput
-                  style={[styles.editableMeaningInput, { backgroundColor: colors.surfaceHighlight, color: colors.text }]}
-                  value={genericTranslation}
-                  onChangeText={setGenericTranslation}
-                  placeholder="Escribí el significado..."
-                  placeholderTextColor={colors.textMuted}
-                />
-              )}
-            </View>
-
-            <TouchableOpacity style={[styles.createBtn, { backgroundColor: colors.primary, marginTop: Spacing.md }]} onPress={handleSaveGeneric}>
-              <Ionicons name="add-circle" size={20} color="#FFF" style={{ marginRight: 6 }} />
-              <Text style={styles.createBtnText}>Guardar tarjeta en {currentDeck?.name}</Text>
-            </TouchableOpacity>
-          </View>
-        </ScrollView>
-      )}
+          </ScrollView>
+        )}
       </View>
     </View>
   );
@@ -700,9 +724,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   card: {
-    borderRadius: 16,
-    padding: Spacing.md,
-    marginBottom: Spacing.md,
+    borderRadius: 14,
+    padding: Spacing.sm + 4,
+    marginBottom: Spacing.sm + 2,
     borderWidth: 1,
     ...Shadows.card,
   },
@@ -710,39 +734,61 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: Spacing.sm,
+    marginBottom: 6,
   },
   wordMainRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  wordTextGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
     flex: 1,
+    marginRight: Spacing.xs,
   },
   japaneseKanji: {
-    fontSize: 26,
+    fontSize: 22,
     fontWeight: 'bold',
     marginRight: Spacing.xs,
+    includeFontPadding: false,
+    paddingBottom: 2
   },
   readingBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.25)',
     marginRight: Spacing.xs,
+    alignSelf: 'center',
   },
   readingBadgeText: {
     fontSize: 13,
     fontWeight: '600',
+    includeFontPadding: false,
+    textAlignVertical: 'center',
+  },
+  cardBadgesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 6,
   },
   categoryBadge: {
     borderWidth: 1,
     borderColor: 'rgba(99, 102, 241, 0.35)',
     paddingHorizontal: 7,
     paddingVertical: 2,
-    borderRadius: 6,
-    marginRight: 6,
+    borderRadius: 4,
   },
   categoryBadgeText: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: '700',
+    includeFontPadding: false,
   },
   levelBadge: {
     backgroundColor: 'rgba(59, 130, 246, 0.15)',
@@ -750,54 +796,65 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(59, 130, 246, 0.4)',
     paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: 6,
-    marginRight: Spacing.xs,
+    borderRadius: 4,
   },
   levelBadgeText: {
     fontSize: 11,
     fontWeight: '700',
+    includeFontPadding: false,
   },
   char: {
     ...Typography.chineseMedium,
+    fontSize: 22,
     marginRight: Spacing.xs,
+    includeFontPadding: false,
   },
   alphabeticWord: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: 'bold',
+    includeFontPadding: false,
   },
   pinyinContainer: {
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 4,
-    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.25)',
     marginRight: Spacing.xs,
+    alignSelf: 'center',
+    marginTop: 3,
   },
   pinyin: {
     ...Typography.body,
+    fontSize: 13,
     fontWeight: '500',
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
   actionButtonsRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 6,
   },
   audioIconBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: Spacing.xs,
     borderWidth: 1,
   },
   saveBtn: {
-    borderRadius: 20,
-    width: 40,
-    height: 40,
+    borderRadius: 16,
+    width: 32,
+    height: 32,
     justifyContent: 'center',
     alignItems: 'center',
   },
   meanings: {
     ...Typography.bodySmall,
-    lineHeight: 20,
+    fontSize: 13,
+    lineHeight: 18,
   },
   translationRow: {
     marginTop: Spacing.xs,

@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { eq } from 'drizzle-orm';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import React, { memo, useCallback, useState } from 'react';
 import { Alert, FlatList, Modal, Platform, Pressable, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { db } from '../../../db';
@@ -13,10 +13,88 @@ import { getQuickHskLevel } from '../../../lib/hsk-data';
 import { cleanAndFormatMeanings } from '../../../lib/japanese-search';
 import { getQuickJlptLevel } from '../../../lib/jlpt-data';
 import { deleteWord } from '../../../lib/word-service';
-import { classifyJapaneseWord } from '../../../lib/japanese-utils';
+import { classifyJapaneseWord, isJapaneseDictionaryForm } from '../../../lib/japanese-utils';
 import { ConjugationPracticeModal } from '../../components/ConjugationPracticeModal';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { Shadows, Spacing, Typography } from '../../constants/theme';
+
+interface DeckWordCardProps {
+  item: any;
+  colors: any;
+  onPress: (id: string) => void;
+  onSpeak: (text: string) => void;
+  onDelete: (id: string, text: string) => void;
+}
+
+const DeckWordCard = memo(function DeckWordCard({
+  item,
+  colors,
+  onPress,
+  onSpeak,
+  onDelete,
+}: DeckWordCardProps) {
+  return (
+    <TouchableOpacity
+      style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
+      activeOpacity={0.7}
+      onPress={() => onPress(item.id)}
+    >
+      <View style={styles.cardHeader}>
+        {/* Izquierda: Palabra (máx 55% ancho) + Texto de lectura debajo sin contenedor */}
+        <View style={styles.wordColumn}>
+          <Text
+            style={[styles.char, { color: colors.text }]}
+            numberOfLines={1}
+            adjustsFontSizeToFit={true}
+          >
+            {item.simplified}
+          </Text>
+
+          {item.displayReading && item.displayReading !== item.simplified ? (
+            <Text
+              style={[styles.readingText, { color: colors.primaryHover }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit={true}
+            >
+              {item.displayReading}
+            </Text>
+          ) : null}
+        </View>
+
+        {/* Derecha: Botones de Parlante y Borrar */}
+        <View style={styles.actionsRow}>
+          <TouchableOpacity
+            style={styles.iconActionBtn}
+            onPress={(e) => {
+              e.stopPropagation();
+              onSpeak(item.simplified);
+            }}
+          >
+            <Ionicons name="volume-medium-outline" size={20} color={colors.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.iconActionBtn}
+            onPress={(e) => {
+              e.stopPropagation();
+              onDelete(item.id, item.simplified);
+            }}
+          >
+            <Ionicons name="trash-outline" size={18} color={colors.danger} />
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <Text style={[styles.meanings, { color: colors.textMuted }]} numberOfLines={2}>
+        {item.displayMeanings?.join(', ') || ''}
+      </Text>
+
+      <View style={[styles.cardFooter, { borderTopColor: colors.border }]}>
+        <Text style={[styles.viewDetailText, { color: colors.primary }]}>Tocar para ver detalle y trazado</Text>
+        <Ionicons name="chevron-forward" size={14} color={colors.primary} />
+      </View>
+    </TouchableOpacity>
+  );
+});
 
 export default function DeckDetailScreen() {
   const { colors } = useTheme();
@@ -31,7 +109,7 @@ export default function DeckDetailScreen() {
   const tabBottomMargin = Platform.OS === 'android' ? Math.max(insets.bottom + 4, 8) : Math.max(insets.bottom, 6);
   const fabBottomPosition = tabBottomMargin + 60 + 16;
 
-  const fetchWords = async () => {
+  const fetchWords = useCallback(async () => {
     if (id) {
       const result = await db.select().from(words).where(eq(words.deckId, id));
       const d = await db.select().from(decks).where(eq(decks.id, id)).limit(1);
@@ -76,9 +154,13 @@ export default function DeckDetailScreen() {
           category = classifyJapaneseWord(w.simplified, cleanReading);
         }
 
+        const isBaseForm = isJapaneseDictionaryForm(w.simplified, cleanReading, category);
         const isConjugable =
-          conjugationEnabled ||
-          Boolean(category?.startsWith('Verbo') || category?.startsWith('Adjetivo'));
+          (conjugationEnabled === true && isBaseForm) ||
+          (conjugationEnabled === undefined && isBaseForm && Boolean(category?.startsWith('Verbo') || category?.startsWith('Adjetivo')));
+
+        // Pre-calcular y formatear significados (máximo 3) una sola vez para rendimiento óptimo
+        const displayMeanings = cleanAndFormatMeanings(w.meanings).slice(0, 3);
 
         return {
           ...w,
@@ -86,20 +168,21 @@ export default function DeckDetailScreen() {
           resolvedCategory: category,
           displayReading: cleanReading,
           isConjugable,
+          displayMeanings,
         };
       });
 
       setDeckWords(processed);
     }
-  };
+  }, [id]);
 
   useFocusEffect(
     useCallback(() => {
       fetchWords();
-    }, [id])
+    }, [fetchWords])
   );
 
-  const handleDeleteWord = (wordId: string, wordText: string) => {
+  const handleDeleteWord = useCallback((wordId: string, wordText: string) => {
     Alert.alert(
       'Eliminar palabra',
       `¿Estás seguro de que querés eliminar "${wordText}" del mazo y de tus repasos?`,
@@ -115,7 +198,7 @@ export default function DeckDetailScreen() {
         },
       ]
     );
-  };
+  }, [fetchWords]);
 
   const [menuVisible, setMenuVisible] = useState(false);
 
@@ -162,10 +245,26 @@ export default function DeckDetailScreen() {
     );
   };
 
-  const handleSpeak = (text: string) => {
+  const handleSpeak = useCallback((text: string) => {
     const lang = deckInfo?.languageCode || 'zh-CN';
     speakText(text, lang);
-  };
+  }, [deckInfo?.languageCode]);
+
+  const handlePressWord = useCallback((wordId: string) => {
+    router.push(`/word/${wordId}`);
+  }, [router]);
+
+  const renderWordItem = useCallback(({ item }: { item: any }) => (
+    <DeckWordCard
+      item={item}
+      colors={colors}
+      onPress={handlePressWord}
+      onSpeak={handleSpeak}
+      onDelete={handleDeleteWord}
+    />
+  ), [colors, handlePressWord, handleSpeak, handleDeleteWord]);
+
+  const keyExtractor = useCallback((item: any) => item.id, []);
 
   const langMeta = ALL_LANGUAGES.find((l) => l.code === deckInfo?.languageCode) || ALL_LANGUAGES[0];
 
@@ -185,28 +284,6 @@ export default function DeckDetailScreen() {
         </View>
 
         <View style={styles.headerActions}>
-          {deckInfo?.languageCode === 'ja-JP' && deckWords.some((w) => w.isConjugable) && (
-            <TouchableOpacity
-              style={[styles.conjugationBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}
-              onPress={() => setConjugationModalVisible(true)}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="sparkles" size={13} color={colors.primary} style={{ marginRight: 4 }} />
-              <Text style={[styles.conjugationBtnText, { color: colors.primary }]}>Conjugaciones</Text>
-            </TouchableOpacity>
-          )}
-
-          {deckWords.length > 0 && (
-            <TouchableOpacity
-              style={[styles.studyDeckBtn, { backgroundColor: colors.primary }]}
-              onPress={() => router.push(`/(tabs)/review?deckId=${id}`)}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="flash" size={14} color="#FFF" style={{ marginRight: 4 }} />
-              <Text style={styles.studyDeckBtnText}>Repasar</Text>
-            </TouchableOpacity>
-          )}
-
           {/* Botón de 3 puntos (...) */}
           <TouchableOpacity
             style={styles.moreMenuBtn}
@@ -214,7 +291,7 @@ export default function DeckDetailScreen() {
             accessibilityLabel="Opciones del mazo"
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            <Ionicons name="ellipsis-vertical" size={20} color={colors.text} />
+            <Ionicons name="ellipsis-vertical" size={22} color={colors.text} />
           </TouchableOpacity>
         </View>
       </View>
@@ -229,6 +306,32 @@ export default function DeckDetailScreen() {
         <Pressable style={styles.modalOverlay} onPress={() => setMenuVisible(false)}>
           <View style={[styles.menuDropdown, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <Text style={[styles.menuDropdownTitle, { color: colors.textMuted }]}>Opciones de {deckInfo?.name}</Text>
+
+            {deckWords.length > 0 && (
+              <TouchableOpacity
+                style={[styles.menuDropdownItem, { borderBottomColor: colors.border }]}
+                onPress={() => {
+                  setMenuVisible(false);
+                  router.push(`/(tabs)/review?deckId=${id}`);
+                }}
+              >
+                <Ionicons name="flash" size={20} color={colors.primary} style={{ marginRight: 10 }} />
+                <Text style={[styles.menuDropdownText, { color: colors.text, fontWeight: 'bold' }]}>Repasar mazo</Text>
+              </TouchableOpacity>
+            )}
+
+            {deckInfo?.languageCode === 'ja-JP' && deckWords.some((w) => w.isConjugable) && (
+              <TouchableOpacity
+                style={[styles.menuDropdownItem, { borderBottomColor: colors.border }]}
+                onPress={() => {
+                  setMenuVisible(false);
+                  setConjugationModalVisible(true);
+                }}
+              >
+                <Ionicons name="sparkles" size={20} color={colors.primary} style={{ marginRight: 10 }} />
+                <Text style={[styles.menuDropdownText, { color: colors.text }]}>Práctica de Conjugaciones</Text>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity
               style={[styles.menuDropdownItem, { borderBottomColor: colors.border }]}
@@ -275,95 +378,13 @@ export default function DeckDetailScreen() {
       ) : (
         <FlatList
           data={deckWords}
-          keyExtractor={item => item.id}
+          keyExtractor={keyExtractor}
           contentContainerStyle={{ paddingHorizontal: Spacing.md, paddingBottom: 110 }}
-          renderItem={({ item }) => {
-            const level = item.resolvedLevel;
-            const formattedLevel = level
-              ? level.startsWith('N')
-                ? `JLPT ${level}`
-                : level.startsWith('HSK')
-                  ? level
-                  : level
-              : null;
-
-            // Desduplicar, capitalizar cada elemento y limitar a máximo 3 en el mazo
-            const displayMeanings = cleanAndFormatMeanings(item.meanings).slice(0, 3);
-
-            return (
-              <TouchableOpacity
-                style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
-                activeOpacity={0.7}
-                onPress={() => router.push(`/word/${item.id}`)}
-              >
-                <View style={styles.cardHeader}>
-                  {/* Izquierda: Palabra (máx 55% ancho) + Texto de lectura debajo sin contenedor */}
-                  <View style={styles.wordColumn}>
-                    <Text
-                      style={[styles.char, { color: colors.text }]}
-                      numberOfLines={1}
-                      adjustsFontSizeToFit={true}
-                    >
-                      {item.simplified}
-                    </Text>
-
-                    {item.displayReading && item.displayReading !== item.simplified ? (
-                      <Text
-                        style={[styles.readingText, { color: colors.primaryHover }]}
-                        numberOfLines={1}
-                        adjustsFontSizeToFit={true}
-                      >
-                        {item.displayReading}
-                      </Text>
-                    ) : null}
-                  </View>
-
-                  {/* Derecha: Badges de Categoría y Nivel JLPT/HSK al lado del Parlante y Borrar */}
-                  <View style={styles.actionsRow}>
-                    {item.resolvedCategory ? (
-                      <View style={[styles.categoryBadge, { backgroundColor: colors.surfaceHighlight }]}>
-                        <Text style={[styles.categoryBadgeText, { color: colors.primary }]}>{item.resolvedCategory}</Text>
-                      </View>
-                    ) : null}
-
-                    {formattedLevel ? (
-                      <View style={styles.levelBadge}>
-                        <Text style={[styles.levelBadgeText, { color: colors.primary }]}>{formattedLevel}</Text>
-                      </View>
-                    ) : null}
-
-                    <TouchableOpacity
-                      style={styles.iconActionBtn}
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        handleSpeak(item.simplified);
-                      }}
-                    >
-                      <Ionicons name="volume-medium-outline" size={20} color={colors.primary} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.iconActionBtn}
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        handleDeleteWord(item.id, item.simplified);
-                      }}
-                    >
-                      <Ionicons name="trash-outline" size={18} color={colors.danger} />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-
-                <Text style={[styles.meanings, { color: colors.textMuted }]} numberOfLines={2}>
-                  {displayMeanings.join(', ')}
-                </Text>
-
-                <View style={[styles.cardFooter, { borderTopColor: colors.border }]}>
-                  <Text style={[styles.viewDetailText, { color: colors.primary }]}>Tocar para ver detalle y trazado</Text>
-                  <Ionicons name="chevron-forward" size={14} color={colors.primary} />
-                </View>
-              </TouchableOpacity>
-            );
-          }}
+          renderItem={renderWordItem}
+          removeClippedSubviews={Platform.OS === 'android'}
+          maxToRenderPerBatch={10}
+          windowSize={5}
+          initialNumToRender={8}
         />
       )}
 

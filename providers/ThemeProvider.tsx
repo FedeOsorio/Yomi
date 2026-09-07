@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { useColorScheme } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
 import { DarkColors, LightColors } from '../src/constants/theme';
 import { getStorageItem, setStorageItem } from '../lib/storage-service';
 
@@ -21,22 +23,30 @@ const ThemeContext = createContext<ThemeContextType>({
 });
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [themeMode, setThemeModeState] = useState<ThemeMode>('dark');
+  const systemColorScheme = useColorScheme();
+  const defaultTheme: ThemeMode = systemColorScheme === 'dark' ? 'dark' : 'light';
+  const [themeMode, setThemeModeState] = useState<ThemeMode>(defaultTheme);
 
-  // Cargar preferencia persistente al iniciar la app (vía FileSystem de Expo / Storage)
+  // Cargar preferencia persistente al iniciar la app (vía Storage).
+  // Si no hay preferencia guardada previamente, se respeta el tema del sistema del usuario.
   useEffect(() => {
     let isMounted = true;
     async function loadTheme() {
       const saved = await getStorageItem('yomi_theme_mode');
-      if (isMounted && (saved === 'light' || saved === 'dark')) {
-        setThemeModeState(saved as ThemeMode);
+      if (isMounted) {
+        if (saved === 'light' || saved === 'dark') {
+          setThemeModeState(saved as ThemeMode);
+        } else {
+          // Si nunca guardó una preferencia, asegurar que tome el esquema del sistema
+          setThemeModeState(systemColorScheme === 'dark' ? 'dark' : 'light');
+        }
       }
     }
     loadTheme();
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [systemColorScheme]);
 
   const isDark = themeMode === 'dark';
   const colors = isDark ? DarkColors : LightColors;
@@ -56,6 +66,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <ThemeContext.Provider value={{ isDark, themeMode, colors, toggleTheme, setThemeMode }}>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
       {children}
     </ThemeContext.Provider>
   );

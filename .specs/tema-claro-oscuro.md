@@ -22,5 +22,8 @@ Permite alternar globalmente el esquema de colores de la interfaz entre el Modo 
 - `toggleTheme()`: función para conmutar entre claro y oscuro.
 
 ## Reglas de Integración:
+- **Detección Automática Inicial**: En la primera instalación (o si no existe clave `'yomi_theme_mode'` en almacenamiento persistente), la aplicación detecta y respeta automáticamente el esquema de color activo en el sistema operativo del usuario (`useColorScheme()`).
+- Si el usuario conmuta el tema manualmente mediante `toggleTheme()`, la preferencia seleccionada se almacena localmente y prevalece en los siguientes arranques.
 - Todos los componentes y pantallas consumen `useTheme()` para definir estilos dinámicos.
+- `providers/ThemeProvider.tsx` integra `<StatusBar style={isDark ? 'light' : 'dark'} backgroundColor="transparent" translucent />` garantizando que la barra de estado y notificaciones del dispositivo sea siempre legible (iconos blancos sobre fondo oscuro y oscuros sobre fondo claro).
 - Los badges de nivel (`JLPT N5`, `HSK 1`), botones principales y resaltados preservan la identidad de marca independientemente del modo visual.

@@ -5,7 +5,7 @@ import { eq, and, like, ne } from 'drizzle-orm';
 import { createNewSrsItem } from './srs-engine';
 import { DictionaryEntry } from './search-engine';
 import { searchJapanese, extractKanjis, cleanAndFormatMeanings } from './japanese-search';
-import { classifyJapaneseWord } from './japanese-utils';
+import { classifyJapaneseWord, isJapaneseDictionaryForm } from './japanese-utils';
 
 import * as crypto from 'expo-crypto';
 
@@ -421,6 +421,73 @@ export async function deleteWordMeaning(
 }
 
 /**
+ * Modifica el texto de un significado existente de una palabra,
+ * actualizando la lista de significados, la selección para repaso y el ítem SRS asociado.
+ */
+export async function updateWordMeaningText(
+  wordId: string,
+  oldMeaning: string,
+  newMeaning: string
+): Promise<{ updatedMeanings: string[]; updatedSelected: string[] }> {
+  const existingWords = await db.select().from(words).where(eq(words.id, wordId)).limit(1);
+  if (existingWords.length === 0) {
+    return { updatedMeanings: [], updatedSelected: [] };
+  }
+
+  const word = existingWords[0];
+  const originalList = cleanAndFormatMeanings(word.meanings);
+  const targetClean = oldMeaning.trim().toLowerCase();
+  const trimmedNew = newMeaning.trim();
+
+  if (!trimmedNew) {
+    return { updatedMeanings: originalList, updatedSelected: [] };
+  }
+
+  // Reemplazar oldMeaning por trimmedNew manteniendo el orden
+  const newMeaningsList = originalList.map((m) =>
+    m.trim().toLowerCase() === targetClean ? trimmedNew : m
+  );
+  const newMeaningsJson = JSON.stringify(newMeaningsList);
+
+  let auxObj: Record<string, any> = {};
+  let newSelected: string[] = [];
+
+  if (word.auxiliaryInfo) {
+    try {
+      auxObj = JSON.parse(word.auxiliaryInfo);
+      if (Array.isArray(auxObj.selectedMeanings)) {
+        newSelected = auxObj.selectedMeanings.map((m: string) =>
+          m.trim().toLowerCase() === targetClean ? trimmedNew : m
+        );
+      }
+    } catch (e) {}
+  }
+
+  if (newSelected.length === 0 && newMeaningsList.length > 0) {
+    newSelected = [newMeaningsList[0]];
+  }
+  auxObj.selectedMeanings = newSelected;
+
+  await db.update(words)
+    .set({
+      meanings: newMeaningsJson,
+      auxiliaryInfo: JSON.stringify(auxObj),
+    })
+    .where(eq(words.id, wordId));
+
+  await db.update(srsItems)
+    .set({ displayMeaning: JSON.stringify(newSelected) })
+    .where(
+      and(
+        eq(srsItems.itemType, 'word'),
+        eq(srsItems.itemId, wordId)
+      )
+    );
+
+  return { updatedMeanings: newMeaningsList, updatedSelected: newSelected };
+}
+
+/**
  * Inserta un lote masivo de palabras importadas en un mazo, evitando duplicados
  * y generando sus correspondientes tarjetas SRS FSRS.
  */
@@ -494,11 +561,12 @@ export interface ConjugableWord {
   meanings: string[];
   category: string;
   level?: string;
+  disabledConjugations?: string[];
 }
 
 /**
- * Obtiene todas las palabras de un mazo que son verbos o adjetivos (o tienen conjugación habilitada)
- * para realizar la práctica de conjugaciones.
+ * Obtiene todas las palabras de un mazo que son verbos o adjetivos en forma de diccionario base
+ * (excluyendo formas ya conjugadas o marcadas con conjugationEnabled: false).
  */
 export async function getConjugableWordsForDeck(deckId: string): Promise<ConjugableWord[]> {
   const deckWords = await db.select().from(words).where(eq(words.deckId, deckId));
@@ -507,27 +575,42 @@ export async function getConjugableWordsForDeck(deckId: string): Promise<Conjuga
   for (const w of deckWords) {
     let category = '';
     let level = '';
-    let conjugationEnabled = false;
+    let conjugationEnabled: boolean | undefined = undefined;
+    let disabledConjugations: string[] = [];
 
     if (w.auxiliaryInfo) {
       try {
         const aux = JSON.parse(w.auxiliaryInfo);
         category = aux.category || '';
         level = aux.level || '';
-        conjugationEnabled = Boolean(aux.conjugationEnabled);
+        if (aux.conjugationEnabled !== undefined) {
+          conjugationEnabled = Boolean(aux.conjugationEnabled);
+        }
+        if (Array.isArray(aux.disabledConjugations)) {
+          disabledConjugations = aux.disabledConjugations;
+        }
       } catch {}
     }
 
+    const cleanReading = (w.pinyinDisplay || '').replace(/\s*\([^)]*\)/g, '').trim();
+
     // Si no tiene category explícita, intentar clasificar si es japonés
     if (!category) {
-      const cleanReading = (w.pinyinDisplay || '').replace(/\s*\([^)]*\)/g, '').trim();
       category = classifyJapaneseWord(w.simplified, cleanReading);
     }
 
+    // Excluir si explícitamente se deshabilitó la conjugación
+    if (conjugationEnabled === false) {
+      continue;
+    }
+
+    // Comprobar si la palabra está en su forma base de diccionario (Jisho-kei)
+    const isBaseForm = isJapaneseDictionaryForm(w.simplified, cleanReading, category);
+
+    // Solo es conjugable si es forma base y es Verbo/Adjetivo o se habilitó explícitamente
     const isConjugable =
-      conjugationEnabled ||
-      category.startsWith('Verbo') ||
-      category.startsWith('Adjetivo');
+      (conjugationEnabled === true && isBaseForm) ||
+      (conjugationEnabled === undefined && isBaseForm && (category.startsWith('Verbo') || category.startsWith('Adjetivo')));
 
     if (isConjugable) {
       let parsedMeanings: string[] = [];
@@ -540,7 +623,114 @@ export async function getConjugableWordsForDeck(deckId: string): Promise<Conjuga
       results.push({
         id: w.id,
         kanji: w.simplified,
-        reading: (w.pinyinDisplay || '').replace(/\s*\([^)]*\)/g, '').trim(),
+        reading: cleanReading,
+        meanings: parsedMeanings,
+        category,
+        level: level || undefined,
+        disabledConjugations,
+      });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Habilita o deshabilita una forma conjugada específica para una palabra.
+ */
+export async function toggleWordFormConjugation(wordId: string, form: string, disabled: boolean): Promise<void> {
+  const existingWords = await db.select().from(words).where(eq(words.id, wordId)).limit(1);
+  if (existingWords.length === 0) return;
+
+  const word = existingWords[0];
+  let auxObj: Record<string, any> = {};
+  if (word.auxiliaryInfo) {
+    try {
+      auxObj = JSON.parse(word.auxiliaryInfo);
+    } catch {}
+  }
+
+  const currentDisabled: string[] = Array.isArray(auxObj.disabledConjugations) ? auxObj.disabledConjugations : [];
+  if (disabled) {
+    if (!currentDisabled.includes(form)) {
+      currentDisabled.push(form);
+    }
+    auxObj.disabledConjugations = currentDisabled;
+  } else {
+    auxObj.disabledConjugations = currentDisabled.filter((f: string) => f !== form);
+  }
+
+  await db.update(words)
+    .set({ auxiliaryInfo: JSON.stringify(auxObj) })
+    .where(eq(words.id, wordId));
+}
+
+/**
+ * Actualiza el flag conjugationEnabled en auxiliaryInfo de una palabra.
+ */
+export async function setWordConjugationEnabled(wordId: string, enabled: boolean): Promise<void> {
+  const existingWords = await db.select().from(words).where(eq(words.id, wordId)).limit(1);
+  if (existingWords.length === 0) return;
+
+  const word = existingWords[0];
+  let auxObj: Record<string, any> = {};
+  if (word.auxiliaryInfo) {
+    try {
+      auxObj = JSON.parse(word.auxiliaryInfo);
+    } catch {}
+  }
+  auxObj.conjugationEnabled = enabled;
+
+  await db.update(words)
+    .set({ auxiliaryInfo: JSON.stringify(auxObj) })
+    .where(eq(words.id, wordId));
+}
+
+/**
+ * Obtiene todas las palabras del mazo que son verbos o adjetivos en forma base de diccionario,
+ * pero que actualmente no están incluidas en la práctica de conjugaciones.
+ */
+export async function getAvailableDeckWordsForConjugation(deckId: string): Promise<ConjugableWord[]> {
+  const deckWords = await db.select().from(words).where(eq(words.deckId, deckId));
+  const activeConjugables = await getConjugableWordsForDeck(deckId);
+  const activeIds = new Set(activeConjugables.map((w) => w.id));
+
+  const results: ConjugableWord[] = [];
+
+  for (const w of deckWords) {
+    if (activeIds.has(w.id)) continue;
+
+    let category = '';
+    let level = '';
+
+    if (w.auxiliaryInfo) {
+      try {
+        const aux = JSON.parse(w.auxiliaryInfo);
+        category = aux.category || '';
+        level = aux.level || '';
+      } catch {}
+    }
+
+    const cleanReading = (w.pinyinDisplay || '').replace(/\s*\([^)]*\)/g, '').trim();
+    if (!category) {
+      category = classifyJapaneseWord(w.simplified, cleanReading);
+    }
+
+    const isBaseForm = isJapaneseDictionaryForm(w.simplified, cleanReading, category);
+    const isVerbOrAdj = category.startsWith('Verbo') || category.startsWith('Adjetivo');
+
+    if (isBaseForm && isVerbOrAdj) {
+      let parsedMeanings: string[] = [];
+      try {
+        parsedMeanings = cleanAndFormatMeanings(w.meanings);
+      } catch {
+        parsedMeanings = [w.simplified];
+      }
+
+      results.push({
+        id: w.id,
+        kanji: w.simplified,
+        reading: cleanReading,
         meanings: parsedMeanings,
         category,
         level: level || undefined,

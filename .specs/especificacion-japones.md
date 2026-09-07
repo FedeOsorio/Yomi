@@ -14,23 +14,25 @@ Define las reglas de búsqueda, conversión silábica (Romaji a Hiragana/Katakan
      2. Coincidencia exacta de lectura/kanji.
      3. Palabras comunes que inician con la sílaba.
 3. **Desconjugación Morfológica Automática (`deconjugateJapanese`)**:
-   - Si el usuario busca formas verbales o adjetivales conjugadas (ej. forma *-te* `tabete` / `食べて`, forma *-ta* `tabeta`, forma *-masu* `tabemasu`, forma *-nai* `tabenai` o adjetivos `oishikute`), el motor revierte la conjugación automáticamente a su forma de diccionario (*Jisho-kei* `食べる` / `美味しい`) para encontrar la entrada en JMdict sin que el usuario tenga que saber la raíz no conjugada.
+   - Si el usuario busca formas verbales o adjetivales conjugadas (ej. forma *-te* `tabete` / `食べて`, forma *-ta* `tabeta`, forma *-masu* `yomimasu` / `よみます` / `読みます` $\rightarrow$ `読む`, `tabemasu` $\rightarrow$ `食べる`, forma *-nai* `tabenai` o adjetivos `oishikute`), el motor revierte la conjugación automáticamente mopeando desinencias de la fila-i a la fila-u a su forma de diccionario (*Jisho-kei* `読む` / `食べる` / `美味しい`) para encontrar la entrada exacta en JMdict sin que el usuario tenga que saber la raíz no conjugada.
 4. **Traducción Automática**:
-   - Traducción de glosas del inglés al español con limpieza de duplicados y mayúscula inicial (`cleanAndFormatMeanings`).
+   - Traducción de glosas del inglés al español extrayendo la acepción principal (Sense 1) de la entrada para evitar acepciones secundarias o modismos, con limpieza de duplicados y mayúscula inicial (`cleanAndFormatMeanings`).
 5. **Clasificación JLPT**:
    - Detección automática de nivel JLPT (N5 a N1) mediante `lib/jlpt-data.ts`.
 6. **Detección de Categoría Gramatical (`category`)**:
    - Mapeo de `parts_of_speech` de JMdict/Jisho y clasificación morfológica heurística (`classifyJapaneseWord`, `mapJishoPartsOfSpeech`):
-     - `Verbo Ichidan (Grupo 2)` (ej. 食べる, 見る).
-     - `Verbo Godan (Grupo 1)` (ej. 行く, 飲む, 待つ).
-     - `Verbo Irregular (Grupo 3)` (ej. する, くる, 来る).
+     - `Verbo Ichidan (-ru)` (ej. 食べる, 見る).
+     - `Verbo Godan (-u)` (ej. 行く, 飲む, 待つ) y `Verbo Godan (-ru)` (ej. 帰る, 知る, 走る).
+     - `Verbo Irregular` (ej. する, くる, 来る).
      - `Adjetivo -i` (ej. 美味しい, 寒い).
      - `Adjetivo -na` (ej. 静か, 綺麗).
      - `Sustantivo` (ej. 自転車, 本).
      - `Frase / Expresión` (ej. ちょっと待ってください).
    - Se almacena en `words.auxiliaryInfo` y se expone visualmente mediante badges en búsqueda, detalle de palabra y listado de mazo.
 7. **Guardado Condicional para Ejercicios de Conjugación**:
-   - Al guardar un verbo o adjetivo, la app ofrece agregarlo con la práctica de conjugación habilitada (`conjugationEnabled: true`) guardando la forma de diccionario asociada.
+   - Al presionar el botón `+` en un verbo o adjetivo, la app consulta si desea agregarlo a los ejercicios de conjugación:
+     - **Sí**: Guarda ambas tarjetas en el mazo: la tarjeta con la forma exacta que eligió el usuario (ej. `飲みます`) y adicionalmente la forma diccionario (ej. `飲む`) con la práctica de conjugación activada (`conjugationEnabled: true`).
+     - **No**: Guarda únicamente la tarjeta con la forma seleccionada por el usuario (ej. `飲みます`).
 8. **Motor de Conjugación y Práctica en Mazo**:
    - `conjugateJapanese(word, reading, category, form)` genera formas exactas (-TE, -TA, -NAI, -MASU).
    - Modal interactivo `ConjugationPracticeModal` activado desde la pantalla del mazo (`deck/[id]`) para practicar con reconocimiento de voz o teclado en vivo.
