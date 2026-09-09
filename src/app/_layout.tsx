@@ -3,6 +3,7 @@ import { DatabaseProvider } from '../../providers/DatabaseProvider';
 import { ThemeProvider } from '../../providers/ThemeProvider';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { enableFreeze } from 'react-native-screens';
+import { OTAUpdateOverlay } from '../components/OTAUpdateOverlay';
 
 enableFreeze(true);
 
@@ -25,6 +26,7 @@ export default function RootLayout() {
             <Stack.Screen name="word/[id]" options={{ headerShown: false }} />
             <Stack.Screen name="search" options={{ headerShown: false }} />
           </Stack>
+          <OTAUpdateOverlay />
         </DatabaseProvider>
       </ThemeProvider>
     </GestureHandlerRootView>

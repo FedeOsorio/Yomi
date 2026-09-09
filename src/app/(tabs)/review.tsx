@@ -38,6 +38,8 @@ import {
   getDueCards,
   JA_NUMBERS,
   processCardReview,
+  removeCardFromReview,
+  rescheduleCardNextDay,
   ZH_NUMBERS,
 } from '../../../lib/srs-engine';
 import { CompoundWord, getCompoundWordsForChar } from '../../../lib/word-service';
@@ -134,6 +136,7 @@ const DeckGridCard = memo(function DeckGridCard({
   colors,
   onPress,
 }: DeckGridCardProps) {
+  const isCustom = item.type === 'custom';
   const langMeta = ALL_LANGUAGES.find((l) => l.code === item.languageCode) || SUPPORTED_LANGUAGES[0];
   const dueCount = item.dueCount || 0;
   const wordCount = item.wordCount || 0;
@@ -145,27 +148,65 @@ const DeckGridCard = memo(function DeckGridCard({
         styles.gridCard,
         {
           backgroundColor: colors.surface,
-          borderColor: hasDue ? colors.primary : colors.border,
+          borderColor: hasDue ? (isCustom ? '#10B981' : colors.primary) : colors.border,
         },
       ]}
       activeOpacity={0.75}
       onPress={() => onPress(item.id, item.name, hasDue)}
     >
       <View style={styles.gridCardTopRow}>
-        <View style={[styles.gridFlagCircle, { backgroundColor: colors.surfaceHighlight }]}>
-          <Text style={styles.gridFlagEmoji}>{langMeta?.flag || '📚'}</Text>
+        <View
+          style={[
+            styles.gridFlagCircle,
+            {
+              backgroundColor: isCustom
+                ? 'rgba(16, 185, 129, 0.15)'
+                : 'rgba(59, 130, 246, 0.15)',
+            },
+          ]}
+        >
+          <Ionicons
+            name={isCustom ? 'layers' : 'language'}
+            size={20}
+            color={isCustom ? '#10B981' : colors.primary}
+          />
         </View>
 
         {hasDue ? (
-          <View style={[styles.gridDueBadge, { backgroundColor: 'rgba(59, 130, 246, 0.15)', borderColor: 'rgba(59, 130, 246, 0.35)' }]}>
-            <Text style={[styles.gridDueBadgeText, { color: colors.primary }]}>
+          <View
+            style={[
+              styles.gridDueBadge,
+              {
+                backgroundColor: isCustom
+                  ? 'rgba(16, 185, 129, 0.15)'
+                  : 'rgba(59, 130, 246, 0.15)',
+                borderColor: isCustom
+                  ? 'rgba(16, 185, 129, 0.35)'
+                  : 'rgba(59, 130, 246, 0.35)',
+              },
+            ]}
+          >
+            <Text
+              style={[
+                styles.gridDueBadgeText,
+                { color: isCustom ? '#10B981' : colors.primary },
+              ]}
+            >
               {dueCount} hoy
             </Text>
           </View>
         ) : (
-          <View style={[styles.gridDueBadge, { backgroundColor: 'rgba(16, 185, 129, 0.12)', borderColor: 'rgba(16, 185, 129, 0.25)' }]}>
+          <View
+            style={[
+              styles.gridDueBadge,
+              {
+                backgroundColor: 'rgba(16, 185, 129, 0.12)',
+                borderColor: 'rgba(16, 185, 129, 0.25)',
+              },
+            ]}
+          >
             <Text style={[styles.gridDueBadgeText, { color: '#10B981' }]}>
-              ✓ Al día
+              Al día
             </Text>
           </View>
         )}
@@ -176,18 +217,24 @@ const DeckGridCard = memo(function DeckGridCard({
           {item.name}
         </Text>
         <Text style={[styles.gridCardSub, { color: colors.textMuted }]} numberOfLines={1}>
-          {langMeta?.label || 'General'} • {wordCount} {wordCount === 1 ? 'palabra' : 'palabras'}
+          {isCustom ? 'Personalizado' : (langMeta?.label || 'General')} • {wordCount}{' '}
+          {wordCount === 1 ? (isCustom ? 'tarjeta' : 'palabra') : (isCustom ? 'tarjetas' : 'palabras')}
         </Text>
       </View>
 
       <View style={[styles.gridCardFooter, { borderTopColor: colors.border }]}>
-        <Text style={[styles.gridCardActionText, { color: hasDue ? colors.primary : colors.textMuted }]}>
+        <Text
+          style={[
+            styles.gridCardActionText,
+            { color: hasDue ? (isCustom ? '#10B981' : colors.primary) : colors.textMuted },
+          ]}
+        >
           {hasDue ? 'Repasar ahora' : 'Practicar'}
         </Text>
         <Ionicons
           name="chevron-forward"
           size={14}
-          color={hasDue ? colors.primary : colors.textMuted}
+          color={hasDue ? (isCustom ? '#10B981' : colors.primary) : colors.textMuted}
         />
       </View>
     </TouchableOpacity>
@@ -502,9 +549,15 @@ export default function ReviewScreen() {
 
   // Abre el modal para elegir entre Modo Clásico y Modo Manos Libres
   const promptStudyMethod = useCallback((deckId: string | 'all', deckName: string, hasDue: boolean) => {
+    const targetDeck = decksList.find((d) => d.id === deckId);
+    if (targetDeck?.type === 'custom') {
+      // Mazos personalizados usan el flujo directo de autoevaluación SRS
+      startSession(deckId, deckName, 'text', !hasDue);
+      return;
+    }
     setPendingSelection({ deckId, deckName, hasDue });
     setShowMethodModal(true);
-  }, []);
+  }, [decksList]);
 
   const handleSelectMethod = (method: 'text' | 'voice') => {
     if (!pendingSelection) return;
@@ -1033,7 +1086,101 @@ export default function ReviewScreen() {
     }
   };
 
+  // 4. Mostrar respuesta para tarjetas personalizadas
+  const handleShowCustomAnswer = () => {
+    setIsChecked(true);
+    Animated.spring(cardFlipAnim, {
+      toValue: 1,
+      friction: 8,
+      tension: 12,
+      useNativeDriver: true,
+    }).start();
+    if (currentCard) {
+      speakText(currentCard.displayText, 'es-ES');
+    }
+  };
+
+  // 5. Procesar autoevaluación de tarjetas personalizadas (Pronto / Más tarde / Otro día / Nunca)
+  const handleCustomCardAction = async (action: 'soon' | 'later' | 'next_day' | 'never') => {
+    if (!currentCard || isProcessing) return;
+    setIsProcessing(true);
+
+    try {
+      const cardId = currentCard.id;
+      const cards = [...dueCardsRef.current];
+      const currIdx = currentIndexRef.current;
+
+      // Rotar la tarjeta suavemente de regreso al frente
+      Animated.timing(cardFlipAnim, {
+        toValue: 0,
+        duration: 250,
+        easing: Easing.inOut(Easing.ease),
+        useNativeDriver: true,
+      }).start();
+
+      setTimeout(async () => {
+        if (action === 'soon') {
+          // Poner en el medio de la cola restante
+          const remainingCount = cards.length - (currIdx + 1);
+          const insertOffset = Math.max(1, Math.floor(remainingCount / 2));
+          const targetIdx = currIdx + 1 + insertOffset;
+          cards.splice(targetIdx, 0, currentCard);
+          dueCardsRef.current = cards;
+          setDueCards([...cards]);
+
+          const nextIndex = currIdx + 1;
+          currentIndexRef.current = nextIndex;
+          setCurrentIndex(nextIndex);
+          resetForm();
+        } else if (action === 'later') {
+          // Poner al final de la cola
+          cards.push(currentCard);
+          dueCardsRef.current = cards;
+          setDueCards([...cards]);
+
+          const nextIndex = currIdx + 1;
+          currentIndexRef.current = nextIndex;
+          setCurrentIndex(nextIndex);
+          resetForm();
+        } else if (action === 'next_day') {
+          // Aumenta 1 día en el SRS
+          if (!isPracticeModeRef.current) {
+            await rescheduleCardNextDay(cardId);
+          }
+          setSessionCount((prev) => prev + 1);
+          const nextIndex = currIdx + 1;
+          if (nextIndex < cards.length) {
+            currentIndexRef.current = nextIndex;
+            setCurrentIndex(nextIndex);
+            resetForm();
+          } else {
+            setSessionCompleted(true);
+          }
+        } else if (action === 'never') {
+          // Quita la tarjeta definitivamente del repaso
+          if (!isPracticeModeRef.current) {
+            await removeCardFromReview(cardId);
+          }
+          setSessionCount((prev) => prev + 1);
+          const nextIndex = currIdx + 1;
+          if (nextIndex < cards.length) {
+            currentIndexRef.current = nextIndex;
+            setCurrentIndex(nextIndex);
+            resetForm();
+          } else {
+            setSessionCompleted(true);
+          }
+        }
+        setIsProcessing(false);
+      }, 140);
+    } catch (e) {
+      console.error('Error al procesar acción de tarjeta custom:', e);
+      setIsProcessing(false);
+    }
+  };
+
   const renderDeckGridItem = useCallback(({ item }: { item: DeckWithStats }) => {
+    const isCustom = item.type === 'custom';
     const langMeta = ALL_LANGUAGES.find((l) => l.code === item.languageCode) || SUPPORTED_LANGUAGES[0];
     const dueCount = item.dueCount || 0;
     const wordCount = item.wordCount || 0;
@@ -1045,27 +1192,65 @@ export default function ReviewScreen() {
           styles.gridCard,
           {
             backgroundColor: colors.surface,
-            borderColor: hasDue ? colors.primary : colors.border,
+            borderColor: hasDue ? (isCustom ? '#10B981' : colors.primary) : colors.border,
           },
         ]}
         activeOpacity={0.75}
         onPress={() => promptStudyMethod(item.id, item.name, hasDue)}
       >
         <View style={styles.gridCardTopRow}>
-          <View style={[styles.gridFlagCircle, { backgroundColor: colors.surfaceHighlight }]}>
-            <Text style={styles.gridFlagEmoji}>{langMeta?.flag || '📚'}</Text>
+          <View
+            style={[
+              styles.gridFlagCircle,
+              {
+                backgroundColor: isCustom
+                  ? 'rgba(16, 185, 129, 0.15)'
+                  : 'rgba(59, 130, 246, 0.15)',
+              },
+            ]}
+          >
+            <Ionicons
+              name={isCustom ? 'layers' : 'language'}
+              size={20}
+              color={isCustom ? '#10B981' : colors.primary}
+            />
           </View>
 
           {hasDue ? (
-            <View style={[styles.gridDueBadge, { backgroundColor: 'rgba(59, 130, 246, 0.15)', borderColor: 'rgba(59, 130, 246, 0.35)' }]}>
-              <Text style={[styles.gridDueBadgeText, { color: colors.primary }]}>
+            <View
+              style={[
+                styles.gridDueBadge,
+                {
+                  backgroundColor: isCustom
+                    ? 'rgba(16, 185, 129, 0.15)'
+                    : 'rgba(59, 130, 246, 0.15)',
+                  borderColor: isCustom
+                    ? 'rgba(16, 185, 129, 0.35)'
+                    : 'rgba(59, 130, 246, 0.35)',
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.gridDueBadgeText,
+                  { color: isCustom ? '#10B981' : colors.primary },
+                ]}
+              >
                 {dueCount} hoy
               </Text>
             </View>
           ) : (
-            <View style={[styles.gridDueBadge, { backgroundColor: 'rgba(16, 185, 129, 0.12)', borderColor: 'rgba(16, 185, 129, 0.25)' }]}>
+            <View
+              style={[
+                styles.gridDueBadge,
+                {
+                  backgroundColor: 'rgba(16, 185, 129, 0.12)',
+                  borderColor: 'rgba(16, 185, 129, 0.25)',
+                },
+              ]}
+            >
               <Text style={[styles.gridDueBadgeText, { color: '#10B981' }]}>
-                ✓ Al día
+                Al día
               </Text>
             </View>
           )}
@@ -1076,18 +1261,24 @@ export default function ReviewScreen() {
             {item.name}
           </Text>
           <Text style={[styles.gridCardSub, { color: colors.textMuted }]} numberOfLines={1}>
-            {langMeta?.label || 'General'} • {wordCount} {wordCount === 1 ? 'palabra' : 'palabras'}
+            {isCustom ? 'Personalizado' : (langMeta?.label || 'General')} • {wordCount}{' '}
+            {wordCount === 1 ? (isCustom ? 'tarjeta' : 'palabra') : (isCustom ? 'tarjetas' : 'palabras')}
           </Text>
         </View>
 
         <View style={[styles.gridCardFooter, { borderTopColor: colors.border }]}>
-          <Text style={[styles.gridCardActionText, { color: hasDue ? colors.primary : colors.textMuted }]}>
+          <Text
+            style={[
+              styles.gridCardActionText,
+              { color: hasDue ? (isCustom ? '#10B981' : colors.primary) : colors.textMuted },
+            ]}
+          >
             {hasDue ? 'Repasar ahora' : 'Practicar'}
           </Text>
           <Ionicons
             name="chevron-forward"
             size={14}
-            color={hasDue ? colors.primary : colors.textMuted}
+            color={hasDue ? (isCustom ? '#10B981' : colors.primary) : colors.textMuted}
           />
         </View>
       </TouchableOpacity>
@@ -1308,8 +1499,12 @@ export default function ReviewScreen() {
     );
   }
 
-  const lang = currentCard?.languageCode || 'zh-CN';
-  const isIdeographic = lang.startsWith('zh') || lang.startsWith('ja');
+  const isCustomCard =
+    currentCard?.deckType === 'custom' ||
+    currentCard?.languageCode === 'custom' ||
+    currentCard?.languageCode === 'es-ES';
+  const lang = isCustomCard ? 'es-ES' : (currentCard?.languageCode || 'zh-CN');
+  const isIdeographic = !isCustomCard && (lang.startsWith('zh') || lang.startsWith('ja'));
 
   return (
     <KeyboardAvoidingView
@@ -1324,7 +1519,7 @@ export default function ReviewScreen() {
           </Text>
 
           <View style={[styles.deckBadgeContainer, { backgroundColor: colors.surfaceHighlight }]}>
-            <Text style={[styles.deckNameBadge, { color: colors.primary }]} numberOfLines={1}>
+            <Text style={[styles.deckNameBadge, { color: isCustomCard ? '#10B981' : colors.primary }]} numberOfLines={1}>
               {selectedDeckName}
             </Text>
           </View>
@@ -1333,7 +1528,10 @@ export default function ReviewScreen() {
           <View
             style={[
               styles.progressBarFill,
-              { backgroundColor: colors.primary, width: `${((currentIndex + 1) / dueCards.length) * 100}%` },
+              {
+                backgroundColor: isCustomCard ? '#10B981' : colors.primary,
+                width: `${((currentIndex + 1) / dueCards.length) * 100}%`,
+              },
             ]}
           />
         </View>
@@ -1363,7 +1561,7 @@ export default function ReviewScreen() {
           showsVerticalScrollIndicator={false}
         >
           {/* Lo que el usuario pronuncia con altura fija de 60px para que nunca salte */}
-          {studyMethod === 'voice' && (
+          {studyMethod === 'voice' && !isCustomCard && (
             <View style={[styles.floatingTranscriptArea, isChecked && { opacity: 0 }]}>
               {speechTranscript ? (
                 (() => {
@@ -1395,7 +1593,7 @@ export default function ReviewScreen() {
 
           {/* Contenedor Flip Card 3D */}
           <View style={styles.flipContainer}>
-            {/* CARA FRONTAL: Pregunta y/o acierto */}
+            {/* CARA FRONTAL: Pregunta */}
             <Animated.View
               style={[
                 styles.quizCard,
@@ -1403,133 +1601,189 @@ export default function ReviewScreen() {
                 frontAnimatedStyle,
               ]}
             >
-              <Text
-                style={[
-                  isIdeographic ? styles.charIdeographic : styles.charAlphabetic,
-                  {
-                    color: colors.text,
-                    fontSize: 38,
-                  },
-                ]}
-                numberOfLines={1}
-                adjustsFontSizeToFit={true}
-              >
-                {currentCard.displayText}
-              </Text>
+              {isCustomCard ? (
+                <View style={styles.customFrontBox}>
+                  <View style={styles.customBadgeRow}>
+                    <View style={[styles.customDeckTypeBadge, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}>
+                      <Ionicons name="layers" size={14} color="#10B981" style={{ marginRight: 5 }} />
+                      <Text style={[styles.customDeckTypeBadgeText, { color: '#10B981' }]}>Pregunta</Text>
+                    </View>
+                    <TouchableOpacity
+                      style={[styles.customCardSpeakerBtn, { backgroundColor: colors.surfaceHighlight }]}
+                      onPress={() => speakText(currentCard.displayText, 'es-ES')}
+                    >
+                      <Ionicons name="volume-medium-outline" size={20} color={colors.primary} />
+                    </TouchableOpacity>
+                  </View>
 
-              {/* Formulario de Respuestas Modo Clásico (Teclado) */}
-              {studyMethod === 'text' && !isChecked && (
-                <View style={styles.inputsSection}>
-                  {isIdeographic && (
-                    <View style={styles.inputGroup}>
-                      <Text style={[styles.inputLabel, { color: colors.textMuted }]}>1. ¿Cómo se pronuncia? (Pinyin / Lectura):</Text>
-                      <TextInput
-                        style={[styles.textInput, { backgroundColor: colors.surfaceHighlight, color: colors.text, borderColor: colors.border }]}
-                        placeholder="Ej. xue, ni3 hao3"
-                        placeholderTextColor={colors.textMuted}
-                        value={inputReading}
-                        onChangeText={setInputReading}
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                      />
+                  <ScrollView style={styles.customQuestionScroll} contentContainerStyle={styles.customQuestionScrollContent}>
+                    <Text style={[styles.customQuestionText, { color: colors.text }]}>
+                      {currentCard.displayText}
+                    </Text>
+                  </ScrollView>
+                </View>
+              ) : (
+                <>
+                  <Text
+                    style={[
+                      isIdeographic ? styles.charIdeographic : styles.charAlphabetic,
+                      {
+                        color: colors.text,
+                        fontSize: 38,
+                      },
+                    ]}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit={true}
+                  >
+                    {currentCard.displayText}
+                  </Text>
+
+                  {/* Formulario de Respuestas Modo Clásico (Teclado) */}
+                  {studyMethod === 'text' && !isChecked && (
+                    <View style={styles.inputsSection}>
+                      {isIdeographic && (
+                        <View style={styles.inputGroup}>
+                          <Text style={[styles.inputLabel, { color: colors.textMuted }]}>1. ¿Cómo se pronuncia? (Pinyin / Lectura):</Text>
+                          <TextInput
+                            style={[styles.textInput, { backgroundColor: colors.surfaceHighlight, color: colors.text, borderColor: colors.border }]}
+                            placeholder="Ej. xue, ni3 hao3"
+                            placeholderTextColor={colors.textMuted}
+                            value={inputReading}
+                            onChangeText={setInputReading}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                          />
+                        </View>
+                      )}
+
+                      <View style={styles.inputGroup}>
+                        <Text style={[styles.inputLabel, { color: colors.textMuted }]}>
+                          {isIdeographic ? '2. ¿Qué significa?' : '¿Qué significa esta palabra?'}
+                        </Text>
+                        <TextInput
+                          style={[styles.textInput, { backgroundColor: colors.surfaceHighlight, color: colors.text, borderColor: colors.border }]}
+                          placeholder="Ej. aprender, estudiar"
+                          placeholderTextColor={colors.textMuted}
+                          value={inputMeaning}
+                          onChangeText={setInputMeaning}
+                          autoCapitalize="none"
+                        />
+                      </View>
                     </View>
                   )}
-
-                  <View style={styles.inputGroup}>
-                    <Text style={[styles.inputLabel, { color: colors.textMuted }]}>
-                      {isIdeographic ? '2. ¿Qué significa?' : '¿Qué significa esta palabra?'}
-                    </Text>
-                    <TextInput
-                      style={[styles.textInput, { backgroundColor: colors.surfaceHighlight, color: colors.text, borderColor: colors.border }]}
-                      placeholder="Ej. aprender, estudiar"
-                      placeholderTextColor={colors.textMuted}
-                      value={inputMeaning}
-                      onChangeText={setInputMeaning}
-                      autoCapitalize="none"
-                    />
-                  </View>
-                </View>
+                </>
               )}
             </Animated.View>
 
-            {/* CARA TRASERA (REVERSO 3D): Feedback y respuesta correcta para acierto y fallo */}
+            {/* CARA TRASERA (REVERSO 3D) */}
             <Animated.View
               style={[
                 styles.quizCard,
                 styles.quizCardBack,
                 {
                   backgroundColor: colors.surface,
-                  borderColor: evaluation?.isReadingCorrect ? colors.primary : colors.danger,
+                  borderColor: isCustomCard ? '#10B981' : (evaluation?.isReadingCorrect ? colors.primary : colors.danger),
                 },
                 backAnimatedStyle,
               ]}
               pointerEvents={isChecked ? 'auto' : 'none'}
             >
-              <View style={styles.flipTopStatusRow}>
-                <View
-                  style={[
-                    styles.flipBadgeRow,
-                    {
-                      backgroundColor: evaluation?.isReadingCorrect
-                        ? 'rgba(16, 185, 129, 0.14)'
-                        : 'rgba(239, 68, 68, 0.14)',
-                    },
-                  ]}
-                >
-                  <Ionicons
-                    name={evaluation?.isReadingCorrect ? 'checkmark-circle' : 'close-circle'}
-                    size={18}
-                    color={evaluation?.isReadingCorrect ? '#10B981' : colors.danger}
-                  />
-                  <Text
-                    style={[
-                      styles.flipBadgeText,
-                      { color: evaluation?.isReadingCorrect ? '#10B981' : colors.danger },
-                    ]}
-                  >
-                    {evaluation?.isReadingCorrect ? '¡Correcto!' : 'Respuesta Incorrecta'}
+              {isCustomCard ? (
+                <View style={styles.customBackBox}>
+                  <View style={styles.customBadgeRow}>
+                    <View style={[styles.customDeckTypeBadge, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}>
+                      <Ionicons name="checkmark-circle" size={14} color="#10B981" style={{ marginRight: 5 }} />
+                      <Text style={[styles.customDeckTypeBadgeText, { color: '#10B981' }]}>Respuesta</Text>
+                    </View>
+                    <TouchableOpacity
+                      style={[styles.customCardSpeakerBtn, { backgroundColor: colors.surfaceHighlight }]}
+                      onPress={() => speakText(meaningsList[0] || currentCard.displayMeaning, 'es-ES')}
+                    >
+                      <Ionicons name="volume-medium-outline" size={20} color={colors.primary} />
+                    </TouchableOpacity>
+                  </View>
+
+                  <Text style={[styles.customBackQuestionPrompt, { color: colors.textMuted }]} numberOfLines={2}>
+                    {currentCard.displayText}
                   </Text>
+
+                  <View style={[styles.customAnswerBox, { backgroundColor: colors.surfaceHighlight }]}>
+                    <ScrollView style={styles.customAnswerScroll} contentContainerStyle={styles.customAnswerScrollContent}>
+                      <Text style={[styles.customAnswerText, { color: colors.text }]}>
+                        {meaningsList.length > 0 ? meaningsList.join('\n') : currentCard.displayMeaning}
+                      </Text>
+                    </ScrollView>
+                  </View>
                 </View>
-              </View>
-
-              {/* Si la palabra tiene Kanji: Kanji en el centro de la tarjeta */}
-              <View style={styles.flipReadingHeroBox}>
-                <Text
-                  style={[
-                    isIdeographic ? styles.charIdeographic : styles.charAlphabetic,
-                    styles.flipHeroWordLarge,
-                    { color: colors.text },
-                  ]}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit={true}
-                >
-                  {currentCard.displayText}
-                </Text>
-              </View>
-
-              {/* Contenedor gris con Pronunciación (hiragana/pinyin) arriba y Significado abajo */}
-              <View style={[styles.flipBackSectionBox, { backgroundColor: colors.surfaceHighlight }]}>
-                {Boolean(currentCard.displayReading) && (
-                  <>
-                    <Text style={[styles.flipBackLabel, { color: colors.textMuted }]}>Pronunciación</Text>
-                    <Text style={[styles.flipHeroReadingSmall, { color: colors.primary, marginBottom: 6 }]} numberOfLines={1}>
-                      {currentCard.displayReading}
-                    </Text>
-
-                    {/* Desglose por sílaba Pinyin con círculos de porcentaje y barra de llenado (memoizado) */}
-                    {evaluation?.voiceScore?.breakdown && evaluation.voiceScore.breakdown.length > 0 && (
-                      <SyllableBreakdownView
-                        breakdown={evaluation.voiceScore.breakdown}
-                        colors={colors}
+              ) : (
+                <>
+                  <View style={styles.flipTopStatusRow}>
+                    <View
+                      style={[
+                        styles.flipBadgeRow,
+                        {
+                          backgroundColor: evaluation?.isReadingCorrect
+                            ? 'rgba(16, 185, 129, 0.14)'
+                            : 'rgba(239, 68, 68, 0.14)',
+                        },
+                      ]}
+                    >
+                      <Ionicons
+                        name={evaluation?.isReadingCorrect ? 'checkmark-circle' : 'close-circle'}
+                        size={18}
+                        color={evaluation?.isReadingCorrect ? '#10B981' : colors.danger}
                       />
+                      <Text
+                        style={[
+                          styles.flipBadgeText,
+                          { color: evaluation?.isReadingCorrect ? '#10B981' : colors.danger },
+                        ]}
+                      >
+                        {evaluation?.isReadingCorrect ? '¡Correcto!' : 'Respuesta Incorrecta'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Si la palabra tiene Kanji: Kanji en el centro de la tarjeta */}
+                  <View style={styles.flipReadingHeroBox}>
+                    <Text
+                      style={[
+                        isIdeographic ? styles.charIdeographic : styles.charAlphabetic,
+                        styles.flipHeroWordLarge,
+                        { color: colors.text },
+                      ]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit={true}
+                    >
+                      {currentCard.displayText}
+                    </Text>
+                  </View>
+
+                  {/* Contenedor gris con Pronunciación (hiragana/pinyin) arriba y Significado abajo */}
+                  <View style={[styles.flipBackSectionBox, { backgroundColor: colors.surfaceHighlight }]}>
+                    {Boolean(currentCard.displayReading) && (
+                      <>
+                        <Text style={[styles.flipBackLabel, { color: colors.textMuted }]}>Pronunciación</Text>
+                        <Text style={[styles.flipHeroReadingSmall, { color: colors.primary, marginBottom: 6 }]} numberOfLines={1}>
+                          {currentCard.displayReading}
+                        </Text>
+
+                        {/* Desglose por sílaba Pinyin con círculos de porcentaje y barra de llenado (memoizado) */}
+                        {evaluation?.voiceScore?.breakdown && evaluation.voiceScore.breakdown.length > 0 && (
+                          <SyllableBreakdownView
+                            breakdown={evaluation.voiceScore.breakdown}
+                            colors={colors}
+                          />
+                        )}
+                      </>
                     )}
-                  </>
-                )}
-                <Text style={[styles.flipBackLabel, { color: colors.textMuted }]}>Significado</Text>
-                <Text style={[styles.flipBackMeaningText, { color: colors.text }]} numberOfLines={2}>
-                  {meaningsList.join(', ')}
-                </Text>
-              </View>
+                    <Text style={[styles.flipBackLabel, { color: colors.textMuted }]}>Significado</Text>
+                    <Text style={[styles.flipBackMeaningText, { color: colors.text }]} numberOfLines={2}>
+                      {meaningsList.join(', ')}
+                    </Text>
+                  </View>
+                </>
+              )}
             </Animated.View>
           </View>
 
@@ -1702,7 +1956,71 @@ export default function ReviewScreen() {
           },
         ]}
       >
-        {studyMethod === 'voice' ? (
+        {isCustomCard ? (
+          !isChecked ? (
+            <View style={styles.actionButtonsRow}>
+              <TouchableOpacity
+                style={[styles.showAnswerBtn, { backgroundColor: '#10B981' }]}
+                activeOpacity={0.8}
+                onPress={handleShowCustomAnswer}
+              >
+                <Text style={styles.showAnswerBtnText}>Mostrar Respuesta</Text>
+                <Ionicons name="eye-outline" size={20} color="#FFF" style={{ marginLeft: 8 }} />
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.customEvaluationContainer}>
+              <Text style={[styles.customEvaluationPrompt, { color: colors.text }]}>
+                ¿Cuándo querés volver a repasarla?
+              </Text>
+              <View style={styles.customButtonRow}>
+                {/* 1. Pronto (Azul) */}
+                <TouchableOpacity
+                  style={[styles.customChoiceBtn, { backgroundColor: '#3B82F6' }, isProcessing && { opacity: 0.6 }]}
+                  activeOpacity={0.8}
+                  disabled={isProcessing}
+                  onPress={() => handleCustomCardAction('soon')}
+                >
+                  <Text style={styles.customChoiceTitle}>Pronto</Text>
+                  <Text style={styles.customChoiceSub}>En el medio</Text>
+                </TouchableOpacity>
+
+                {/* 2. Más tarde (Ámbar) */}
+                <TouchableOpacity
+                  style={[styles.customChoiceBtn, { backgroundColor: '#F59E0B' }, isProcessing && { opacity: 0.6 }]}
+                  activeOpacity={0.8}
+                  disabled={isProcessing}
+                  onPress={() => handleCustomCardAction('later')}
+                >
+                  <Text style={styles.customChoiceTitle}>Más tarde</Text>
+                  <Text style={styles.customChoiceSub}>Al final</Text>
+                </TouchableOpacity>
+
+                {/* 3. Otro día (Verde Esmeralda) */}
+                <TouchableOpacity
+                  style={[styles.customChoiceBtn, { backgroundColor: '#10B981' }, isProcessing && { opacity: 0.6 }]}
+                  activeOpacity={0.8}
+                  disabled={isProcessing}
+                  onPress={() => handleCustomCardAction('next_day')}
+                >
+                  <Text style={styles.customChoiceTitle}>Otro día</Text>
+                  <Text style={styles.customChoiceSub}>+1 día</Text>
+                </TouchableOpacity>
+
+                {/* 4. Nunca (Rojo) */}
+                <TouchableOpacity
+                  style={[styles.customChoiceBtn, { backgroundColor: '#EF4444' }, isProcessing && { opacity: 0.6 }]}
+                  activeOpacity={0.8}
+                  disabled={isProcessing}
+                  onPress={() => handleCustomCardAction('never')}
+                >
+                  <Text style={styles.customChoiceTitle}>Nunca</Text>
+                  <Text style={styles.customChoiceSub}>Quitar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )
+        ) : studyMethod === 'voice' ? (
           <View style={styles.actionButtonsRow}>
             {isChecked ? (
               <TouchableOpacity
@@ -2573,5 +2891,141 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 9,
     fontWeight: 'bold',
+  },
+  // Estilos de tarjetas y flujo de Mazos Personalizados (Custom)
+  customFrontBox: {
+    flex: 1,
+    width: '100%',
+    justifyContent: 'space-between',
+  },
+  customBadgeRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+    width: '100%',
+  },
+  customDeckTypeBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
+  },
+  customDeckTypeBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  customCardSpeakerBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  customQuestionScroll: {
+    flex: 1,
+    width: '100%',
+  },
+  customQuestionScrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+  },
+  customQuestionText: {
+    fontSize: 22,
+    fontWeight: '600',
+    textAlign: 'center',
+    lineHeight: 32,
+  },
+  customBackBox: {
+    flex: 1,
+    width: '100%',
+    justifyContent: 'space-between',
+  },
+  customBackQuestionPrompt: {
+    fontSize: 13,
+    fontWeight: '500',
+    marginBottom: 8,
+    textAlign: 'center',
+    paddingHorizontal: 8,
+  },
+  customAnswerBox: {
+    flex: 1,
+    borderRadius: 14,
+    padding: Spacing.sm,
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  customAnswerScroll: {
+    flex: 1,
+    width: '100%',
+  },
+  customAnswerScrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+    paddingVertical: 8,
+  },
+  customAnswerText: {
+    fontSize: 20,
+    fontWeight: '700',
+    textAlign: 'center',
+    lineHeight: 28,
+  },
+  showAnswerBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 14,
+    ...Shadows.card,
+  },
+  showAnswerBtnText: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  customEvaluationContainer: {
+    width: '100%',
+    alignItems: 'center',
+  },
+  customEvaluationPrompt: {
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  customButtonRow: {
+    flexDirection: 'row',
+    gap: 6,
+    width: '100%',
+  },
+  customChoiceBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 3,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Shadows.card,
+  },
+  customChoiceTitle: {
+    color: '#FFF',
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  customChoiceSub: {
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontSize: 9,
+    fontWeight: '600',
+    marginTop: 2,
+    textAlign: 'center',
   },
 });

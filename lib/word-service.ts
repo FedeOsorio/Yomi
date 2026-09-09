@@ -318,6 +318,38 @@ export async function saveGenericWord(
   await db.insert(srsItems).values(srsInsert);
 }
 
+export async function saveCustomCard(
+  deckId: string,
+  question: string,
+  answer: string
+): Promise<string> {
+  const wordId = generateUUID();
+  const cleanQ = question.trim();
+  const cleanA = answer.trim();
+  const meaningsJson = JSON.stringify([cleanA]);
+
+  await db.insert(words).values({
+    id: wordId,
+    deckId,
+    simplified: cleanQ,
+    traditional: cleanQ,
+    pinyinDisplay: '',
+    pinyinNumeric: '',
+    meanings: meaningsJson,
+    auxiliaryInfo: null,
+    createdAt: new Date(),
+  });
+
+  const srsInsert = createNewSrsItem('word', wordId, {
+    displayText: cleanQ,
+    displayReading: '',
+    displayMeaning: meaningsJson,
+  });
+
+  await db.insert(srsItems).values(srsInsert);
+  return wordId;
+}
+
 export async function deleteWord(wordId: string): Promise<void> {
   await db.delete(words).where(eq(words.id, wordId));
   await db.delete(srsItems).where(

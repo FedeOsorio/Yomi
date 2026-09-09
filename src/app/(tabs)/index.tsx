@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useState, useCallback } from 'react';
 import {
+  Animated,
   FlatList,
   Modal,
   Pressable,
@@ -35,6 +36,30 @@ export default function HomeScreen() {
   const [newDeckName, setNewDeckName] = useState('');
   const [selectedLang, setSelectedLang] = useState('ja-JP');
   const [isCreating, setIsCreating] = useState(false);
+
+  const modalTranslateY = React.useRef(new Animated.Value(400)).current;
+
+  React.useEffect(() => {
+    if (createModalVisible) {
+      modalTranslateY.setValue(400);
+      Animated.spring(modalTranslateY, {
+        toValue: 0,
+        damping: 24,
+        stiffness: 240,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [createModalVisible]);
+
+  const closeCreateModal = () => {
+    Animated.timing(modalTranslateY, {
+      toValue: 400,
+      duration: 180,
+      useNativeDriver: true,
+    }).start(() => {
+      setCreateModalVisible(false);
+    });
+  };
 
   const router = useRouter();
 
@@ -72,7 +97,7 @@ export default function HomeScreen() {
     try {
       const newId = await createDeck(newDeckName.trim(), selectedLang);
       setNewDeckName('');
-      setCreateModalVisible(false);
+      closeCreateModal();
       await fetchDecks();
       router.push(`/deck/${newId}`);
     } catch (e) {
@@ -219,21 +244,28 @@ export default function HomeScreen() {
       <Modal
         visible={createModalVisible}
         transparent={true}
-        animationType="slide"
-        onRequestClose={() => setCreateModalVisible(false)}
+        animationType="fade"
+        onRequestClose={closeCreateModal}
       >
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={{ flex: 1 }}
         >
-          <Pressable style={styles.modalOverlay} onPress={() => setCreateModalVisible(false)}>
-            <View
-              style={[styles.createModalContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}
+          <Pressable style={styles.modalOverlay} onPress={closeCreateModal}>
+            <Animated.View
+              style={[
+                styles.createModalContainer,
+                {
+                  backgroundColor: colors.surface,
+                  borderColor: colors.border,
+                  transform: [{ translateY: modalTranslateY }],
+                },
+              ]}
               onStartShouldSetResponder={() => true}
             >
               <View style={styles.modalHeader}>
                 <Text style={[styles.modalTitle, { color: colors.text }]}>Crear Nuevo Mazo</Text>
-                <TouchableOpacity onPress={() => setCreateModalVisible(false)}>
+                <TouchableOpacity onPress={closeCreateModal}>
                   <Ionicons name="close" size={24} color={colors.textMuted} />
                 </TouchableOpacity>
               </View>
@@ -280,7 +312,7 @@ export default function HomeScreen() {
                   {isCreating ? 'Creando...' : 'Crear Mazo'}
                 </Text>
               </TouchableOpacity>
-            </View>
+            </Animated.View>
           </Pressable>
         </KeyboardAvoidingView>
       </Modal>

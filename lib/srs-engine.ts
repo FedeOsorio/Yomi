@@ -25,6 +25,7 @@ export type SrsItem = typeof srsItems.$inferSelect;
 export interface DueCardWithContext extends SrsItem {
   deckId?: string | null;
   languageCode?: string | null;
+  deckType?: 'language' | 'custom' | null;
   auxiliaryInfo?: string | null;
   wordMeanings?: string | null;
 }
@@ -369,6 +370,7 @@ export async function getDueCards(deckId?: string): Promise<DueCardWithContext[]
       createdAt: srsItems.createdAt,
       deckId: words.deckId,
       languageCode: decks.languageCode,
+      deckType: decks.type,
       auxiliaryInfo: words.auxiliaryInfo,
       wordMeanings: words.meanings,
     })
@@ -407,6 +409,7 @@ export async function getAllCardsForPractice(deckId?: string): Promise<DueCardWi
       createdAt: srsItems.createdAt,
       deckId: words.deckId,
       languageCode: decks.languageCode,
+      deckType: decks.type,
       auxiliaryInfo: words.auxiliaryInfo,
       wordMeanings: words.meanings,
     })
@@ -419,6 +422,27 @@ export async function getAllCardsForPractice(deckId?: string): Promise<DueCardWi
   }
 
   return await query;
+}
+
+/**
+ * Pospone la tarjeta 1 día en el SRS (opción "Otro día" para mazos personalizados).
+ */
+export async function rescheduleCardNextDay(cardId: string): Promise<void> {
+  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  await db
+    .update(srsItems)
+    .set({
+      due: tomorrow,
+      lastReview: new Date(),
+    })
+    .where(eq(srsItems.id, cardId));
+}
+
+/**
+ * Elimina la tarjeta del ciclo de repaso SRS (opción "Nunca" para mazos personalizados).
+ */
+export async function removeCardFromReview(cardId: string): Promise<void> {
+  await db.delete(srsItems).where(eq(srsItems.id, cardId));
 }
 
 /**

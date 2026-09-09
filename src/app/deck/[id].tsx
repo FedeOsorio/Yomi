@@ -15,6 +15,7 @@ import { getQuickJlptLevel } from '../../../lib/jlpt-data';
 import { deleteWord } from '../../../lib/word-service';
 import { classifyJapaneseWord, isJapaneseDictionaryForm } from '../../../lib/japanese-utils';
 import { ConjugationPracticeModal } from '../../components/ConjugationPracticeModal';
+import { CustomCardModal } from '../../components/CustomCardModal';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { Shadows, Spacing, Typography } from '../../constants/theme';
 
@@ -104,6 +105,9 @@ export default function DeckDetailScreen() {
   const [deckWords, setDeckWords] = useState<any[]>([]);
   const [deckInfo, setDeckInfo] = useState<any>(null);
   const [conjugationModalVisible, setConjugationModalVisible] = useState(false);
+  const [customCardModalVisible, setCustomCardModalVisible] = useState(false);
+
+  const isCustomDeck = deckInfo?.type === 'custom';
 
   // Cálculo dinámico para garantizar exactamente 16px de separación por encima de la barra en cualquier dispositivo
   const tabBottomMargin = Platform.OS === 'android' ? Math.max(insets.bottom + 4, 8) : Math.max(insets.bottom, 6);
@@ -246,9 +250,9 @@ export default function DeckDetailScreen() {
   };
 
   const handleSpeak = useCallback((text: string) => {
-    const lang = deckInfo?.languageCode || 'zh-CN';
+    const lang = isCustomDeck ? 'es-ES' : (deckInfo?.languageCode || 'zh-CN');
     speakText(text, lang);
-  }, [deckInfo?.languageCode]);
+  }, [isCustomDeck, deckInfo?.languageCode]);
 
   const handlePressWord = useCallback((wordId: string) => {
     router.push(`/word/${wordId}`);
@@ -266,8 +270,6 @@ export default function DeckDetailScreen() {
 
   const keyExtractor = useCallback((item: any) => item.id, []);
 
-  const langMeta = ALL_LANGUAGES.find((l) => l.code === deckInfo?.languageCode) || ALL_LANGUAGES[0];
-
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top + 4 }]}>
       {/* Header superior de punta a punta de la pantalla */}
@@ -278,8 +280,14 @@ export default function DeckDetailScreen() {
         <View style={styles.brandTitleContainer}>
           <Text style={[styles.brandText, { color: colors.primary }]}>Yomi</Text>
           <Text style={[styles.brandSep, { color: colors.textMuted }]}> • </Text>
+          <Ionicons
+            name={isCustomDeck ? 'layers' : 'language'}
+            size={18}
+            color={isCustomDeck ? '#10B981' : colors.primary}
+            style={{ marginRight: 6 }}
+          />
           <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
-            {langMeta?.flag} {deckInfo?.name || 'Mazo'}
+            {deckInfo?.name || 'Mazo'}
           </Text>
         </View>
 
@@ -320,7 +328,7 @@ export default function DeckDetailScreen() {
               </TouchableOpacity>
             )}
 
-            {deckInfo?.languageCode === 'ja-JP' && deckWords.some((w) => w.isConjugable) && (
+            {!isCustomDeck && deckInfo?.languageCode === 'ja-JP' && deckWords.some((w) => w.isConjugable) && (
               <TouchableOpacity
                 style={[styles.menuDropdownItem, { borderBottomColor: colors.border }]}
                 onPress={() => {
@@ -333,16 +341,18 @@ export default function DeckDetailScreen() {
               </TouchableOpacity>
             )}
 
-            <TouchableOpacity
-              style={[styles.menuDropdownItem, { borderBottomColor: colors.border }]}
-              onPress={() => {
-                setMenuVisible(false);
-                router.push(`/deck/import?deckId=${id}`);
-              }}
-            >
-              <Ionicons name="cloud-download-outline" size={20} color={colors.primary} style={{ marginRight: 10 }} />
-              <Text style={[styles.menuDropdownText, { color: colors.text }]}>Importar palabras (Anki / Yomi)</Text>
-            </TouchableOpacity>
+            {!isCustomDeck && (
+              <TouchableOpacity
+                style={[styles.menuDropdownItem, { borderBottomColor: colors.border }]}
+                onPress={() => {
+                  setMenuVisible(false);
+                  router.push(`/deck/import?deckId=${id}`);
+                }}
+              >
+                <Ionicons name="cloud-download-outline" size={20} color={colors.primary} style={{ marginRight: 10 }} />
+                <Text style={[styles.menuDropdownText, { color: colors.text }]}>Importar palabras (Anki / Yomi)</Text>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity
               style={[styles.menuDropdownItem, { borderBottomColor: colors.border }]}
@@ -365,14 +375,18 @@ export default function DeckDetailScreen() {
 
       {deckWords.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <Ionicons name="book-outline" size={48} color={colors.textMuted} />
-          <Text style={[styles.emptyText, { color: colors.textMuted }]}>Este mazo no tiene palabras aún.</Text>
+          <Ionicons name={isCustomDeck ? 'layers-outline' : 'book-outline'} size={48} color={colors.textMuted} />
+          <Text style={[styles.emptyText, { color: colors.textMuted }]}>
+            {isCustomDeck ? 'Este mazo no tiene tarjetas aún.' : 'Este mazo no tiene palabras aún.'}
+          </Text>
           <TouchableOpacity
-            style={[styles.emptyAddBtn, { backgroundColor: colors.primary }]}
-            onPress={() => router.push(`/search?deckId=${id}`)}
+            style={[styles.emptyAddBtn, { backgroundColor: isCustomDeck ? '#10B981' : colors.primary }]}
+            onPress={() => (isCustomDeck ? setCustomCardModalVisible(true) : router.push(`/search?deckId=${id}`))}
           >
             <Ionicons name="add" size={18} color="#FFF" style={{ marginRight: 4 }} />
-            <Text style={styles.emptyAddBtnText}>Agregar primera palabra</Text>
+            <Text style={styles.emptyAddBtnText}>
+              {isCustomDeck ? 'Agregar primera tarjeta' : 'Agregar primera palabra'}
+            </Text>
           </TouchableOpacity>
         </View>
       ) : (
@@ -388,14 +402,32 @@ export default function DeckDetailScreen() {
         />
       )}
 
-      {/* Floating Extended FAB (+ Añadir palabra) */}
+      {/* Floating Extended FAB */}
       <TouchableOpacity
-        style={[styles.fabExtended, { backgroundColor: colors.primary, bottom: fabBottomPosition }]}
+        style={[
+          styles.fabExtended,
+          {
+            backgroundColor: isCustomDeck ? '#10B981' : colors.primary,
+            bottom: fabBottomPosition,
+          },
+        ]}
         activeOpacity={0.8}
-        onPress={() => router.push(`/search?deckId=${id}`)}
+        onPress={() => (isCustomDeck ? setCustomCardModalVisible(true) : router.push(`/search?deckId=${id}`))}
       >
-        <Text style={styles.fabExtendedText}>+ Añadir palabra</Text>
+        <Text style={styles.fabExtendedText}>
+          {isCustomDeck ? '+ Añadir tarjeta' : '+ Añadir palabra'}
+        </Text>
       </TouchableOpacity>
+
+      {/* Modal para agregar tarjetas personalizadas */}
+      {id && (
+        <CustomCardModal
+          visible={customCardModalVisible}
+          deckId={id}
+          onClose={() => setCustomCardModalVisible(false)}
+          onCardAdded={fetchWords}
+        />
+      )}
 
       {/* Modal de Práctica de Conjugaciones */}
       {id && (

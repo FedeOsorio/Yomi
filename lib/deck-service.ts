@@ -7,6 +7,7 @@ export interface DeckWithStats {
   id: string;
   name: string;
   languageCode: string;
+  type: 'language' | 'custom';
   createdAt: Date;
   wordCount: number;
   dueCount: number;
@@ -35,17 +36,26 @@ export function getLanguageMeta(code?: string) {
   return ALL_LANGUAGES.find((l) => l.code === code) || ALL_LANGUAGES[0];
 }
 
-export async function createDeck(name: string, languageCode: string = 'ja-JP'): Promise<string> {
-  const allowed = ['ja-JP', 'zh-CN'];
-  const finalLang = allowed.includes(languageCode) ? languageCode : 'ja-JP';
+export async function createDeck(
+  name: string,
+  languageCode: string = 'ja-JP',
+  type: 'language' | 'custom' = 'language'
+): Promise<string> {
+  const allowed = ['ja-JP', 'zh-CN', 'es-ES'];
+  const finalLang = type === 'custom' ? (languageCode || 'es-ES') : (allowed.includes(languageCode) ? languageCode : 'ja-JP');
   const id = crypto.randomUUID();
   await db.insert(decks).values({
     id,
     name: name.trim(),
     languageCode: finalLang,
+    type,
     createdAt: new Date(),
   });
   return id;
+}
+
+export async function createCustomDeck(name: string): Promise<string> {
+  return createDeck(name, 'es-ES', 'custom');
 }
 
 export async function deleteDeck(deckId: string): Promise<void> {
@@ -78,6 +88,7 @@ export async function getDefaultDeckId(): Promise<string> {
     id,
     name: 'Mi Vocabulario',
     languageCode: 'zh-CN',
+    type: 'language',
     createdAt: new Date(),
   });
   return id;
@@ -120,6 +131,7 @@ export async function getDecksWithStats(): Promise<DeckWithStats[]> {
       id: deck.id,
       name: deck.name,
       languageCode: deck.languageCode,
+      type: (deck.type as 'language' | 'custom') || 'language',
       createdAt: deck.createdAt,
       wordCount: deckWords.length,
       dueCount,

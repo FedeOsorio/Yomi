@@ -1,0 +1,1 @@
+ALTER TABLE `decks` ADD `type` text DEFAULT 'language' NOT NULL;

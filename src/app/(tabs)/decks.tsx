@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useState, useCallback } from 'react';
 import {
+  Animated,
   FlatList,
   Modal,
   Pressable,
@@ -26,8 +27,33 @@ export default function DecksScreen() {
   const [decks, setDecks] = useState<DeckWithStats[]>([]);
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [newDeckName, setNewDeckName] = useState('');
+  const [deckType, setDeckType] = useState<'language' | 'custom'>('language');
   const [selectedLang, setSelectedLang] = useState('ja-JP');
   const [isCreating, setIsCreating] = useState(false);
+
+  const modalTranslateY = React.useRef(new Animated.Value(400)).current;
+
+  React.useEffect(() => {
+    if (createModalVisible) {
+      modalTranslateY.setValue(400);
+      Animated.spring(modalTranslateY, {
+        toValue: 0,
+        damping: 24,
+        stiffness: 240,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [createModalVisible]);
+
+  const closeCreateModal = () => {
+    Animated.timing(modalTranslateY, {
+      toValue: 400,
+      duration: 180,
+      useNativeDriver: true,
+    }).start(() => {
+      setCreateModalVisible(false);
+    });
+  };
 
   const router = useRouter();
 
@@ -49,9 +75,13 @@ export default function DecksScreen() {
     }
     setIsCreating(true);
     try {
-      await createDeck(newDeckName.trim(), selectedLang);
+      await createDeck(
+        newDeckName.trim(),
+        deckType === 'custom' ? 'es-ES' : selectedLang,
+        deckType
+      );
       setNewDeckName('');
-      setCreateModalVisible(false);
+      closeCreateModal();
       fetchDecks();
     } catch (e) {
       Alert.alert('Error', 'No se pudo crear el mazo.');
@@ -108,6 +138,7 @@ export default function DecksScreen() {
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ paddingBottom: Spacing.xl }}
           renderItem={({ item }) => {
+            const isCustom = item.type === 'custom';
             const langMeta = ALL_LANGUAGES.find((l) => l.code === item.languageCode);
             return (
               <TouchableOpacity
@@ -116,14 +147,29 @@ export default function DecksScreen() {
                 onPress={() => router.push(`/deck/${item.id}`)}
               >
                 <View style={styles.cardContent}>
-                  <View style={styles.flagBox}>
-                    <Text style={styles.flagText}>{langMeta?.flag || '📚'}</Text>
+                  <View
+                    style={[
+                      styles.flagBox,
+                      {
+                        backgroundColor: isCustom
+                          ? 'rgba(16, 185, 129, 0.15)'
+                          : 'rgba(59, 130, 246, 0.15)',
+                      },
+                    ]}
+                  >
+                    <Ionicons
+                      name={isCustom ? 'layers' : 'language'}
+                      size={22}
+                      color={isCustom ? '#10B981' : Colors.primary}
+                    />
                   </View>
                   <View style={styles.deckInfo}>
                     <Text style={styles.name}>{item.name}</Text>
                     <Text style={styles.subtext}>
-                      {langMeta?.label || 'General'} • {item.wordCount}{' '}
-                      {item.wordCount === 1 ? 'palabra' : 'palabras'}
+                      {isCustom ? 'Personalizado' : (langMeta?.label || 'Idiomas')} • {item.wordCount}{' '}
+                      {item.wordCount === 1
+                        ? (isCustom ? 'tarjeta' : 'palabra')
+                        : (isCustom ? 'tarjetas' : 'palabras')}
                     </Text>
                   </View>
                 </View>
@@ -155,15 +201,101 @@ export default function DecksScreen() {
       <Modal
         visible={createModalVisible}
         transparent={true}
-        animationType="slide"
-        onRequestClose={() => setCreateModalVisible(false)}
+        animationType="fade"
+        onRequestClose={closeCreateModal}
       >
-        <Pressable style={styles.modalOverlay} onPress={() => setCreateModalVisible(false)}>
-          <View style={styles.modalContent} onStartShouldSetResponder={() => true}>
+        <Pressable style={styles.modalOverlay} onPress={closeCreateModal}>
+          <Animated.View
+            style={[
+              styles.modalContent,
+              { transform: [{ translateY: modalTranslateY }] },
+            ]}
+            onStartShouldSetResponder={() => true}
+          >
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Crear Nuevo Mazo</Text>
-              <TouchableOpacity onPress={() => setCreateModalVisible(false)}>
+              <TouchableOpacity onPress={closeCreateModal}>
                 <Ionicons name="close" size={24} color={Colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Selector de Tipo de Mazo */}
+            <Text style={styles.label}>Tipo de mazo:</Text>
+            <View style={styles.typeSelectorRow}>
+              <TouchableOpacity
+                style={[
+                  styles.typeCard,
+                  deckType === 'language' && styles.typeCardSelectedLanguage,
+                ]}
+                activeOpacity={0.8}
+                onPress={() => setDeckType('language')}
+              >
+                <View
+                  style={[
+                    styles.typeIconBox,
+                    {
+                      backgroundColor:
+                        deckType === 'language'
+                          ? 'rgba(59, 130, 246, 0.2)'
+                          : Colors.surfaceHighlight,
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name="language"
+                    size={20}
+                    color={deckType === 'language' ? Colors.primary : Colors.textMuted}
+                  />
+                </View>
+                <View style={styles.typeInfo}>
+                  <Text
+                    style={[
+                      styles.typeTitle,
+                      deckType === 'language' && { color: Colors.primary },
+                    ]}
+                  >
+                    Idiomas
+                  </Text>
+                  <Text style={styles.typeSubtitle}>Con diccionario asistido</Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.typeCard,
+                  deckType === 'custom' && styles.typeCardSelectedCustom,
+                ]}
+                activeOpacity={0.8}
+                onPress={() => setDeckType('custom')}
+              >
+                <View
+                  style={[
+                    styles.typeIconBox,
+                    {
+                      backgroundColor:
+                        deckType === 'custom'
+                          ? 'rgba(16, 185, 129, 0.2)'
+                          : Colors.surfaceHighlight,
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name="layers"
+                    size={20}
+                    color={deckType === 'custom' ? '#10B981' : Colors.textMuted}
+                  />
+                </View>
+                <View style={styles.typeInfo}>
+                  <Text
+                    style={[
+                      styles.typeTitle,
+                      deckType === 'custom' && { color: '#10B981' },
+                    ]}
+                  >
+                    Personalizado
+                  </Text>
+                  <Text style={styles.typeSubtitle}>Pregunta y respuesta libre</Text>
+                </View>
               </TouchableOpacity>
             </View>
 
@@ -171,32 +303,62 @@ export default function DecksScreen() {
             <Text style={styles.label}>Nombre del mazo:</Text>
             <TextInput
               style={styles.modalInput}
-              placeholder="Ej. Japonés N5, Vocabulario Inglés"
+              placeholder={
+                deckType === 'custom'
+                  ? 'Ej. Farmacología, Derecho Constitucional'
+                  : 'Ej. Japonés N5, Vocabulario HSK 1'
+              }
               placeholderTextColor={Colors.textMuted}
               value={newDeckName}
               onChangeText={setNewDeckName}
               autoFocus={true}
             />
 
-            {/* Selector de Idioma */}
-            <Text style={styles.label}>Idioma de estudio:</Text>
-            <View style={styles.langGrid}>
-              {SUPPORTED_LANGUAGES.map((lang) => {
-                const isSelected = selectedLang === lang.code;
-                return (
-                  <TouchableOpacity
-                    key={lang.code}
-                    style={[styles.langChip, isSelected && styles.langChipSelected]}
-                    onPress={() => setSelectedLang(lang.code)}
-                  >
-                    <Text style={styles.langChipFlag}>{lang.flag}</Text>
-                    <Text style={[styles.langChipText, isSelected && styles.langChipTextSelected]}>
-                      {lang.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+            {/* Si es de Idiomas: Selector de Idioma */}
+            {deckType === 'language' ? (
+              <>
+                <Text style={styles.label}>Idioma de estudio:</Text>
+                <View style={styles.langGrid}>
+                  {SUPPORTED_LANGUAGES.map((lang) => {
+                    const isSelected = selectedLang === lang.code;
+                    return (
+                      <TouchableOpacity
+                        key={lang.code}
+                        style={[styles.langChip, isSelected && styles.langChipSelected]}
+                        onPress={() => setSelectedLang(lang.code)}
+                      >
+                        <Ionicons
+                          name="globe-outline"
+                          size={16}
+                          color={isSelected ? Colors.background : Colors.primary}
+                          style={{ marginRight: 6 }}
+                        />
+                        <Text
+                          style={[
+                            styles.langChipText,
+                            isSelected && styles.langChipTextSelected,
+                          ]}
+                        >
+                          {lang.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </>
+            ) : (
+              <View style={styles.customNoticeBox}>
+                <Ionicons
+                  name="information-circle-outline"
+                  size={18}
+                  color="#10B981"
+                  style={{ marginRight: 8 }}
+                />
+                <Text style={styles.customNoticeText}>
+                  Podrás agregar tarjetas dictando por voz o escribiendo por teclado.
+                </Text>
+              </View>
+            )}
 
             {/* Botón Crear */}
             <TouchableOpacity
@@ -208,7 +370,7 @@ export default function DecksScreen() {
                 {isCreating ? 'Creando...' : 'Crear Mazo'}
               </Text>
             </TouchableOpacity>
-          </View>
+          </Animated.View>
         </Pressable>
       </Modal>
     </View>
@@ -348,6 +510,66 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
     marginBottom: 6,
     fontWeight: '600',
+  },
+  typeSelectorRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    marginBottom: Spacing.md,
+  },
+  typeCard: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.surfaceHighlight,
+    padding: 10,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+  },
+  typeCardSelectedLanguage: {
+    borderColor: Colors.primary,
+    backgroundColor: 'rgba(59, 130, 246, 0.08)',
+  },
+  typeCardSelectedCustom: {
+    borderColor: '#10B981',
+    backgroundColor: 'rgba(16, 185, 129, 0.08)',
+  },
+  typeIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  typeInfo: {
+    flex: 1,
+  },
+  typeTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.text,
+  },
+  typeSubtitle: {
+    fontSize: 10,
+    color: Colors.textMuted,
+    marginTop: 1,
+  },
+  customNoticeBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    borderRadius: 12,
+    padding: Spacing.sm,
+    marginBottom: Spacing.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.25)',
+  },
+  customNoticeText: {
+    flex: 1,
+    fontSize: 12,
+    color: Colors.text,
+    lineHeight: 16,
   },
   modalInput: {
     backgroundColor: Colors.surfaceHighlight,

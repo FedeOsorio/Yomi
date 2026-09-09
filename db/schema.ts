@@ -12,6 +12,7 @@ export const decks = sqliteTable('decks', {
   id: text('id').primaryKey(),
   languageCode: text('language_code').notNull().default('zh-CN'),
   name: text('name').notNull(),
+  type: text('type', { enum: ['language', 'custom'] }).notNull().default('language'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
 
