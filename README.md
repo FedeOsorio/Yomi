@@ -7,7 +7,7 @@ A smart spaced repetition flashcard system that replaces Anki with modern techno
 - [What is Yomi?](#what-is-yomi)
 - [Key Features](#key-features)
 - [Tech Stack](#tech-stack)
-- [Dependencies](#dependencies)
+- [Dictionary Data & Resources](#dictionary-data--resources)
 - [Quick Start](#quick-start)
 - [Available Commands](#available-commands)
 - [Project Structure](#project-structure)
@@ -36,49 +36,26 @@ Yomi is a mobile-first flashcard app built with React Native that uses the FSRS 
 - ts-fsrs algorithm
 - Expo Speech Recognition
 
-## Dependencies
+## Dictionary Data & Resources
 
-### Core Framework & UI
+Yomi uses open-source dictionary databases for language learning:
 
-- [expo](https://github.com/expo/expo) - Open-source platform for building native apps
-- [react-native](https://github.com/facebook/react-native) - JavaScript framework for building mobile apps
-- [react](https://github.com/facebook/react) - JavaScript library for building user interfaces
-- [expo-router](https://github.com/expo/expo/tree/main/packages/expo-router) - File-based routing for React Native
+### Chinese
 
-### Database & ORM
+- **CC-CEDICT (MDBG)** - Open source Chinese dictionary database containing Hanzi characters, Pinyin romanization, and English definitions. Compiled into `assets/cedict/cedict_ts.u8`
+  - [CC-CEDICT Repository](https://github.com/MDBG/cc-cedict)
+  - [MDBG Chinese Tools](https://www.mdbg.net/chinese/dictionary)
 
-- [drizzle-orm](https://github.com/drizzle-team/drizzle-orm) - TypeScript ORM for database access
-- [drizzle-kit](https://github.com/drizzle-team/drizzle-kit) - CLI tool for Drizzle migrations
-- [expo-sqlite](https://github.com/expo/expo/tree/main/packages/expo-sqlite) - SQLite database module
+### Japanese
 
-### Spaced Repetition
+- **JMdict** - Comprehensive Japanese-English dictionary by the Electronic Dictionary R&D Group
+  - [EDRDG JMdict](http://www.edrdg.org/jmdict/j_jmdict.html)
+  
+- **KANJIDIC2** - Kanji character and radical database
+  - [EDRDG KANJIDIC2](http://www.edrdg.org/kanjidic/kanjidic2.html)
 
-- [ts-fsrs](https://github.com/L-M-Sherlock/ts-fsrs) - TypeScript implementation of FSRS algorithm
-
-### Voice & Speech
-
-- [expo-speech-recognition](https://github.com/expo/expo/tree/main/packages/expo-speech-recognition) - Speech recognition API
-- [expo-speech](https://github.com/expo/expo/tree/main/packages/expo-speech) - Text-to-speech engine
-
-### Navigation & Gestures
-
-- [react-native-gesture-handler](https://github.com/software-mansion/react-native-gesture-handler) - Gesture recognition library
-- [react-native-reanimated](https://github.com/software-mansion/react-native-reanimated) - Animation library
-- [react-native-screens](https://github.com/software-mansion/react-native-screens) - Native screen components
-
-### UI Components & Icons
-
-- [@expo/ui](https://github.com/expo/expo/tree/main/packages/expo-ui) - UI component library
-- [@expo/vector-icons](https://github.com/expo/vector-icons) - Icon library
-- [expo-image](https://github.com/expo/expo/tree/main/packages/expo-image) - Image component
-- [expo-glass-effect](https://github.com/expo/expo/tree/main/packages/expo-glass-effect) - Glass morphism effects
-
-### Utilities
-
-- [expo-file-system](https://github.com/expo/expo/tree/main/packages/expo-file-system) - File system access
-- [expo-document-picker](https://github.com/expo/expo/tree/main/packages/expo-document-picker) - Document picker
-- [react-native-svg](https://github.com/software-mansion/react-native-svg) - SVG rendering
-- [react-native-safe-area-context](https://github.com/th3rdEye/react-native-safe-area-context) - Safe area handling
+- **Kradfile/Radicals** - Kanji radicals data by Michael Radford
+  - [EDRDG Kradfile](http://www.edrdg.org/kradfile/kradinf.html)
 
 ## Quick Start
 
@@ -108,7 +85,7 @@ npm run build:dictionary    # Build dictionary assets
 src/          # Main application code
 db/           # Database schemas
 lib/          # Utilities
-assets/       # Images, fonts
+assets/       # Images, fonts, dictionary data
 constants/    # App constants
 providers/    # React providers
 scripts/      # Build scripts
@@ -133,7 +110,7 @@ Un sistema inteligente de tarjetas de repetición espaciada que reemplaza Anki c
 - [Qué es Yomi?](#qué-es-yomi)
 - [Características Principales](#características-principales)
 - [Stack Tecnológico](#stack-tecnológico)
-- [Dependencias](#dependencias)
+- [Datos de Diccionario & Recursos](#datos-de-diccionario--recursos)
 - [Inicio Rápido](#inicio-rápido)
 - [Comandos Disponibles](#comandos-disponibles)
 - [Estructura del Proyecto](#estructura-del-proyecto)
@@ -161,49 +138,26 @@ Yomi es una aplicación de tarjetas flash centrada en móvil construida con Reac
 - Algoritmo ts-fsrs
 - Expo Speech Recognition
 
-## Dependencias
+## Datos de Diccionario & Recursos
 
-### Framework Principal & UI
+Yomi utiliza bases de datos de diccionarios de código abierto para el aprendizaje de idiomas:
 
-- [expo](https://github.com/expo/expo) - Plataforma de código abierto para construir aplicaciones nativas
-- [react-native](https://github.com/facebook/react-native) - Framework JavaScript para construir aplicaciones móviles
-- [react](https://github.com/facebook/react) - Librería JavaScript para construir interfaces de usuario
-- [expo-router](https://github.com/expo/expo/tree/main/packages/expo-router) - Enrutamiento basado en archivos para React Native
+### Chino
 
-### Base de Datos & ORM
+- **CC-CEDICT (MDBG)** - Base de datos de diccionario chino de código abierto que contiene caracteres Hanzi, romanización Pinyin y definiciones en inglés. Compilada en `assets/cedict/cedict_ts.u8`
+  - [Repositorio CC-CEDICT](https://github.com/MDBG/cc-cedict)
+  - [MDBG Herramientas Chinas](https://www.mdbg.net/chinese/dictionary)
 
-- [drizzle-orm](https://github.com/drizzle-team/drizzle-orm) - ORM TypeScript para acceso a base de datos
-- [drizzle-kit](https://github.com/drizzle-team/drizzle-kit) - Herramienta CLI para migraciones de Drizzle
-- [expo-sqlite](https://github.com/expo/expo/tree/main/packages/expo-sqlite) - Módulo de base de datos SQLite
+### Japonés
 
-### Repetición Espaciada
+- **JMdict** - Diccionario completo japonés-inglés del Electronic Dictionary R&D Group
+  - [EDRDG JMdict](http://www.edrdg.org/jmdict/j_jmdict.html)
+  
+- **KANJIDIC2** - Base de datos de caracteres Kanji y radicales
+  - [EDRDG KANJIDIC2](http://www.edrdg.org/kanjidic/kanjidic2.html)
 
-- [ts-fsrs](https://github.com/L-M-Sherlock/ts-fsrs) - Implementación en TypeScript del algoritmo FSRS
-
-### Voz & Reconocimiento de Voz
-
-- [expo-speech-recognition](https://github.com/expo/expo/tree/main/packages/expo-speech-recognition) - API de reconocimiento de voz
-- [expo-speech](https://github.com/expo/expo/tree/main/packages/expo-speech) - Motor de síntesis de voz
-
-### Navegación & Gestos
-
-- [react-native-gesture-handler](https://github.com/software-mansion/react-native-gesture-handler) - Librería de reconocimiento de gestos
-- [react-native-reanimated](https://github.com/software-mansion/react-native-reanimated) - Librería de animaciones
-- [react-native-screens](https://github.com/software-mansion/react-native-screens) - Componentes de pantalla nativa
-
-### Componentes UI & Iconos
-
-- [@expo/ui](https://github.com/expo/expo/tree/main/packages/expo-ui) - Librería de componentes UI
-- [@expo/vector-icons](https://github.com/expo/vector-icons) - Librería de iconos
-- [expo-image](https://github.com/expo/expo/tree/main/packages/expo-image) - Componente de imagen
-- [expo-glass-effect](https://github.com/expo/expo/tree/main/packages/expo-glass-effect) - Efectos de morfismo de vidrio
-
-### Utilidades
-
-- [expo-file-system](https://github.com/expo/expo/tree/main/packages/expo-file-system) - Acceso al sistema de archivos
-- [expo-document-picker](https://github.com/expo/expo/tree/main/packages/expo-document-picker) - Selector de documentos
-- [react-native-svg](https://github.com/software-mansion/react-native-svg) - Renderizado SVG
-- [react-native-safe-area-context](https://github.com/th3rdEye/react-native-safe-area-context) - Manejo de área segura
+- **Kradfile/Radicales** - Datos de radicales Kanji de Michael Radford
+  - [EDRDG Kradfile](http://www.edrdg.org/kradfile/kradinf.html)
 
 ## Inicio Rápido
 
@@ -233,7 +187,7 @@ npm run build:dictionary    # Construir activos del diccionario
 src/          # Código principal de la aplicación
 db/           # Esquemas de base de datos
 lib/          # Utilidades
-assets/       # Imágenes, fuentes
+assets/       # Imágenes, fuentes, datos de diccionario
 constants/    # Constantes de la aplicación
 providers/    # Proveedores de React
 scripts/      # Scripts de compilación
