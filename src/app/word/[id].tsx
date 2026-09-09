@@ -514,7 +514,16 @@ export default function WordDetailScreen() {
       setData(res);
 
       if (res) {
-        const allMeanings = cleanAndFormatMeanings(res.word.meanings);
+        const isCustom = res.deck?.type === 'custom';
+        let parsedRaw: string[] = [];
+        try {
+          parsedRaw = JSON.parse(res.word.meanings);
+          if (!Array.isArray(parsedRaw)) parsedRaw = [String(res.word.meanings)];
+        } catch {
+          parsedRaw = [String(res.word.meanings)];
+        }
+
+        const allMeanings = isCustom ? parsedRaw : cleanAndFormatMeanings(res.word.meanings);
         let currentSelected: string[] = allMeanings;
 
         if (res.word.auxiliaryInfo) {
@@ -531,6 +540,11 @@ export default function WordDetailScreen() {
               currentSelected = srsMeanings;
             }
           } catch (e) {}
+        }
+
+        // En mazo custom, o si currentSelected está vacío o no coincide, asegurar que todos queden seleccionados
+        if (isCustom || currentSelected.length === 0 || !allMeanings.some((m) => currentSelected.includes(m))) {
+          currentSelected = allMeanings;
         }
 
         setSelectedMeanings(currentSelected);
@@ -754,9 +768,21 @@ export default function WordDetailScreen() {
   }
 
   const { word, deck, srsItem, meaningsList, compoundWords, level, category } = data;
+  const isCustomDeck = deck?.type === 'custom';
+  const displayMeaningsList = isCustomDeck
+    ? (() => {
+        try {
+          const parsed = JSON.parse(word.meanings);
+          return Array.isArray(parsed) ? parsed : [String(word.meanings)];
+        } catch {
+          return [word.meanings];
+        }
+      })()
+    : cleanAndFormatMeanings(word.meanings);
+
   const lang = deck?.languageCode || 'zh-CN';
-  const isChinese = lang.startsWith('zh');
-  const isJapanese = lang.startsWith('ja');
+  const isChinese = !isCustomDeck && lang.startsWith('zh');
+  const isJapanese = !isCustomDeck && lang.startsWith('ja');
   const isIdeographic = isChinese || isJapanese;
 
   // Resolución de nivel JLPT o HSK
@@ -811,7 +837,7 @@ export default function WordDetailScreen() {
           <Text style={[styles.brandText, { color: colors.primary }]}>Yomi</Text>
           <Text style={[styles.brandSep, { color: colors.textMuted }]}> • </Text>
           <Text style={[styles.deckName, { color: colors.text }]} numberOfLines={1}>
-            Detalle de Palabra
+            {isCustomDeck ? 'Detalle de Tarjeta' : 'Detalle de Palabra'}
           </Text>
         </View>
 
@@ -845,60 +871,77 @@ export default function WordDetailScreen() {
               ) : null}
             </View>
 
-            <TouchableOpacity
-              style={[styles.audioBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}
-              activeOpacity={0.8}
-              onPress={handlePlayAudio}
-            >
-              <Ionicons name="volume-high" size={24} color={colors.primary} />
-            </TouchableOpacity>
+            {!isCustomDeck && (
+              <TouchableOpacity
+                style={[styles.audioBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}
+                activeOpacity={0.8}
+                onPress={handlePlayAudio}
+              >
+                <Ionicons name="volume-high" size={24} color={colors.primary} />
+              </TouchableOpacity>
+            )}
           </View>
 
-          {/* Sección de la Palabra Principal con Furigana pegado en gris (textMuted) */}
+          {/* Sección de la Palabra Principal con Furigana o Pregunta para Custom */}
           <View style={styles.wordSectionContainer}>
-            <View style={styles.rubyContainer}>
-              {furiganaPairs.map((pair, idx) => {
-                const textLen = word.simplified.length;
-                const fontSize = textLen > 12 ? 20 : textLen > 8 ? 24 : textLen > 5 ? 28 : 32;
-                return (
-                  <View key={idx} style={styles.rubyPair}>
-                    {pair.furigana ? (
-                      <Text style={[styles.rubyRt, { color: colors.textMuted }]} numberOfLines={1}>
-                        {pair.furigana}
-                      </Text>
-                    ) : (
-                      <View style={{ height: 13 }} />
-                    )}
-                    <Text
-                      style={[
-                        isIdeographic ? styles.mainCharIdeographic : styles.mainCharAlphabetic,
-                        { color: colors.text, fontSize }
-                      ]}
-                    >
-                      {pair.char}
-                    </Text>
-                  </View>
-                );
-              })}
-            </View>
+            {isCustomDeck ? (
+              <View style={styles.customQuestionBox}>
+                <Text style={[styles.customQuestionLabel, { color: colors.textMuted }]}>Pregunta (Frente):</Text>
+                <Text style={[styles.customQuestionTitle, { color: colors.text }]}>
+                  {word.simplified}
+                </Text>
+              </View>
+            ) : (
+              <>
+                <View style={styles.rubyContainer}>
+                  {furiganaPairs.map((pair, idx) => {
+                    const textLen = word.simplified.length;
+                    const fontSize = textLen > 12 ? 20 : textLen > 8 ? 24 : textLen > 5 ? 28 : 32;
+                    return (
+                      <View key={idx} style={styles.rubyPair}>
+                        {pair.furigana ? (
+                          <Text style={[styles.rubyRt, { color: colors.textMuted }]} numberOfLines={1}>
+                            {pair.furigana}
+                          </Text>
+                        ) : (
+                          <View style={{ height: 13 }} />
+                        )}
+                        <Text
+                          style={[
+                            isIdeographic ? styles.mainCharIdeographic : styles.mainCharAlphabetic,
+                            { color: colors.text, fontSize }
+                          ]}
+                        >
+                          {pair.char}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
 
-            {cleanReading && cleanReading !== word.simplified ? (
-              <Text style={[styles.readingTextBelow, { color: colors.primaryHover }]}>
-                {cleanReading}
-              </Text>
-            ) : null}
+                {cleanReading && cleanReading !== word.simplified ? (
+                  <Text style={[styles.readingTextBelow, { color: colors.primaryHover }]}>
+                    {cleanReading}
+                  </Text>
+                ) : null}
+              </>
+            )}
           </View>
 
-          {/* Significados / Traducción con selección personalizada para repaso SRS */}
+          {/* Significados / Respuesta con selección personalizada para repaso SRS */}
           <View style={styles.sectionBox}>
             <View style={styles.meaningHeaderRow}>
-              <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>Significados para repasar:</Text>
-              <Text style={[styles.meaningHint, { color: colors.textMuted }]}>Toca para incluir/excluir</Text>
+              <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>
+                {isCustomDeck ? 'Respuesta (Reverso):' : 'Significados para repasar:'}
+              </Text>
+              {!isCustomDeck && (
+                <Text style={[styles.meaningHint, { color: colors.textMuted }]}>Toca para incluir/excluir</Text>
+              )}
             </View>
             <View style={styles.meaningsContainer}>
-              {cleanAndFormatMeanings(word.meanings).map((meaning, index) => {
+              {displayMeaningsList.map((meaning, index) => {
                 const isSelected = selectedMeanings.includes(meaning);
-                const allMeaningsCount = cleanAndFormatMeanings(word.meanings).length;
+                const allMeaningsCount = displayMeaningsList.length;
                 return (
                   <View
                     key={index}
@@ -913,7 +956,7 @@ export default function WordDetailScreen() {
                     <TouchableOpacity
                       style={styles.meaningTouchRow}
                       activeOpacity={0.7}
-                      onPress={() => handleToggleMeaning(meaning)}
+                      onPress={() => (isCustomDeck ? handleStartEditMeaning(meaning) : handleToggleMeaning(meaning))}
                     >
                       <View
                         style={[
@@ -932,9 +975,10 @@ export default function WordDetailScreen() {
                           {
                             color: isSelected ? colors.text : colors.textMuted,
                             fontWeight: isSelected ? '600' : 'normal',
-                            textDecorationLine: isSelected ? 'none' : 'line-through',
+                            textDecorationLine: !isCustomDeck && !isSelected ? 'line-through' : 'none',
                             opacity: isSelected ? 1 : 0.6,
                           },
+                          isCustomDeck && styles.customMeaningText,
                         ]}
                       >
                         {meaning}
@@ -1179,7 +1223,9 @@ export default function WordDetailScreen() {
         <View style={styles.modalOverlay}>
           <View style={[styles.editModalCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <View style={styles.editModalHeader}>
-              <Text style={[styles.editModalTitle, { color: colors.text }]}>Editar Significado</Text>
+              <Text style={[styles.editModalTitle, { color: colors.text }]}>
+                {isCustomDeck ? 'Editar Respuesta' : 'Editar Significado'}
+              </Text>
               <TouchableOpacity onPress={() => setEditingMeaning(null)} style={styles.modalCloseBtn}>
                 <Ionicons name="close" size={20} color={colors.textMuted} />
               </TouchableOpacity>
@@ -1196,7 +1242,7 @@ export default function WordDetailScreen() {
               ]}
               value={editMeaningText}
               onChangeText={setEditMeaningText}
-              placeholder="Ingresa el significado..."
+              placeholder={isCustomDeck ? 'Ingresa la respuesta...' : 'Ingresa el significado...'}
               placeholderTextColor={colors.textMuted}
               multiline
               autoFocus
@@ -1346,6 +1392,25 @@ const styles = StyleSheet.create({
     fontSize: 30,
     fontWeight: 'bold',
     textAlign: 'center',
+  },
+  customQuestionBox: {
+    paddingVertical: Spacing.xs,
+  },
+  customQuestionLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  customQuestionTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    lineHeight: 28,
+  },
+  customMeaningText: {
+    fontSize: 15,
+    lineHeight: 22,
   },
   audioBtn: {
     width: 36,

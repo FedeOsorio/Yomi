@@ -3,7 +3,9 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useState, useCallback } from 'react';
 import {
   Animated,
+  Easing,
   FlatList,
+  Keyboard,
   Modal,
   Pressable,
   StyleSheet,
@@ -34,27 +36,28 @@ export default function HomeScreen() {
   const [menuVisible, setMenuVisible] = useState(false);
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [newDeckName, setNewDeckName] = useState('');
+  const [deckType, setDeckType] = useState<'language' | 'custom'>('language');
   const [selectedLang, setSelectedLang] = useState('ja-JP');
   const [isCreating, setIsCreating] = useState(false);
 
-  const modalTranslateY = React.useRef(new Animated.Value(400)).current;
+  const animProgress = React.useRef(new Animated.Value(0)).current;
 
-  React.useEffect(() => {
-    if (createModalVisible) {
-      modalTranslateY.setValue(400);
-      Animated.spring(modalTranslateY, {
-        toValue: 0,
-        damping: 24,
-        stiffness: 240,
-        useNativeDriver: true,
-      }).start();
-    }
-  }, [createModalVisible]);
+  const backdropOpacity = animProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 1],
+  });
+
+  const sheetTranslateY = animProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [450, 0],
+  });
 
   const closeCreateModal = () => {
-    Animated.timing(modalTranslateY, {
-      toValue: 400,
+    Keyboard.dismiss();
+    Animated.timing(animProgress, {
+      toValue: 0,
       duration: 180,
+      easing: Easing.out(Easing.ease),
       useNativeDriver: true,
     }).start(() => {
       setCreateModalVisible(false);
@@ -85,7 +88,16 @@ export default function HomeScreen() {
 
   const handleOpenCreateModal = () => {
     setMenuVisible(false);
+    setDeckType('language');
+    setNewDeckName('');
     setCreateModalVisible(true);
+    animProgress.setValue(0);
+    Animated.timing(animProgress, {
+      toValue: 1,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
   };
 
   const handleCreateDeck = async () => {
@@ -95,7 +107,11 @@ export default function HomeScreen() {
     }
     setIsCreating(true);
     try {
-      const newId = await createDeck(newDeckName.trim(), selectedLang);
+      const newId = await createDeck(
+        newDeckName.trim(),
+        deckType === 'custom' ? 'es-ES' : selectedLang,
+        deckType
+      );
       setNewDeckName('');
       closeCreateModal();
       await fetchDecks();
@@ -139,7 +155,8 @@ export default function HomeScreen() {
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ paddingBottom: 110 }}
           renderItem={({ item }) => {
-            const langMeta = ALL_LANGUAGES.find((l) => l.code === item.languageCode) || SUPPORTED_LANGUAGES[0];
+            const isCustom = item.type === 'custom';
+            const langMeta = ALL_LANGUAGES.find((l) => l.code === item.languageCode);
             return (
               <TouchableOpacity
                 style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
@@ -148,14 +165,29 @@ export default function HomeScreen() {
                 onLongPress={() => handleDeleteDeck(item.id, item.name)}
               >
                 <View style={styles.cardContent}>
-                  <View style={[styles.flagBox, { backgroundColor: colors.surfaceHighlight }]}>
-                    <Text style={styles.flagText}>{langMeta?.flag || '📚'}</Text>
+                  <View
+                    style={[
+                      styles.flagBox,
+                      {
+                        backgroundColor: isCustom
+                          ? 'rgba(16, 185, 129, 0.15)'
+                          : 'rgba(59, 130, 246, 0.15)',
+                      },
+                    ]}
+                  >
+                    {isCustom ? (
+                      <Ionicons name="layers" size={22} color="#10B981" />
+                    ) : (
+                      <Text style={styles.flagText}>{langMeta?.flag || '🌐'}</Text>
+                    )}
                   </View>
                   <View style={styles.deckInfoText}>
                     <Text style={[styles.name, { color: colors.text }]}>{item.name}</Text>
                     <Text style={[styles.subtext, { color: colors.textMuted }]}>
-                      {langMeta?.label || 'General'} • {item.wordCount}{' '}
-                      {item.wordCount === 1 ? 'palabra' : 'palabras'}
+                      {isCustom ? 'Personalizado' : (langMeta?.label || 'Idiomas')} • {item.wordCount}{' '}
+                      {item.wordCount === 1
+                        ? (isCustom ? 'tarjeta' : 'palabra')
+                        : (isCustom ? 'tarjetas' : 'palabras')}
                     </Text>
                   </View>
                 </View>
@@ -214,7 +246,7 @@ export default function HomeScreen() {
               <View style={styles.menuTextContainer}>
                 <Text style={[styles.menuOptionTitle, { color: colors.text }]}>Crear nuevo mazo</Text>
                 <Text style={[styles.menuOptionSub, { color: colors.textMuted }]}>
-                  Elige un idioma (Japonés o Chino)
+                  Crea tarjetas para reforzar tus estudios
                 </Text>
               </View>
             </TouchableOpacity>
@@ -244,63 +276,201 @@ export default function HomeScreen() {
       <Modal
         visible={createModalVisible}
         transparent={true}
-        animationType="fade"
+        animationType="none"
         onRequestClose={closeCreateModal}
       >
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={{ flex: 1 }}
         >
-          <Pressable style={styles.modalOverlay} onPress={closeCreateModal}>
+          <View style={styles.createModalOverlay}>
+            {/* Backdrop independiente para máxima fluidez y evitar re-rasterizado con alpha */}
             <Animated.View
+              style={[
+                StyleSheet.absoluteFill,
+                { backgroundColor: 'rgba(0,0,0,0.6)', opacity: backdropOpacity },
+              ]}
+            />
+            <Pressable style={StyleSheet.absoluteFill} onPress={closeCreateModal} />
+
+            <Animated.View
+              renderToHardwareTextureAndroid={true}
               style={[
                 styles.createModalContainer,
                 {
                   backgroundColor: colors.surface,
                   borderColor: colors.border,
-                  transform: [{ translateY: modalTranslateY }],
+                  transform: [{ translateY: sheetTranslateY }],
                 },
               ]}
               onStartShouldSetResponder={() => true}
             >
               <View style={styles.modalHeader}>
                 <Text style={[styles.modalTitle, { color: colors.text }]}>Crear Nuevo Mazo</Text>
-                <TouchableOpacity onPress={closeCreateModal}>
+                <TouchableOpacity onPress={closeCreateModal} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                   <Ionicons name="close" size={24} color={colors.textMuted} />
                 </TouchableOpacity>
               </View>
 
+              {/* Selector de Tipo de Mazo */}
+              <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Tipo de mazo:</Text>
+              <View style={styles.typeSelectorRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.typeCard,
+                    { backgroundColor: colors.surfaceHighlight, borderColor: colors.border },
+                    deckType === 'language' && {
+                      borderColor: colors.primary,
+                      backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    },
+                  ]}
+                  activeOpacity={0.8}
+                  onPress={() => setDeckType('language')}
+                >
+                  <View
+                    style={[
+                      styles.typeIconBox,
+                      {
+                        backgroundColor:
+                          deckType === 'language'
+                            ? 'rgba(59, 130, 246, 0.2)'
+                            : colors.surface,
+                      },
+                    ]}
+                  >
+                    <Ionicons
+                      name="language"
+                      size={20}
+                      color={deckType === 'language' ? colors.primary : colors.textMuted}
+                    />
+                  </View>
+                  <View style={styles.typeInfo}>
+                    <Text
+                      style={[
+                        styles.typeTitle,
+                        { color: colors.text },
+                        deckType === 'language' && { color: colors.primary },
+                      ]}
+                    >
+                      Idiomas
+                    </Text>
+                    <Text style={[styles.typeSubtitle, { color: colors.textMuted }]}>
+                      Con diccionario asistido
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.typeCard,
+                    { backgroundColor: colors.surfaceHighlight, borderColor: colors.border },
+                    deckType === 'custom' && {
+                      borderColor: '#10B981',
+                      backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    },
+                  ]}
+                  activeOpacity={0.8}
+                  onPress={() => setDeckType('custom')}
+                >
+                  <View
+                    style={[
+                      styles.typeIconBox,
+                      {
+                        backgroundColor:
+                          deckType === 'custom'
+                            ? 'rgba(16, 185, 129, 0.2)'
+                            : colors.surface,
+                      },
+                    ]}
+                  >
+                    <Ionicons
+                      name="layers"
+                      size={20}
+                      color={deckType === 'custom' ? '#10B981' : colors.textMuted}
+                    />
+                  </View>
+                  <View style={styles.typeInfo}>
+                    <Text
+                      style={[
+                        styles.typeTitle,
+                        { color: colors.text },
+                        deckType === 'custom' && { color: '#10B981' },
+                      ]}
+                    >
+                      Personalizado
+                    </Text>
+                    <Text style={[styles.typeSubtitle, { color: colors.textMuted }]}>
+                      Pregunta y respuesta libre
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
+
+              {/* Input Nombre */}
               <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Nombre del mazo:</Text>
               <TextInput
                 style={[styles.modalInput, { backgroundColor: colors.surfaceHighlight, color: colors.text, borderColor: colors.border }]}
-                placeholder="Ej. Japonés N5, Vocabulario Inglés"
+                placeholder={
+                  deckType === 'custom'
+                    ? 'Ej. Farmacología, Derecho Constitucional'
+                    : 'Ej. Japonés N5, Vocabulario HSK 1'
+                }
                 placeholderTextColor={colors.textMuted}
                 value={newDeckName}
                 onChangeText={setNewDeckName}
-                autoFocus={true}
               />
 
-              <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Idioma de estudio:</Text>
-              <View style={styles.langGrid}>
-                {SUPPORTED_LANGUAGES.map((lang) => {
-                  const isSelected = selectedLang === lang.code;
-                  return (
-                    <TouchableOpacity
-                      key={lang.code}
-                      style={[
-                        styles.langChip,
-                        { backgroundColor: colors.surfaceHighlight, borderColor: colors.border },
-                        isSelected && { backgroundColor: colors.primary, borderColor: colors.primary }
-                      ]}
-                      onPress={() => setSelectedLang(lang.code)}
-                    >
-                      <Text style={styles.langChipFlag}>{lang.flag}</Text>
-                      <Text style={[styles.langChipText, { color: colors.text }, isSelected && { color: '#FFF' }]}>
-                        {lang.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
+              {/* Contenedor dinámico de altura fija: elimina cualquier salto visual */}
+              <View style={styles.dynamicSectionContainer}>
+                {deckType === 'language' ? (
+                  <View style={styles.languageSectionBox}>
+                    <Text style={[styles.fieldLabel, { color: colors.textMuted, marginBottom: 6 }]}>Idioma de estudio:</Text>
+                    <View style={styles.langGrid}>
+                      {SUPPORTED_LANGUAGES.map((lang) => {
+                        const isSelected = selectedLang === lang.code;
+                        return (
+                          <TouchableOpacity
+                            key={lang.code}
+                            style={[
+                              styles.langChip,
+                              { backgroundColor: colors.surfaceHighlight, borderColor: colors.border },
+                              isSelected && { backgroundColor: colors.primary, borderColor: colors.primary },
+                            ]}
+                            onPress={() => setSelectedLang(lang.code)}
+                          >
+                            <Text style={styles.langChipFlag}>{lang.flag}</Text>
+                            <Text
+                              style={[
+                                styles.langChipText,
+                                { color: colors.text },
+                                isSelected && { color: '#FFF' },
+                              ]}
+                            >
+                              {lang.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+                ) : (
+                  <View
+                    style={[
+                      styles.customNoticeBox,
+                      { backgroundColor: 'rgba(16, 185, 129, 0.1)', borderColor: 'rgba(16, 185, 129, 0.25)' },
+                    ]}
+                  >
+                    <Ionicons
+                      name="information-circle-outline"
+                      size={20}
+                      color="#10B981"
+                      style={{ marginRight: 10 }}
+                    />
+                    <Text style={[styles.customNoticeText, { color: colors.text }]}>
+                      Podrás armar preguntas y respuestas para ayudarte en tus estudios.
+                    </Text>
+                  </View>
+                )}
               </View>
 
               <TouchableOpacity
@@ -313,7 +483,7 @@ export default function HomeScreen() {
                 </Text>
               </TouchableOpacity>
             </Animated.View>
-          </Pressable>
+          </View>
         </KeyboardAvoidingView>
       </Modal>
     </View>
@@ -346,7 +516,11 @@ const styles = StyleSheet.create({
     marginRight: Spacing.md,
   },
   flagText: {
-    fontSize: 22,
+    fontSize: 24,
+    lineHeight: 28,
+    textAlign: 'center',
+    textAlignVertical: 'center',
+    includeFontPadding: false,
   },
   deckInfoText: {
     flex: 1,
@@ -405,6 +579,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'flex-end',
   },
+  createModalOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
   menuContainer: {
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
@@ -453,6 +631,7 @@ const styles = StyleSheet.create({
   },
   modalTitle: {
     ...Typography.h2,
+    fontSize: 22,
   },
   fieldLabel: {
     ...Typography.bodySmall,
@@ -475,7 +654,8 @@ const styles = StyleSheet.create({
   langChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 10,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 10,
     marginRight: Spacing.xs,
@@ -484,11 +664,16 @@ const styles = StyleSheet.create({
   },
   langChipFlag: {
     fontSize: 16,
-    marginRight: 4,
+    marginRight: 6,
+    textAlignVertical: 'center',
+    includeFontPadding: false,
+    marginTop: -2,
   },
   langChipText: {
     fontSize: 12,
     fontWeight: '600',
+    textAlignVertical: 'center',
+    includeFontPadding: false,
   },
   createDeckSubmitBtn: {
     paddingVertical: 14,
@@ -500,5 +685,60 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  typeSelectorRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    marginBottom: Spacing.md,
+  },
+  typeCard: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+    borderRadius: 14,
+    borderWidth: 1.5,
+  },
+  typeIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  typeInfo: {
+    flex: 1,
+  },
+  typeTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  typeSubtitle: {
+    fontSize: 10,
+    marginTop: 1,
+  },
+  dynamicSectionContainer: {
+    height: 64,
+    justifyContent: 'center',
+    marginBottom: Spacing.lg,
+  },
+  languageSectionBox: {
+    height: 64,
+    justifyContent: 'center',
+  },
+  customNoticeBox: {
+    height: 64,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+  },
+  customNoticeText: {
+    flex: 1,
+    fontSize: 12.5,
+    lineHeight: 17,
+    fontWeight: '500',
   },
 });

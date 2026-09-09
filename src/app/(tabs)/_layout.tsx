@@ -17,8 +17,7 @@ export default function TabLayout() {
     </View>
   );
 
-  // Botón adaptativo para la barra flotante: ocupa el ancho y alto completo de la celda
-  // sin forzar una máscara circular de 58x58 ni overflow: 'hidden' que recorte el texto con fuentes grandes
+  // Botón adaptativo para la barra flotante con pulsación redondeada circular (no cuadrada)
   const AdaptiveTabButton = (props: any) => {
     const { children, onPress } = props;
     return (
@@ -26,9 +25,9 @@ export default function TabLayout() {
         <Pressable
           onPress={onPress}
           android_ripple={{
-            color: isDark ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.08)',
-            borderless: false,
-            foreground: true,
+            color: isDark ? 'rgba(255, 255, 255, 0.16)' : 'rgba(0, 0, 0, 0.08)',
+            borderless: true,
+            radius: 28,
           }}
           style={styles.tabPressable}
         >
@@ -136,6 +135,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     borderRadius: 16,
+    overflow: 'hidden',
     paddingVertical: 3,
   },
 });

@@ -350,6 +350,80 @@ export async function saveCustomCard(
   return wordId;
 }
 
+export async function updateCustomCard(
+  cardId: string,
+  question: string,
+  answer: string
+): Promise<void> {
+  const cleanQ = question.trim();
+  const cleanA = answer.trim();
+  const meaningsJson = JSON.stringify([cleanA]);
+
+  await db
+    .update(words)
+    .set({
+      simplified: cleanQ,
+      traditional: cleanQ,
+      meanings: meaningsJson,
+    })
+    .where(eq(words.id, cardId));
+
+  await db
+    .update(srsItems)
+    .set({
+      displayText: cleanQ,
+      displayMeaning: meaningsJson,
+    })
+    .where(
+      and(
+        eq(srsItems.itemType, 'word'),
+        eq(srsItems.itemId, cardId)
+      )
+    );
+}
+
+/**
+ * Agrega o reactiva una tarjeta de palabra en el repaso SRS.
+ */
+export async function addCardToReview(wordId: string): Promise<void> {
+  const existing = await db
+    .select()
+    .from(srsItems)
+    .where(
+      and(
+        eq(srsItems.itemType, 'word'),
+        eq(srsItems.itemId, wordId)
+      )
+    )
+    .limit(1);
+
+  if (existing.length > 0) return;
+
+  const w = await db.select().from(words).where(eq(words.id, wordId)).limit(1);
+  if (w.length === 0) return;
+  const word = w[0];
+
+  const srsInsert = createNewSrsItem('word', wordId, {
+    displayText: word.simplified,
+    displayReading: word.pinyinDisplay || '',
+    displayMeaning: word.meanings || '[]',
+  });
+
+  await db.insert(srsItems).values(srsInsert);
+}
+
+/**
+ * Quita una palabra del repaso SRS (elimina su item SRS pero conserva la palabra en el mazo).
+ */
+export async function removeCardFromReviewByWordId(wordId: string): Promise<void> {
+  await db.delete(srsItems).where(
+    and(
+      eq(srsItems.itemType, 'word'),
+      eq(srsItems.itemId, wordId)
+    )
+  );
+}
+
 export async function deleteWord(wordId: string): Promise<void> {
   await db.delete(words).where(eq(words.id, wordId));
   await db.delete(srsItems).where(
@@ -411,10 +485,24 @@ export async function deleteWordMeaning(
   }
 
   const word = existingWords[0];
-  const originalList = cleanAndFormatMeanings(word.meanings);
+  const deckResult = await db.select().from(decks).where(eq(decks.id, word.deckId)).limit(1);
+  const isCustomDeck = deckResult.length > 0 && deckResult[0].type === 'custom';
+
+  let originalList: string[] = [];
+  if (isCustomDeck) {
+    try {
+      const parsed = JSON.parse(word.meanings);
+      originalList = Array.isArray(parsed) ? parsed : [String(word.meanings)];
+    } catch {
+      originalList = [word.meanings];
+    }
+  } else {
+    originalList = cleanAndFormatMeanings(word.meanings);
+  }
+
   const targetClean = meaningToDelete.trim().toLowerCase();
 
-  // Filtrar el significado eliminado sobre la lista limpia y formateada
+  // Filtrar el significado eliminado sobre la lista
   const newMeaningsList = originalList.filter((m) => m.trim().toLowerCase() !== targetClean);
   const newMeaningsJson = JSON.stringify(newMeaningsList);
 
@@ -430,8 +518,8 @@ export async function deleteWordMeaning(
     } catch (e) {}
   }
 
-  if (newSelected.length === 0 && newMeaningsList.length > 0) {
-    newSelected = [newMeaningsList[0]];
+  if (isCustomDeck || (newSelected.length === 0 && newMeaningsList.length > 0)) {
+    newSelected = newMeaningsList;
   }
   auxObj.selectedMeanings = newSelected;
 
@@ -469,7 +557,21 @@ export async function updateWordMeaningText(
   }
 
   const word = existingWords[0];
-  const originalList = cleanAndFormatMeanings(word.meanings);
+  const deckResult = await db.select().from(decks).where(eq(decks.id, word.deckId)).limit(1);
+  const isCustomDeck = deckResult.length > 0 && deckResult[0].type === 'custom';
+
+  let originalList: string[] = [];
+  if (isCustomDeck) {
+    try {
+      const parsed = JSON.parse(word.meanings);
+      originalList = Array.isArray(parsed) ? parsed : [String(word.meanings)];
+    } catch {
+      originalList = [word.meanings];
+    }
+  } else {
+    originalList = cleanAndFormatMeanings(word.meanings);
+  }
+
   const targetClean = oldMeaning.trim().toLowerCase();
   const trimmedNew = newMeaning.trim();
 
@@ -497,8 +599,8 @@ export async function updateWordMeaningText(
     } catch (e) {}
   }
 
-  if (newSelected.length === 0 && newMeaningsList.length > 0) {
-    newSelected = [newMeaningsList[0]];
+  if (isCustomDeck || (newSelected.length === 0 && newMeaningsList.length > 0)) {
+    newSelected = newMeaningsList;
   }
   auxObj.selectedMeanings = newSelected;
 

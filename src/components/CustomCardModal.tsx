@@ -4,6 +4,9 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Dimensions,
+  Easing,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -16,13 +19,20 @@ import {
   View,
 } from 'react-native';
 import { speechService } from '../../lib/speech-recognition-service';
-import { saveCustomCard } from '../../lib/word-service';
+import { saveCustomCard, updateCustomCard } from '../../lib/word-service';
 import { useTheme } from '../../providers/ThemeProvider';
 import { Colors, Shadows, Spacing, Typography } from '../constants/theme';
+
+export interface CustomCardData {
+  id: string;
+  question: string;
+  answer: string;
+}
 
 interface CustomCardModalProps {
   visible: boolean;
   deckId: string;
+  initialCard?: CustomCardData | null;
   onClose: () => void;
   onCardAdded?: () => void;
 }
@@ -30,17 +40,33 @@ interface CustomCardModalProps {
 export function CustomCardModal({
   visible,
   deckId,
+  initialCard,
   onClose,
   onCardAdded,
 }: CustomCardModalProps) {
   const { colors } = useTheme();
+  const isEditMode = Boolean(initialCard);
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState('');
   const [listeningTarget, setListeningTarget] = useState<'question' | 'answer' | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
   const accumulatedTextRef = useRef('');
-  const modalTranslateY = useRef(new Animated.Value(400)).current;
+  const animProgress = useRef(new Animated.Value(0)).current;
+  const questionInputRef = useRef<TextInput>(null);
+  const answerInputRef = useRef<TextInput>(null);
+
+  const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+  const backdropOpacity = animProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 1],
+  });
+
+  const sheetTranslateY = animProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [SCREEN_HEIGHT, 0],
+  });
 
   const stopVoiceListening = async () => {
     await speechService.stop();
@@ -49,11 +75,20 @@ export function CustomCardModal({
 
   useEffect(() => {
     if (visible) {
-      modalTranslateY.setValue(400);
-      Animated.spring(modalTranslateY, {
-        toValue: 0,
-        damping: 24,
-        stiffness: 240,
+      if (initialCard) {
+        setQuestion(initialCard.question);
+        setAnswer(initialCard.answer);
+      } else {
+        setQuestion('');
+        setAnswer('');
+      }
+      animProgress.setValue(0);
+      Animated.spring(animProgress, {
+        toValue: 1,
+        damping: 26,
+        mass: 0.7,
+        stiffness: 260,
+        overshootClamping: true,
         useNativeDriver: true,
       }).start();
     } else {
@@ -61,14 +96,26 @@ export function CustomCardModal({
       setQuestion('');
       setAnswer('');
     }
-  }, [visible]);
+  }, [visible, initialCard]);
+
+  const isClosingRef = useRef(false);
 
   const handleClose = () => {
-    Animated.timing(modalTranslateY, {
-      toValue: 400,
-      duration: 180,
+    if (isClosingRef.current) return;
+    isClosingRef.current = true;
+    questionInputRef.current?.blur();
+    answerInputRef.current?.blur();
+    Keyboard.dismiss();
+
+    Animated.spring(animProgress, {
+      toValue: 0,
+      damping: 26,
+      mass: 0.7,
+      stiffness: 260,
+      overshootClamping: true,
       useNativeDriver: true,
     }).start(() => {
+      isClosingRef.current = false;
       onClose();
     });
   };
@@ -131,10 +178,14 @@ export function CustomCardModal({
 
     setIsSaving(true);
     try {
-      await saveCustomCard(deckId, question, answer);
+      if (isEditMode && initialCard) {
+        await updateCustomCard(initialCard.id, question, answer);
+      } else {
+        await saveCustomCard(deckId, question, answer);
+      }
       onCardAdded?.();
 
-      if (addAnother) {
+      if (addAnother && !isEditMode) {
         setQuestion('');
         setAnswer('');
       } else {
@@ -151,29 +202,38 @@ export function CustomCardModal({
     <Modal
       visible={visible}
       transparent={true}
-      animationType="fade"
+      animationType="none"
       onRequestClose={handleClose}
     >
       <KeyboardAvoidingView
         style={styles.modalOverlay}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        enabled={Platform.OS === 'ios'}
       >
-        <Pressable style={styles.backdrop} onPress={handleClose} />
+        <Animated.View
+          style={[
+            StyleSheet.absoluteFill,
+            { backgroundColor: 'rgba(0,0,0,0.65)', opacity: backdropOpacity },
+          ]}
+        />
+        <Pressable style={StyleSheet.absoluteFill} onPress={handleClose} />
         <Animated.View
           style={[
             styles.modalContent,
             {
               backgroundColor: colors.surface,
               borderColor: colors.border,
-              transform: [{ translateY: modalTranslateY }],
+              transform: [{ translateY: sheetTranslateY }],
             },
           ]}
         >
           {/* Header */}
           <View style={styles.header}>
             <View style={styles.headerTitleBox}>
-              <View style={[styles.badgeIndicator, { backgroundColor: colors.primary }]} />
-              <Text style={[styles.title, { color: colors.text }]}>Nueva Tarjeta</Text>
+              <View style={[styles.badgeIndicator, { backgroundColor: isEditMode ? '#10B981' : colors.primary }]} />
+              <Text style={[styles.title, { color: colors.text }]}>
+                {isEditMode ? 'Editar Tarjeta' : 'Nueva Tarjeta'}
+              </Text>
             </View>
             <TouchableOpacity onPress={handleClose} style={styles.closeBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <Ionicons name="close" size={24} color={colors.textMuted} />
@@ -194,8 +254,8 @@ export function CustomCardModal({
                   onPress={() => toggleVoice('question')}
                 >
                   <Ionicons
-                    name={listeningTarget === 'question' ? 'mic' : 'mic-outline'}
-                    size={18}
+                    name={listeningTarget === 'question' ? 'stop' : 'mic-outline'}
+                    size={16}
                     color={listeningTarget === 'question' ? '#FFF' : colors.primary}
                   />
                   <Text
@@ -210,6 +270,7 @@ export function CustomCardModal({
               </View>
 
               <TextInput
+                ref={questionInputRef}
                 style={[
                   styles.textArea,
                   {
@@ -244,8 +305,8 @@ export function CustomCardModal({
                   onPress={() => toggleVoice('answer')}
                 >
                   <Ionicons
-                    name={listeningTarget === 'answer' ? 'mic' : 'mic-outline'}
-                    size={18}
+                    name={listeningTarget === 'answer' ? 'stop' : 'mic-outline'}
+                    size={16}
                     color={listeningTarget === 'answer' ? '#FFF' : colors.primary}
                   />
                   <Text
@@ -260,6 +321,7 @@ export function CustomCardModal({
               </View>
 
               <TextInput
+                ref={answerInputRef}
                 style={[
                   styles.textArea,
                   {
@@ -283,25 +345,27 @@ export function CustomCardModal({
 
             {/* Botones de Acción */}
             <View style={styles.actionRow}>
-              <TouchableOpacity
-                style={[styles.saveAndAddBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}
-                onPress={() => handleSave(true)}
-                disabled={isSaving}
-              >
-                <Text style={[styles.saveAndAddText, { color: colors.text }]}>
-                  Guardar y otra
-                </Text>
-              </TouchableOpacity>
+              {!isEditMode && (
+                <TouchableOpacity
+                  style={[styles.saveAndAddBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}
+                  onPress={() => handleSave(true)}
+                  disabled={isSaving}
+                >
+                  <Text style={[styles.saveAndAddText, { color: colors.text }]}>
+                    Guardar y otra
+                  </Text>
+                </TouchableOpacity>
+              )}
 
               <TouchableOpacity
-                style={[styles.saveBtn, { backgroundColor: colors.primary }]}
+                style={[styles.saveBtn, { backgroundColor: isEditMode ? '#10B981' : colors.primary }, isEditMode && { flex: 1 }]}
                 onPress={() => handleSave(false)}
                 disabled={isSaving}
               >
                 {isSaving ? (
                   <ActivityIndicator color="#FFF" size="small" />
                 ) : (
-                  <Text style={styles.saveBtnText}>Guardar</Text>
+                  <Text style={styles.saveBtnText}>{isEditMode ? 'Guardar Cambios' : 'Guardar'}</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -316,7 +380,6 @@ const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
     justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0,0,0,0.65)',
   },
   backdrop: {
     flex: 1,
@@ -327,7 +390,9 @@ const styles = StyleSheet.create({
     padding: Spacing.lg,
     borderWidth: 1,
     maxHeight: '85%',
+    overflow: 'hidden',
     ...Shadows.card,
+    elevation: 0,
   },
   header: {
     flexDirection: 'row',

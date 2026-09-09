@@ -5,17 +5,17 @@ import React, { memo, useCallback, useState } from 'react';
 import { Alert, FlatList, Modal, Platform, Pressable, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { db } from '../../../db';
-import { decks, words } from '../../../db/schema';
+import { decks, words, srsItems } from '../../../db/schema';
 import { exportDeckToYomiFormat } from '../../../lib/anki-importer';
 import { speakText } from '../../../lib/audio-service';
 import { ALL_LANGUAGES, deleteDeck } from '../../../lib/deck-service';
 import { getQuickHskLevel } from '../../../lib/hsk-data';
 import { cleanAndFormatMeanings } from '../../../lib/japanese-search';
 import { getQuickJlptLevel } from '../../../lib/jlpt-data';
-import { deleteWord } from '../../../lib/word-service';
+import { deleteWord, addCardToReview, removeCardFromReviewByWordId } from '../../../lib/word-service';
 import { classifyJapaneseWord, isJapaneseDictionaryForm } from '../../../lib/japanese-utils';
 import { ConjugationPracticeModal } from '../../components/ConjugationPracticeModal';
-import { CustomCardModal } from '../../components/CustomCardModal';
+import { CustomCardModal, CustomCardData } from '../../components/CustomCardModal';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { Shadows, Spacing, Typography } from '../../constants/theme';
 
@@ -25,6 +25,9 @@ interface DeckWordCardProps {
   onPress: (id: string) => void;
   onSpeak: (text: string) => void;
   onDelete: (id: string, text: string) => void;
+  onEdit?: (item: any) => void;
+  onToggleReview?: (id: string, shouldAdd: boolean) => void;
+  isCustomDeck?: boolean;
 }
 
 const DeckWordCard = memo(function DeckWordCard({
@@ -33,25 +36,32 @@ const DeckWordCard = memo(function DeckWordCard({
   onPress,
   onSpeak,
   onDelete,
+  onEdit,
+  onToggleReview,
+  isCustomDeck,
 }: DeckWordCardProps) {
   return (
     <TouchableOpacity
       style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
       activeOpacity={0.7}
-      onPress={() => onPress(item.id)}
+      onPress={() => (isCustomDeck ? onEdit?.(item) : onPress(item.id))}
     >
       <View style={styles.cardHeader}>
-        {/* Izquierda: Palabra (máx 55% ancho) + Texto de lectura debajo sin contenedor */}
-        <View style={styles.wordColumn}>
+        {/* Izquierda: Palabra o Pregunta (para mazos custom ocupa más ancho y hasta 2 líneas) */}
+        <View style={[styles.wordColumn, isCustomDeck && styles.customWordColumn]}>
           <Text
-            style={[styles.char, { color: colors.text }]}
-            numberOfLines={1}
-            adjustsFontSizeToFit={true}
+            style={[
+              styles.char,
+              { color: colors.text },
+              isCustomDeck && styles.customQuestionText,
+            ]}
+            numberOfLines={isCustomDeck ? 2 : 1}
+            adjustsFontSizeToFit={!isCustomDeck}
           >
             {item.simplified}
           </Text>
 
-          {item.displayReading && item.displayReading !== item.simplified ? (
+          {!isCustomDeck && item.displayReading && item.displayReading !== item.simplified ? (
             <Text
               style={[styles.readingText, { color: colors.primaryHover }]}
               numberOfLines={1}
@@ -62,37 +72,68 @@ const DeckWordCard = memo(function DeckWordCard({
           ) : null}
         </View>
 
-        {/* Derecha: Botones de Parlante y Borrar */}
+        {/* Derecha: Botones de Acción */}
         <View style={styles.actionsRow}>
-          <TouchableOpacity
-            style={styles.iconActionBtn}
-            onPress={(e) => {
-              e.stopPropagation();
-              onSpeak(item.simplified);
-            }}
-          >
-            <Ionicons name="volume-medium-outline" size={20} color={colors.primary} />
-          </TouchableOpacity>
+          {!isCustomDeck && (
+            <TouchableOpacity
+              style={styles.iconActionBtn}
+              onPress={(e) => {
+                e.stopPropagation();
+                onSpeak(item.simplified);
+              }}
+            >
+              <Ionicons name="volume-medium-outline" size={20} color={colors.primary} />
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity
             style={styles.iconActionBtn}
             onPress={(e) => {
               e.stopPropagation();
               onDelete(item.id, item.simplified);
             }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <Ionicons name="trash-outline" size={18} color={colors.danger} />
           </TouchableOpacity>
         </View>
       </View>
 
-      <Text style={[styles.meanings, { color: colors.textMuted }]} numberOfLines={2}>
-        {item.displayMeanings?.join(', ') || ''}
-      </Text>
+      <View style={styles.cardAnswerRow}>
+        <Text
+          style={[
+            styles.meanings,
+            isCustomDeck && styles.customMeaningsText,
+            { color: colors.textMuted },
+          ]}
+          numberOfLines={2}
+        >
+          {Array.isArray(item.displayMeanings) ? item.displayMeanings.join(', ') : item.displayMeanings || ''}
+        </Text>
 
-      <View style={[styles.cardFooter, { borderTopColor: colors.border }]}>
-        <Text style={[styles.viewDetailText, { color: colors.primary }]}>Tocar para ver detalle y trazado</Text>
-        <Ionicons name="chevron-forward" size={14} color={colors.primary} />
+        {isCustomDeck && !item.isInReview && (
+          <TouchableOpacity
+            style={styles.reAddReviewBtn}
+            onPress={(e) => {
+              e.stopPropagation();
+              onToggleReview?.(item.id, true);
+            }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="add" size={13} color="#10B981" style={{ marginRight: 2 }} />
+            <Text style={styles.reAddReviewText}>SRS</Text>
+          </TouchableOpacity>
+        )}
       </View>
+
+      {!isCustomDeck && (
+        <View style={[styles.cardFooter, { borderTopColor: colors.border }]}>
+          <Text style={[styles.viewDetailText, { color: colors.primary }]}>
+            Tocar para ver detalle y trazado
+          </Text>
+          <Ionicons name="chevron-forward" size={14} color={colors.primary} />
+        </View>
+      )}
     </TouchableOpacity>
   );
 });
@@ -106,6 +147,7 @@ export default function DeckDetailScreen() {
   const [deckInfo, setDeckInfo] = useState<any>(null);
   const [conjugationModalVisible, setConjugationModalVisible] = useState(false);
   const [customCardModalVisible, setCustomCardModalVisible] = useState(false);
+  const [editingCard, setEditingCard] = useState<CustomCardData | null>(null);
 
   const isCustomDeck = deckInfo?.type === 'custom';
 
@@ -119,6 +161,12 @@ export default function DeckDetailScreen() {
       const d = await db.select().from(decks).where(eq(decks.id, id)).limit(1);
       const deckObj = d.length > 0 ? d[0] : null;
       if (deckObj) setDeckInfo(deckObj);
+
+      const activeSrs = await db
+        .select({ itemId: srsItems.itemId })
+        .from(srsItems)
+        .where(eq(srsItems.itemType, 'word'));
+      const activeSrsSet = new Set(activeSrs.map((s) => s.itemId));
 
       const isJapaneseDeck = deckObj?.languageCode === 'ja-JP';
       const isChineseDeck = deckObj?.languageCode?.startsWith('zh');
@@ -163,8 +211,19 @@ export default function DeckDetailScreen() {
           (conjugationEnabled === true && isBaseForm) ||
           (conjugationEnabled === undefined && isBaseForm && Boolean(category?.startsWith('Verbo') || category?.startsWith('Adjetivo')));
 
-        // Pre-calcular y formatear significados (máximo 3) una sola vez para rendimiento óptimo
-        const displayMeanings = cleanAndFormatMeanings(w.meanings).slice(0, 3);
+        const isCustomDeck = deckObj?.type === 'custom';
+
+        // Pre-calcular y formatear significados: en mazo custom se preserva íntegra la respuesta sin recortar
+        const displayMeanings = isCustomDeck
+          ? (() => {
+              try {
+                const parsed = JSON.parse(w.meanings);
+                return Array.isArray(parsed) ? parsed : [String(w.meanings)];
+              } catch {
+                return [w.meanings];
+              }
+            })()
+          : cleanAndFormatMeanings(w.meanings).slice(0, 3);
 
         return {
           ...w,
@@ -173,6 +232,7 @@ export default function DeckDetailScreen() {
           displayReading: cleanReading,
           isConjugable,
           displayMeanings,
+          isInReview: activeSrsSet.has(w.id),
         };
       });
 
@@ -202,6 +262,31 @@ export default function DeckDetailScreen() {
         },
       ]
     );
+  }, [fetchWords]);
+
+  const handleEditCard = useCallback((item: any) => {
+    const rawAnswer = Array.isArray(item.displayMeanings)
+      ? item.displayMeanings.join('\n')
+      : String(item.displayMeanings || item.meanings || '');
+    setEditingCard({
+      id: item.id,
+      question: item.simplified,
+      answer: rawAnswer,
+    });
+    setCustomCardModalVisible(true);
+  }, []);
+
+  const handleToggleReview = useCallback(async (wordId: string, shouldAdd: boolean) => {
+    try {
+      if (shouldAdd) {
+        await addCardToReview(wordId);
+      } else {
+        await removeCardFromReviewByWordId(wordId);
+      }
+      await fetchWords();
+    } catch (e) {
+      Alert.alert('Error', 'No se pudo actualizar el estado de repaso.');
+    }
   }, [fetchWords]);
 
   const [menuVisible, setMenuVisible] = useState(false);
@@ -265,8 +350,11 @@ export default function DeckDetailScreen() {
       onPress={handlePressWord}
       onSpeak={handleSpeak}
       onDelete={handleDeleteWord}
+      onEdit={handleEditCard}
+      onToggleReview={handleToggleReview}
+      isCustomDeck={isCustomDeck}
     />
-  ), [colors, handlePressWord, handleSpeak, handleDeleteWord]);
+  ), [colors, handlePressWord, handleSpeak, handleDeleteWord, handleEditCard, handleToggleReview, isCustomDeck]);
 
   const keyExtractor = useCallback((item: any) => item.id, []);
 
@@ -280,12 +368,18 @@ export default function DeckDetailScreen() {
         <View style={styles.brandTitleContainer}>
           <Text style={[styles.brandText, { color: colors.primary }]}>Yomi</Text>
           <Text style={[styles.brandSep, { color: colors.textMuted }]}> • </Text>
-          <Ionicons
-            name={isCustomDeck ? 'layers' : 'language'}
-            size={18}
-            color={isCustomDeck ? '#10B981' : colors.primary}
-            style={{ marginRight: 6 }}
-          />
+          {isCustomDeck ? (
+            <Ionicons
+              name="layers"
+              size={18}
+              color="#10B981"
+              style={{ marginRight: 6 }}
+            />
+          ) : (
+            <Text style={styles.headerFlagText}>
+              {ALL_LANGUAGES.find((l) => l.code === deckInfo?.languageCode)?.flag || '🌐'}
+            </Text>
+          )}
           <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
             {deckInfo?.name || 'Mazo'}
           </Text>
@@ -412,19 +506,30 @@ export default function DeckDetailScreen() {
           },
         ]}
         activeOpacity={0.8}
-        onPress={() => (isCustomDeck ? setCustomCardModalVisible(true) : router.push(`/search?deckId=${id}`))}
+        onPress={() => {
+          if (isCustomDeck) {
+            setEditingCard(null);
+            setCustomCardModalVisible(true);
+          } else {
+            router.push(`/search?deckId=${id}`);
+          }
+        }}
       >
         <Text style={styles.fabExtendedText}>
           {isCustomDeck ? '+ Añadir tarjeta' : '+ Añadir palabra'}
         </Text>
       </TouchableOpacity>
 
-      {/* Modal para agregar tarjetas personalizadas */}
+      {/* Modal para agregar o editar tarjetas personalizadas */}
       {id && (
         <CustomCardModal
           visible={customCardModalVisible}
           deckId={id}
-          onClose={() => setCustomCardModalVisible(false)}
+          initialCard={editingCard}
+          onClose={() => {
+            setCustomCardModalVisible(false);
+            setEditingCard(null);
+          }}
           onCardAdded={fetchWords}
         />
       )}
@@ -562,6 +667,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'flex-start',
   },
+  customWordColumn: {
+    maxWidth: '85%',
+    flex: 1,
+  },
+  customQuestionText: {
+    fontSize: 18,
+    fontWeight: '700',
+    lineHeight: 24,
+  },
   char: {
     ...Typography.chineseMedium,
     fontSize: 26,
@@ -604,7 +718,34 @@ const styles = StyleSheet.create({
     padding: Spacing.xs,
     marginLeft: 2,
   },
+  cardAnswerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 4,
+    minHeight: 26,
+  },
+  customMeaningsText: {
+    flex: 1,
+    marginTop: 0,
+    marginRight: Spacing.sm,
+  },
   meanings: { ...Typography.bodySmall, lineHeight: 20, marginTop: 4 },
+  reAddReviewBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: '#10B981',
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+  },
+  reAddReviewText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#10B981',
+  },
   cardFooter: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -617,6 +758,13 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     marginRight: 4,
+  },
+  headerFlagText: {
+    fontSize: 18,
+    lineHeight: 22,
+    marginRight: 6,
+    textAlignVertical: 'center',
+    includeFontPadding: false,
   },
   emptyContainer: {
     flex: 1,

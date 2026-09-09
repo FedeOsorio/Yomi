@@ -21,8 +21,8 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle } from 'react-native-svg';
 import { Rating } from 'ts-fsrs';
-import { speakText } from '../../../lib/audio-service';
-import { ALL_LANGUAGES, DeckWithStats, getDecksWithStats, SUPPORTED_LANGUAGES } from '../../../lib/deck-service';
+import { speakText, stopSpeech } from '../../../lib/audio-service';
+import { ALL_LANGUAGES, DeckWithStats, getDeckById, getDecksWithStats, SUPPORTED_LANGUAGES } from '../../../lib/deck-service';
 import { cleanAndFormatMeanings } from '../../../lib/japanese-search';
 import { romajiToHiragana } from '../../../lib/japanese-utils';
 import { calculateChineseAccuracyScore, PinyinBreakdownItem } from '../../../lib/pinyin-utils';
@@ -139,7 +139,7 @@ const DeckGridCard = memo(function DeckGridCard({
   const isCustom = item.type === 'custom';
   const langMeta = ALL_LANGUAGES.find((l) => l.code === item.languageCode) || SUPPORTED_LANGUAGES[0];
   const dueCount = item.dueCount || 0;
-  const wordCount = item.wordCount || 0;
+  const cardsInReview = item.activeCardsCount !== undefined ? item.activeCardsCount : (item.wordCount || 0);
   const hasDue = dueCount > 0;
 
   return (
@@ -165,11 +165,15 @@ const DeckGridCard = memo(function DeckGridCard({
             },
           ]}
         >
-          <Ionicons
-            name={isCustom ? 'layers' : 'language'}
-            size={20}
-            color={isCustom ? '#10B981' : colors.primary}
-          />
+          {isCustom ? (
+            <Ionicons
+              name="layers"
+              size={20}
+              color="#10B981"
+            />
+          ) : (
+            <Text style={styles.gridFlagEmoji}>{langMeta.flag}</Text>
+          )}
         </View>
 
         {hasDue ? (
@@ -217,8 +221,8 @@ const DeckGridCard = memo(function DeckGridCard({
           {item.name}
         </Text>
         <Text style={[styles.gridCardSub, { color: colors.textMuted }]} numberOfLines={1}>
-          {isCustom ? 'Personalizado' : (langMeta?.label || 'General')} • {wordCount}{' '}
-          {wordCount === 1 ? (isCustom ? 'tarjeta' : 'palabra') : (isCustom ? 'tarjetas' : 'palabras')}
+          {isCustom ? 'Personalizado' : (langMeta?.label || 'General')} • {cardsInReview}{' '}
+          {cardsInReview === 1 ? (isCustom ? 'tarjeta' : 'palabra') : (isCustom ? 'tarjetas' : 'palabras')}
         </Text>
       </View>
 
@@ -435,6 +439,7 @@ export default function ReviewScreen() {
   useFocusEffect(
     useCallback(() => {
       return () => {
+        stopSpeech();
         if (autoTimerRef.current) {
           clearTimeout(autoTimerRef.current);
           autoTimerRef.current = null;
@@ -592,9 +597,35 @@ export default function ReviewScreen() {
     }
 
     try {
-      const cards = practiceMode
-        ? await getAllCardsForPractice(deckId === 'all' ? undefined : deckId)
-        : await getDueCards(deckId === 'all' ? undefined : deckId);
+      let cards: DueCardWithContext[] = [];
+      let isCustom = false;
+
+      if (deckId !== 'all') {
+        const found = decksList.find((d) => d.id === deckId);
+        if (found) {
+          isCustom = found.type === 'custom';
+        } else {
+          const deckObj = await getDeckById(deckId);
+          isCustom = deckObj?.type === 'custom';
+        }
+      }
+
+      if (isCustom) {
+        // En mazos personalizados se cargan todas las tarjetas activas en SRS de ese mazo,
+        // ordenando prioritariamente al frente las que están pendientes (due <= now) y luego las que están "al día".
+        const allCustomCards = await getAllCardsForPractice(deckId);
+        const now = new Date();
+        cards = allCustomCards.sort((a, b) => {
+          const aDue = new Date(a.due) <= now ? 0 : 1;
+          const bDue = new Date(b.due) <= now ? 0 : 1;
+          return aDue - bDue;
+        });
+      } else {
+        cards = practiceMode
+          ? await getAllCardsForPractice(deckId === 'all' ? undefined : deckId)
+          : await getDueCards(deckId === 'all' ? undefined : deckId);
+      }
+
       setDueCards(cards);
       dueCardsRef.current = cards;
 
@@ -753,10 +784,10 @@ export default function ReviewScreen() {
     });
 
     // La tarjeta SIEMPRE se da vuelta con animación 3D (tanto acierto como fallo)
-    Animated.spring(cardFlipAnim, {
+    Animated.timing(cardFlipAnim, {
       toValue: 1,
-      friction: 8,
-      tension: 12,
+      duration: 280,
+      easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     }).start();
 
@@ -884,6 +915,7 @@ export default function ReviewScreen() {
 
   // Salir de la sesión actual y volver al selector de mazos
   const handleExitSession = () => {
+    stopSpeech();
     if (autoTimerRef.current) {
       clearTimeout(autoTimerRef.current);
       autoTimerRef.current = null;
@@ -921,7 +953,21 @@ export default function ReviewScreen() {
     useCallback(() => {
       if (paramDeckId) {
         // Si se abrió con un deckId específico por parámetro de navegación
-        startSession(paramDeckId, 'Mazo seleccionado');
+        (async () => {
+          try {
+            setLoading(true);
+            const d = await getDecksWithStats();
+            setDecksList(d);
+            const deck = d.find((item) => item.id === paramDeckId);
+            const deckName = deck ? deck.name : 'Mazo';
+            const hasDue = (deck?.dueCount || 0) > 0;
+            const isCustom = deck?.type === 'custom';
+            startSession(paramDeckId, deckName, 'text', isCustom || !hasDue);
+          } catch (e) {
+            console.warn('Error al iniciar sesión con paramDeckId:', e);
+            fetchDecksData();
+          }
+        })();
       } else {
         fetchDecksData();
       }
@@ -964,7 +1010,16 @@ export default function ReviewScreen() {
 
     // 3. Si no hay selección personalizada, limpiar y formatear wordMeanings
     if (list.length === 0 && currentCard.wordMeanings) {
-      list = cleanAndFormatMeanings(currentCard.wordMeanings);
+      if (currentCard.deckType === 'custom') {
+        try {
+          const parsed = JSON.parse(currentCard.wordMeanings);
+          list = Array.isArray(parsed) ? parsed : [String(currentCard.wordMeanings)];
+        } catch {
+          list = [currentCard.wordMeanings];
+        }
+      } else {
+        list = cleanAndFormatMeanings(currentCard.wordMeanings);
+      }
     }
 
     return list;
@@ -988,6 +1043,22 @@ export default function ReviewScreen() {
       isMounted = false;
     };
   }, [currentCard]);
+
+  // Reproducción automática del audio de la pregunta al presentar una tarjeta de mazo personalizado
+  useEffect(() => {
+    if (currentCard && !isChecked && !sessionCompleted) {
+      const isCustom =
+        currentCard.deckType === 'custom' ||
+        currentCard.languageCode === 'custom' ||
+        currentCard.languageCode === 'es-ES';
+      if (isCustom) {
+        const timer = setTimeout(() => {
+          speakText(currentCard.displayText, 'es-ES');
+        }, 300);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [currentCard?.id, isChecked, sessionCompleted]);
 
   const handleSpeak = () => {
     if (!currentCard) return;
@@ -1032,10 +1103,10 @@ export default function ReviewScreen() {
       voiceScore,
     });
     setIsChecked(true);
-    Animated.spring(cardFlipAnim, {
+    Animated.timing(cardFlipAnim, {
       toValue: 1,
-      friction: 8,
-      tension: 12,
+      duration: 280,
+      easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     }).start();
     handleSpeak();
@@ -1050,10 +1121,10 @@ export default function ReviewScreen() {
       computedRating: Rating.Again,
     });
     setIsChecked(true);
-    Animated.spring(cardFlipAnim, {
+    Animated.timing(cardFlipAnim, {
       toValue: 1,
-      friction: 8,
-      tension: 12,
+      duration: 280,
+      easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     }).start();
     handleSpeak();
@@ -1088,16 +1159,14 @@ export default function ReviewScreen() {
 
   // 4. Mostrar respuesta para tarjetas personalizadas
   const handleShowCustomAnswer = () => {
+    stopSpeech();
     setIsChecked(true);
-    Animated.spring(cardFlipAnim, {
+    Animated.timing(cardFlipAnim, {
       toValue: 1,
-      friction: 8,
-      tension: 12,
+      duration: 280,
+      easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     }).start();
-    if (currentCard) {
-      speakText(currentCard.displayText, 'es-ES');
-    }
   };
 
   // 5. Procesar autoevaluación de tarjetas personalizadas (Pronto / Más tarde / Otro día / Nunca)
@@ -1144,9 +1213,7 @@ export default function ReviewScreen() {
           resetForm();
         } else if (action === 'next_day') {
           // Aumenta 1 día en el SRS
-          if (!isPracticeModeRef.current) {
-            await rescheduleCardNextDay(cardId);
-          }
+          await rescheduleCardNextDay(cardId);
           setSessionCount((prev) => prev + 1);
           const nextIndex = currIdx + 1;
           if (nextIndex < cards.length) {
@@ -1158,9 +1225,7 @@ export default function ReviewScreen() {
           }
         } else if (action === 'never') {
           // Quita la tarjeta definitivamente del repaso
-          if (!isPracticeModeRef.current) {
-            await removeCardFromReview(cardId);
-          }
+          await removeCardFromReview(cardId);
           setSessionCount((prev) => prev + 1);
           const nextIndex = currIdx + 1;
           if (nextIndex < cards.length) {
@@ -1183,7 +1248,7 @@ export default function ReviewScreen() {
     const isCustom = item.type === 'custom';
     const langMeta = ALL_LANGUAGES.find((l) => l.code === item.languageCode) || SUPPORTED_LANGUAGES[0];
     const dueCount = item.dueCount || 0;
-    const wordCount = item.wordCount || 0;
+    const cardsInReview = item.activeCardsCount !== undefined ? item.activeCardsCount : (item.wordCount || 0);
     const hasDue = dueCount > 0;
 
     return (
@@ -1209,11 +1274,15 @@ export default function ReviewScreen() {
               },
             ]}
           >
-            <Ionicons
-              name={isCustom ? 'layers' : 'language'}
-              size={20}
-              color={isCustom ? '#10B981' : colors.primary}
-            />
+            {isCustom ? (
+              <Ionicons
+                name="layers"
+                size={20}
+                color="#10B981"
+              />
+            ) : (
+              <Text style={styles.gridFlagEmoji}>{langMeta.flag}</Text>
+            )}
           </View>
 
           {hasDue ? (
@@ -1261,8 +1330,8 @@ export default function ReviewScreen() {
             {item.name}
           </Text>
           <Text style={[styles.gridCardSub, { color: colors.textMuted }]} numberOfLines={1}>
-            {isCustom ? 'Personalizado' : (langMeta?.label || 'General')} • {wordCount}{' '}
-            {wordCount === 1 ? (isCustom ? 'tarjeta' : 'palabra') : (isCustom ? 'tarjetas' : 'palabras')}
+            {isCustom ? 'Personalizado' : (langMeta?.label || 'General')} • {cardsInReview}{' '}
+            {cardsInReview === 1 ? (isCustom ? 'tarjeta' : 'palabra') : (isCustom ? 'tarjetas' : 'palabras')}
           </Text>
         </View>
 
@@ -1595,6 +1664,7 @@ export default function ReviewScreen() {
           <View style={styles.flipContainer}>
             {/* CARA FRONTAL: Pregunta */}
             <Animated.View
+              renderToHardwareTextureAndroid={true}
               style={[
                 styles.quizCard,
                 { backgroundColor: colors.surface, borderColor: colors.border },
@@ -1603,16 +1673,14 @@ export default function ReviewScreen() {
             >
               {isCustomCard ? (
                 <View style={styles.customFrontBox}>
-                  <View style={styles.customBadgeRow}>
-                    <View style={[styles.customDeckTypeBadge, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}>
-                      <Ionicons name="layers" size={14} color="#10B981" style={{ marginRight: 5 }} />
-                      <Text style={[styles.customDeckTypeBadgeText, { color: '#10B981' }]}>Pregunta</Text>
-                    </View>
+                  <View style={styles.customFrontHeaderRow}>
                     <TouchableOpacity
-                      style={[styles.customCardSpeakerBtn, { backgroundColor: colors.surfaceHighlight }]}
+                      style={styles.customCleanSpeakerBtn}
+                      activeOpacity={0.7}
                       onPress={() => speakText(currentCard.displayText, 'es-ES')}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
-                      <Ionicons name="volume-medium-outline" size={20} color={colors.primary} />
+                      <Ionicons name="volume-medium-outline" size={22} color={colors.primary} />
                     </TouchableOpacity>
                   </View>
 
@@ -1677,6 +1745,7 @@ export default function ReviewScreen() {
 
             {/* CARA TRASERA (REVERSO 3D) */}
             <Animated.View
+              renderToHardwareTextureAndroid={true}
               style={[
                 styles.quizCard,
                 styles.quizCardBack,
@@ -1690,24 +1759,20 @@ export default function ReviewScreen() {
             >
               {isCustomCard ? (
                 <View style={styles.customBackBox}>
-                  <View style={styles.customBadgeRow}>
-                    <View style={[styles.customDeckTypeBadge, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}>
-                      <Ionicons name="checkmark-circle" size={14} color="#10B981" style={{ marginRight: 5 }} />
-                      <Text style={[styles.customDeckTypeBadgeText, { color: '#10B981' }]}>Respuesta</Text>
-                    </View>
-                    <TouchableOpacity
-                      style={[styles.customCardSpeakerBtn, { backgroundColor: colors.surfaceHighlight }]}
-                      onPress={() => speakText(meaningsList[0] || currentCard.displayMeaning, 'es-ES')}
-                    >
-                      <Ionicons name="volume-medium-outline" size={20} color={colors.primary} />
-                    </TouchableOpacity>
-                  </View>
-
                   <Text style={[styles.customBackQuestionPrompt, { color: colors.textMuted }]} numberOfLines={2}>
                     {currentCard.displayText}
                   </Text>
 
                   <View style={[styles.customAnswerBox, { backgroundColor: colors.surfaceHighlight }]}>
+                    <TouchableOpacity
+                      style={styles.customAnswerSpeakerBtn}
+                      activeOpacity={0.7}
+                      onPress={() => speakText(meaningsList[0] || currentCard.displayMeaning, 'es-ES')}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons name="volume-medium-outline" size={22} color={colors.textMuted} />
+                    </TouchableOpacity>
+
                     <ScrollView style={styles.customAnswerScroll} contentContainerStyle={styles.customAnswerScrollContent}>
                       <Text style={[styles.customAnswerText, { color: colors.text }]}>
                         {meaningsList.length > 0 ? meaningsList.join('\n') : currentCard.displayMeaning}
@@ -1954,11 +2019,12 @@ export default function ReviewScreen() {
             borderTopColor: colors.border,
             paddingBottom: Math.max(insets.bottom + 8, Spacing.md),
           },
+          isCustomCard && styles.customBottomBar,
         ]}
       >
         {isCustomCard ? (
           !isChecked ? (
-            <View style={styles.actionButtonsRow}>
+            <View style={styles.customBottomBarContent}>
               <TouchableOpacity
                 style={[styles.showAnswerBtn, { backgroundColor: '#10B981' }]}
                 activeOpacity={0.8}
@@ -1969,7 +2035,7 @@ export default function ReviewScreen() {
               </TouchableOpacity>
             </View>
           ) : (
-            <View style={styles.customEvaluationContainer}>
+            <View style={styles.customBottomBarContent}>
               <Text style={[styles.customEvaluationPrompt, { color: colors.text }]}>
                 ¿Cuándo querés volver a repasarla?
               </Text>
@@ -2638,6 +2704,10 @@ const styles = StyleSheet.create({
   },
   gridFlagEmoji: {
     fontSize: 20,
+    lineHeight: 24,
+    textAlign: 'center',
+    textAlignVertical: 'center',
+    includeFontPadding: false,
   },
   gridDueBadge: {
     paddingHorizontal: 8,
@@ -2923,6 +2993,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  customFrontHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: 4,
+  },
+  customCleanSpeakerBtn: {
+    padding: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   customQuestionScroll: {
     flex: 1,
     width: '100%',
@@ -2946,19 +3028,35 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   customBackQuestionPrompt: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '500',
-    marginBottom: 8,
+    marginTop: 2,
+    marginBottom: 10,
     textAlign: 'center',
     paddingHorizontal: 8,
   },
   customAnswerBox: {
     flex: 1,
-    borderRadius: 14,
+    borderRadius: 16,
     padding: Spacing.sm,
     width: '100%',
     justifyContent: 'center',
     alignItems: 'center',
+    position: 'relative',
+  },
+  customAnswerSpeakerBtn: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    zIndex: 10,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'transparent',
+    elevation: 0,
+    shadowOpacity: 0,
   },
   customAnswerScroll: {
     flex: 1,
@@ -2968,8 +3066,9 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 6,
-    paddingVertical: 8,
+    paddingHorizontal: 16,
+    paddingTop: 36,
+    paddingBottom: 16,
   },
   customAnswerText: {
     fontSize: 20,
@@ -2977,12 +3076,21 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 28,
   },
+  customBottomBar: {
+    paddingTop: 6,
+    paddingHorizontal: Spacing.md,
+  },
+  customBottomBarContent: {
+    height: 82,
+    justifyContent: 'center',
+    width: '100%',
+  },
   showAnswerBtn: {
-    flex: 1,
+    width: '100%',
+    height: 52,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 14,
     borderRadius: 14,
     ...Shadows.card,
   },
@@ -2991,15 +3099,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
   },
-  customEvaluationContainer: {
-    width: '100%',
-    alignItems: 'center',
-  },
   customEvaluationPrompt: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '700',
-    marginBottom: 10,
     textAlign: 'center',
+    marginTop: 4,
+    marginBottom: 8,
   },
   customButtonRow: {
     flexDirection: 'row',

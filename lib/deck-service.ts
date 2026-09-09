@@ -10,6 +10,7 @@ export interface DeckWithStats {
   type: 'language' | 'custom';
   createdAt: Date;
   wordCount: number;
+  activeCardsCount: number;
   dueCount: number;
 }
 
@@ -102,6 +103,17 @@ export async function getDecksWithStats(): Promise<DeckWithStats[]> {
   const allDecks = await db.select().from(decks);
   const now = new Date();
 
+  // Consultar todos los ítems SRS de tipo 'word' de una sola vez
+  const allSrsCards = await db
+    .select({ id: srsItems.id, itemId: srsItems.itemId, due: srsItems.due })
+    .from(srsItems)
+    .where(eq(srsItems.itemType, 'word'));
+
+  const srsMap = new Map<string, { due: Date }>();
+  for (const s of allSrsCards) {
+    srsMap.set(s.itemId, { due: new Date(s.due) });
+  }
+
   const results: DeckWithStats[] = [];
 
   for (const deck of allDecks) {
@@ -110,21 +122,17 @@ export async function getDecksWithStats(): Promise<DeckWithStats[]> {
       .from(words)
       .where(eq(words.deckId, deck.id));
 
-    const wordIds = deckWords.map(w => w.id);
     let dueCount = 0;
+    let activeCardsCount = 0;
 
-    if (wordIds.length > 0) {
-      const dueCards = await db
-        .select({ id: srsItems.id, itemId: srsItems.itemId })
-        .from(srsItems)
-        .where(
-          and(
-            eq(srsItems.itemType, 'word'),
-            lte(srsItems.due, now)
-          )
-        );
-
-      dueCount = dueCards.filter(c => wordIds.includes(c.itemId)).length;
+    for (const w of deckWords) {
+      const srs = srsMap.get(w.id);
+      if (srs) {
+        activeCardsCount++;
+        if (srs.due <= now) {
+          dueCount++;
+        }
+      }
     }
 
     results.push({
@@ -134,6 +142,7 @@ export async function getDecksWithStats(): Promise<DeckWithStats[]> {
       type: (deck.type as 'language' | 'custom') || 'language',
       createdAt: deck.createdAt,
       wordCount: deckWords.length,
+      activeCardsCount,
       dueCount,
     });
   }
