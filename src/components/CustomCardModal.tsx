@@ -55,6 +55,7 @@ export function CustomCardModal({
   const animProgress = useRef(new Animated.Value(0)).current;
   const questionInputRef = useRef<TextInput>(null);
   const answerInputRef = useRef<TextInput>(null);
+  const scrollViewRef = useRef<ScrollView>(null);
 
   const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -206,171 +207,185 @@ export function CustomCardModal({
       onRequestClose={handleClose}
     >
       <KeyboardAvoidingView
-        style={styles.modalOverlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        enabled={Platform.OS === 'ios'}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1 }}
       >
-        <Animated.View
-          style={[
-            StyleSheet.absoluteFill,
-            { backgroundColor: 'rgba(0,0,0,0.65)', opacity: backdropOpacity },
-          ]}
-        />
-        <Pressable style={StyleSheet.absoluteFill} onPress={handleClose} />
-        <Animated.View
-          style={[
-            styles.modalContent,
-            {
-              backgroundColor: colors.surface,
-              borderColor: colors.border,
-              transform: [{ translateY: sheetTranslateY }],
-            },
-          ]}
-        >
-          {/* Header */}
-          <View style={styles.header}>
-            <View style={styles.headerTitleBox}>
-              <View style={[styles.badgeIndicator, { backgroundColor: isEditMode ? '#10B981' : colors.primary }]} />
-              <Text style={[styles.title, { color: colors.text }]}>
-                {isEditMode ? 'Editar Tarjeta' : 'Nueva Tarjeta'}
-              </Text>
-            </View>
-            <TouchableOpacity onPress={handleClose} style={styles.closeBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Ionicons name="close" size={24} color={colors.textMuted} />
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-            {/* Campo Pregunta */}
-            <View style={styles.fieldContainer}>
-              <View style={styles.labelRow}>
-                <Text style={[styles.label, { color: colors.text }]}>Pregunta (Frente)</Text>
-                <TouchableOpacity
-                  style={[
-                    styles.micBtn,
-                    listeningTarget === 'question' && styles.micBtnActive,
-                    { backgroundColor: listeningTarget === 'question' ? colors.danger : colors.surfaceHighlight },
-                  ]}
-                  onPress={() => toggleVoice('question')}
-                >
-                  <Ionicons
-                    name={listeningTarget === 'question' ? 'stop' : 'mic-outline'}
-                    size={16}
-                    color={listeningTarget === 'question' ? '#FFF' : colors.primary}
-                  />
-                  <Text
-                    style={[
-                      styles.micBtnText,
-                      { color: listeningTarget === 'question' ? '#FFF' : colors.primary },
-                    ]}
-                  >
-                    {listeningTarget === 'question' ? 'Escuchando...' : 'Dictar'}
-                  </Text>
-                </TouchableOpacity>
+        <View style={styles.modalOverlay}>
+          <Animated.View
+            style={[
+              StyleSheet.absoluteFill,
+              { backgroundColor: 'rgba(0,0,0,0.65)', opacity: backdropOpacity },
+            ]}
+          />
+          <Pressable style={StyleSheet.absoluteFill} onPress={handleClose} />
+          <Animated.View
+            style={[
+              styles.modalContent,
+              {
+                backgroundColor: colors.surface,
+                borderColor: colors.border,
+                transform: [{ translateY: sheetTranslateY }],
+              },
+            ]}
+          >
+            {/* Header */}
+            <View style={styles.header}>
+              <View style={styles.headerTitleBox}>
+                <View style={[styles.badgeIndicator, { backgroundColor: isEditMode ? '#10B981' : colors.primary }]} />
+                <Text style={[styles.title, { color: colors.text }]}>
+                  {isEditMode ? 'Editar Tarjeta' : 'Nueva Tarjeta'}
+                </Text>
               </View>
-
-              <TextInput
-                ref={questionInputRef}
-                style={[
-                  styles.textArea,
-                  {
-                    backgroundColor: colors.surfaceHighlight,
-                    borderColor: listeningTarget === 'question' ? colors.primary : colors.border,
-                    color: colors.text,
-                  },
-                ]}
-                placeholder="Ej. ¿Cuáles son los pares craneales sensitivos?"
-                placeholderTextColor={colors.textMuted}
-                multiline={true}
-                value={question}
-                onChangeText={(t) => {
-                  setQuestion(t);
-                  if (listeningTarget === 'question') {
-                    accumulatedTextRef.current = t;
-                  }
-                }}
-              />
-            </View>
-
-            {/* Campo Respuesta */}
-            <View style={styles.fieldContainer}>
-              <View style={styles.labelRow}>
-                <Text style={[styles.label, { color: colors.text }]}>Respuesta (Reverso)</Text>
-                <TouchableOpacity
-                  style={[
-                    styles.micBtn,
-                    listeningTarget === 'answer' && styles.micBtnActive,
-                    { backgroundColor: listeningTarget === 'answer' ? colors.danger : colors.surfaceHighlight },
-                  ]}
-                  onPress={() => toggleVoice('answer')}
-                >
-                  <Ionicons
-                    name={listeningTarget === 'answer' ? 'stop' : 'mic-outline'}
-                    size={16}
-                    color={listeningTarget === 'answer' ? '#FFF' : colors.primary}
-                  />
-                  <Text
-                    style={[
-                      styles.micBtnText,
-                      { color: listeningTarget === 'answer' ? '#FFF' : colors.primary },
-                    ]}
-                  >
-                    {listeningTarget === 'answer' ? 'Escuchando...' : 'Dictar'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              <TextInput
-                ref={answerInputRef}
-                style={[
-                  styles.textArea,
-                  {
-                    backgroundColor: colors.surfaceHighlight,
-                    borderColor: listeningTarget === 'answer' ? colors.primary : colors.border,
-                    color: colors.text,
-                  },
-                ]}
-                placeholder="Ej. I (Olfatorio), II (Óptico) y VIII (Vestibulococlear)"
-                placeholderTextColor={colors.textMuted}
-                multiline={true}
-                value={answer}
-                onChangeText={(t) => {
-                  setAnswer(t);
-                  if (listeningTarget === 'answer') {
-                    accumulatedTextRef.current = t;
-                  }
-                }}
-              />
-            </View>
-
-            {/* Botones de Acción */}
-            <View style={styles.actionRow}>
-              {!isEditMode && (
-                <TouchableOpacity
-                  style={[styles.saveAndAddBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}
-                  onPress={() => handleSave(true)}
-                  disabled={isSaving}
-                >
-                  <Text style={[styles.saveAndAddText, { color: colors.text }]}>
-                    Guardar y otra
-                  </Text>
-                </TouchableOpacity>
-              )}
-
-              <TouchableOpacity
-                style={[styles.saveBtn, { backgroundColor: isEditMode ? '#10B981' : colors.primary }, isEditMode && { flex: 1 }]}
-                onPress={() => handleSave(false)}
-                disabled={isSaving}
-              >
-                {isSaving ? (
-                  <ActivityIndicator color="#FFF" size="small" />
-                ) : (
-                  <Text style={styles.saveBtnText}>{isEditMode ? 'Guardar Cambios' : 'Guardar'}</Text>
-                )}
+              <TouchableOpacity onPress={handleClose} style={styles.closeBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Ionicons name="close" size={24} color={colors.textMuted} />
               </TouchableOpacity>
             </View>
-          </ScrollView>
-        </Animated.View>
+
+            <ScrollView
+              ref={scrollViewRef}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.scrollContent}
+            >
+              {/* Campo Pregunta */}
+              <View style={styles.fieldContainer}>
+                <View style={styles.labelRow}>
+                  <Text style={[styles.label, { color: colors.text }]}>Pregunta (Frente)</Text>
+                  <TouchableOpacity
+                    style={[
+                      styles.micBtn,
+                      listeningTarget === 'question' && styles.micBtnActive,
+                      { backgroundColor: listeningTarget === 'question' ? colors.danger : colors.surfaceHighlight },
+                    ]}
+                    onPress={() => toggleVoice('question')}
+                  >
+                    <Ionicons
+                      name={listeningTarget === 'question' ? 'stop' : 'mic-outline'}
+                      size={16}
+                      color={listeningTarget === 'question' ? '#FFF' : colors.primary}
+                    />
+                    <Text
+                      style={[
+                        styles.micBtnText,
+                        { color: listeningTarget === 'question' ? '#FFF' : colors.primary },
+                      ]}
+                    >
+                      {listeningTarget === 'question' ? 'Escuchando...' : 'Dictar'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                <TextInput
+                  ref={questionInputRef}
+                  style={[
+                    styles.textArea,
+                    {
+                      backgroundColor: colors.surfaceHighlight,
+                      borderColor: listeningTarget === 'question' ? colors.primary : colors.border,
+                      color: colors.text,
+                    },
+                  ]}
+                  placeholder="Ej. ¿Cuáles son los pares craneales sensitivos?"
+                  placeholderTextColor={colors.textMuted}
+                  multiline={true}
+                  value={question}
+                  onFocus={() => {
+                    scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+                  }}
+                  onChangeText={(t) => {
+                    setQuestion(t);
+                    if (listeningTarget === 'question') {
+                      accumulatedTextRef.current = t;
+                    }
+                  }}
+                />
+              </View>
+
+              {/* Campo Respuesta */}
+              <View style={styles.fieldContainer}>
+                <View style={styles.labelRow}>
+                  <Text style={[styles.label, { color: colors.text }]}>Respuesta (Reverso)</Text>
+                  <TouchableOpacity
+                    style={[
+                      styles.micBtn,
+                      listeningTarget === 'answer' && styles.micBtnActive,
+                      { backgroundColor: listeningTarget === 'answer' ? colors.danger : colors.surfaceHighlight },
+                    ]}
+                    onPress={() => toggleVoice('answer')}
+                  >
+                    <Ionicons
+                      name={listeningTarget === 'answer' ? 'stop' : 'mic-outline'}
+                      size={16}
+                      color={listeningTarget === 'answer' ? '#FFF' : colors.primary}
+                    />
+                    <Text
+                      style={[
+                        styles.micBtnText,
+                        { color: listeningTarget === 'answer' ? '#FFF' : colors.primary },
+                      ]}
+                    >
+                      {listeningTarget === 'answer' ? 'Escuchando...' : 'Dictar'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                <TextInput
+                  ref={answerInputRef}
+                  style={[
+                    styles.textArea,
+                    {
+                      backgroundColor: colors.surfaceHighlight,
+                      borderColor: listeningTarget === 'answer' ? colors.primary : colors.border,
+                      color: colors.text,
+                    },
+                  ]}
+                  placeholder="Ej. I (Olfatorio), II (Óptico) y VIII (Vestibulococlear)"
+                  placeholderTextColor={colors.textMuted}
+                  multiline={true}
+                  value={answer}
+                  onFocus={() => {
+                    setTimeout(() => {
+                      scrollViewRef.current?.scrollToEnd({ animated: true });
+                    }, 120);
+                  }}
+                  onChangeText={(t) => {
+                    setAnswer(t);
+                    if (listeningTarget === 'answer') {
+                      accumulatedTextRef.current = t;
+                    }
+                  }}
+                />
+              </View>
+
+              {/* Botones de Acción */}
+              <View style={styles.actionRow}>
+                {!isEditMode && (
+                  <TouchableOpacity
+                    style={[styles.saveAndAddBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}
+                    onPress={() => handleSave(true)}
+                    disabled={isSaving}
+                  >
+                    <Text style={[styles.saveAndAddText, { color: colors.text }]}>
+                      Guardar y otra
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
+                <TouchableOpacity
+                  style={[styles.saveBtn, { backgroundColor: isEditMode ? '#10B981' : colors.primary }, isEditMode && { flex: 1 }]}
+                  onPress={() => handleSave(false)}
+                  disabled={isSaving}
+                >
+                  {isSaving ? (
+                    <ActivityIndicator color="#FFF" size="small" />
+                  ) : (
+                    <Text style={styles.saveBtnText}>{isEditMode ? 'Guardar Cambios' : 'Guardar'}</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </Animated.View>
+        </View>
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -389,10 +404,13 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 24,
     padding: Spacing.lg,
     borderWidth: 1,
-    maxHeight: '85%',
+    maxHeight: '90%',
     overflow: 'hidden',
     ...Shadows.card,
     elevation: 0,
+  },
+  scrollContent: {
+    paddingBottom: Spacing.xl,
   },
   header: {
     flexDirection: 'row',
