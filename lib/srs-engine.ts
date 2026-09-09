@@ -428,11 +428,16 @@ export async function getAllCardsForPractice(deckId?: string): Promise<DueCardWi
  * Pospone la tarjeta 1 día en el SRS (opción "Otro día" para mazos personalizados).
  */
 export async function rescheduleCardNextDay(cardId: string): Promise<void> {
-  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(4, 0, 0, 0);
+  const minTomorrow = new Date(Date.now() + 12 * 60 * 60 * 1000);
+  const effectiveDue = tomorrow.getTime() > minTomorrow.getTime() ? tomorrow : minTomorrow;
+
   await db
     .update(srsItems)
     .set({
-      due: tomorrow,
+      due: effectiveDue,
       lastReview: new Date(),
     })
     .where(eq(srsItems.id, cardId));

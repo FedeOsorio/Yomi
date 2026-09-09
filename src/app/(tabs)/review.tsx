@@ -598,33 +598,10 @@ export default function ReviewScreen() {
 
     try {
       let cards: DueCardWithContext[] = [];
-      let isCustom = false;
 
-      if (deckId !== 'all') {
-        const found = decksList.find((d) => d.id === deckId);
-        if (found) {
-          isCustom = found.type === 'custom';
-        } else {
-          const deckObj = await getDeckById(deckId);
-          isCustom = deckObj?.type === 'custom';
-        }
-      }
-
-      if (isCustom) {
-        // En mazos personalizados se cargan todas las tarjetas activas en SRS de ese mazo,
-        // ordenando prioritariamente al frente las que están pendientes (due <= now) y luego las que están "al día".
-        const allCustomCards = await getAllCardsForPractice(deckId);
-        const now = new Date();
-        cards = allCustomCards.sort((a, b) => {
-          const aDue = new Date(a.due) <= now ? 0 : 1;
-          const bDue = new Date(b.due) <= now ? 0 : 1;
-          return aDue - bDue;
-        });
-      } else {
-        cards = practiceMode
-          ? await getAllCardsForPractice(deckId === 'all' ? undefined : deckId)
-          : await getDueCards(deckId === 'all' ? undefined : deckId);
-      }
+      cards = practiceMode
+        ? await getAllCardsForPractice(deckId === 'all' ? undefined : deckId)
+        : await getDueCards(deckId === 'all' ? undefined : deckId);
 
       setDueCards(cards);
       dueCardsRef.current = cards;
@@ -961,8 +938,7 @@ export default function ReviewScreen() {
             const deck = d.find((item) => item.id === paramDeckId);
             const deckName = deck ? deck.name : 'Mazo';
             const hasDue = (deck?.dueCount || 0) > 0;
-            const isCustom = deck?.type === 'custom';
-            startSession(paramDeckId, deckName, 'text', isCustom || !hasDue);
+            startSession(paramDeckId, deckName, 'text', !hasDue);
           } catch (e) {
             console.warn('Error al iniciar sesión con paramDeckId:', e);
             fetchDecksData();
