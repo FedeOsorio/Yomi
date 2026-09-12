@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   Animated,
   Easing,
@@ -25,6 +25,7 @@ import {
   SUPPORTED_LANGUAGES,
   ALL_LANGUAGES,
 } from '../../../lib/deck-service';
+import { onDataChanged } from '../../../lib/backup-service';
 import { Colors, Shadows, Spacing, Typography } from '../../constants/theme';
 
 export default function DecksScreen() {
@@ -84,6 +85,12 @@ export default function DecksScreen() {
       fetchDecks();
     }, [])
   );
+
+  useEffect(() => {
+    return onDataChanged(() => {
+      fetchDecks();
+    });
+  }, []);
 
   const handleCreateDeck = async () => {
     if (!newDeckName.trim()) {
@@ -194,7 +201,7 @@ export default function DecksScreen() {
                 <View style={styles.cardRight}>
                   {item.dueCount > 0 && (
                     <View style={styles.dueBadge}>
-                      <Text style={styles.dueBadgeText}>{item.dueCount}</Text>
+                      <Text style={styles.dueBadgeText}>Repasar hoy</Text>
                     </View>
                   )}
                   <TouchableOpacity
@@ -476,16 +483,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   dueBadge: {
-    backgroundColor: '#EF4444',
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
     paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
+    paddingVertical: 3,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
     marginRight: Spacing.xs,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.25)',
   },
   dueBadgeText: {
-    color: '#FFF',
-    fontWeight: 'bold',
-    fontSize: 11,
+    color: '#EF4444',
+    fontWeight: '700',
+    fontSize: 10,
+    letterSpacing: 0.1,
   },
   deleteBtn: {
     padding: Spacing.xs,

@@ -53,3 +53,19 @@ export async function setStorageItem(key: string, value: string): Promise<void> 
     console.warn('Storage save warning:', e);
   }
 }
+
+export async function removeStorageItem(key: string): Promise<void> {
+  await ensureLoaded();
+  delete memoryCache[key];
+  try {
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.removeItem(key);
+      }
+    } else {
+      await FileSystem.writeAsStringAsync(SETTINGS_FILE, JSON.stringify(memoryCache));
+    }
+  } catch (e) {
+    console.warn('Storage delete warning:', e);
+  }
+}

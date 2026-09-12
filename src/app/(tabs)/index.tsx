@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   Animated,
   Easing,
@@ -26,6 +26,7 @@ import {
   SUPPORTED_LANGUAGES,
   ALL_LANGUAGES,
 } from '../../../lib/deck-service';
+import { onDataChanged } from '../../../lib/backup-service';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { Shadows, Spacing, Typography } from '../../constants/theme';
 
@@ -80,6 +81,12 @@ export default function HomeScreen() {
       fetchDecks();
     }, [])
   );
+
+  useEffect(() => {
+    return onDataChanged(() => {
+      fetchDecks();
+    });
+  }, []);
 
   const handleOpenSearch = () => {
     setMenuVisible(false);
@@ -195,7 +202,7 @@ export default function HomeScreen() {
                 <View style={styles.cardRight}>
                   {item.dueCount > 0 && (
                     <View style={styles.dueBadge}>
-                      <Text style={styles.dueBadgeText}>{item.dueCount} pendientes</Text>
+                      <Text style={styles.dueBadgeText}>Repasar hoy</Text>
                     </View>
                   )}
                   
@@ -536,18 +543,21 @@ const styles = StyleSheet.create({
     marginRight: 4,
   },
   dueBadge: {
-    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
     paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingVertical: 3,
     borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
     marginRight: Spacing.xs,
     borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.3)',
+    borderColor: 'rgba(239, 68, 68, 0.25)',
   },
   dueBadgeText: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#EF4444',
     fontWeight: '700',
+    letterSpacing: 0.1,
   },
   emptyContainer: {
     flex: 1,

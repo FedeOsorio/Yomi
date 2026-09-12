@@ -2,7 +2,7 @@
   "expo": {
     "name": "Yomi",
     "slug": "Yomi",
-    "version": "0.1.4",
+    "version": "0.1.5",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "yomi",
@@ -26,7 +26,20 @@
       ],
       "runtimeVersion": {
         "policy": "appVersion"
-      }
+      },
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "category": ["DEFAULT", "BROWSABLE"],
+          "data": [
+            { "scheme": "content" },
+            { "scheme": "file" },
+            { "mimeType": "*/*", "pathPattern": ".*\\.yomi" },
+            { "mimeType": "application/octet-stream" },
+            { "mimeType": "application/json" }
+          ]
+        }
+      ]
     },
     "web": {
       "output": "static",
@@ -49,7 +62,8 @@
         {
           "microphonePermission": "Permite a Yomi acceder al micrófono para practicar tu pronunciación en voz alta."
         }
-      ]
+      ],
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": true,
