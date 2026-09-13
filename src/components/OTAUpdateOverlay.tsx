@@ -11,8 +11,10 @@ export function OTAUpdateOverlay() {
   const { isUpdateAvailable, isUpdatePending } = Updates.useUpdates();
   const [isUpdating, setIsUpdating] = useState(false);
 
-  // Ventana de arranque: solo forzar actualización si se detecta dentro de los primeros 12 segundos
+  // Ventana de arranque: solo forzar actualización si se detecta dentro de los primeros 10 segundos
   const isStartupRef = useRef(true);
+  const isFetchingRef = useRef(false);
+  const hasReloadedRef = useRef(false);
   const overlayStartTime = useRef(0);
   const opacity = useSharedValue(0);
   const pulseScale = useSharedValue(1);
@@ -20,7 +22,7 @@ export function OTAUpdateOverlay() {
   useEffect(() => {
     const timeout = setTimeout(() => {
       isStartupRef.current = false;
-    }, 12000);
+    }, 10000);
     return () => clearTimeout(timeout);
   }, []);
 
@@ -38,43 +40,10 @@ export function OTAUpdateOverlay() {
     }
   }, [isUpdating]);
 
-  // 1. Chequeo directo al arrancar la app
+  // 1. Cuando useUpdates() detecta una actualización disponible al iniciar
   useEffect(() => {
-    let isMounted = true;
-
-    async function checkDirectly() {
-      try {
-        const check = await Updates.checkForUpdateAsync();
-        if (check.isAvailable && isStartupRef.current && !isUpdating) {
-          if (isMounted) {
-            setIsUpdating(true);
-            overlayStartTime.current = Date.now();
-            opacity.value = withTiming(1, { duration: 400 });
-          }
-
-          await Updates.fetchUpdateAsync();
-          const timeElapsed = Date.now() - overlayStartTime.current;
-          const timeRemaining = Math.max(0, 1800 - timeElapsed);
-
-          setTimeout(async () => {
-            await Updates.reloadAsync();
-          }, timeRemaining);
-        }
-      } catch (e) {
-        // En caso de modo offline o servidor temporalmente inaccesible
-      }
-    }
-
-    checkDirectly();
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  // 2. Listener reactivo por si useUpdates() emite evento de actualización disponible
-  useEffect(() => {
-    if (isUpdateAvailable && isStartupRef.current && !isUpdating) {
+    if (isUpdateAvailable && isStartupRef.current && !isFetchingRef.current) {
+      isFetchingRef.current = true;
       setIsUpdating(true);
       overlayStartTime.current = Date.now();
       opacity.value = withTiming(1, { duration: 400 });
@@ -82,9 +51,10 @@ export function OTAUpdateOverlay() {
     }
   }, [isUpdateAvailable]);
 
-  // 3. Cuando la descarga finaliza y queda pendiente el reinicio
+  // 2. Cuando la descarga finaliza y queda pendiente el reinicio
   useEffect(() => {
-    if (isUpdatePending && isUpdating) {
+    if (isUpdatePending && isUpdating && !hasReloadedRef.current) {
+      hasReloadedRef.current = true;
       const timeElapsed = Date.now() - overlayStartTime.current;
       const timeRemaining = Math.max(0, 1800 - timeElapsed);
 
