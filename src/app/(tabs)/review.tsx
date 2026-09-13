@@ -24,7 +24,7 @@ import { Rating } from 'ts-fsrs';
 import { speakText, stopSpeech } from '../../../lib/audio-service';
 import { ALL_LANGUAGES, DeckWithStats, getDeckById, getDecksWithStats, SUPPORTED_LANGUAGES } from '../../../lib/deck-service';
 import { cleanAndFormatMeanings } from '../../../lib/japanese-search';
-import { romajiToHiragana } from '../../../lib/japanese-utils';
+import { romajiToHiragana, formatJapaneseReading } from '../../../lib/japanese-utils';
 import { calculateChineseAccuracyScore, PinyinBreakdownItem } from '../../../lib/pinyin-utils';
 import { speechService } from '../../../lib/speech-recognition-service';
 import {
@@ -733,6 +733,30 @@ export default function ReviewScreen() {
     await initRecognizer();
   };
 
+  // Reinserta la tarjeta fallada de forma aleatoria entre 5 y 10 posiciones más adelante en la cola
+  const reinsertFailedCardIntoQueue = (cardToReinsert: DueCardWithContext, curIndex: number) => {
+    const currentList = [...dueCardsRef.current];
+    const remainingCount = currentList.length - (curIndex + 1);
+
+    if (remainingCount <= 0) {
+      // Era la última tarjeta, se añade al final para repasarla nuevamente
+      currentList.push(cardToReinsert);
+    } else if (remainingCount <= 5) {
+      // Si quedan 5 o menos tarjetas, se coloca al final de la cola
+      currentList.push(cardToReinsert);
+    } else {
+      // Se mezcla de forma aleatoria entre 5 y 10 tarjetas más adelante dentro de las tarjetas restantes
+      const minOffset = 5;
+      const maxOffset = Math.min(10, remainingCount);
+      const offset = Math.floor(Math.random() * (maxOffset - minOffset + 1)) + minOffset;
+      const targetPos = curIndex + 1 + offset;
+      currentList.splice(targetPos, 0, cardToReinsert);
+    }
+
+    dueCardsRef.current = currentList;
+    setDueCards(currentList);
+  };
+
   // Evaluación y feedback de voz con avance continuo y Flip 3D (tanto acierto como fallo)
   const handleVoiceEvaluation = async (
     card: DueCardWithContext,
@@ -765,6 +789,11 @@ export default function ReviewScreen() {
       computedRating: rating,
       voiceScore,
     });
+
+    // Si falló (tiempo agotado o pronunciación errónea), reinsertar en la cola entre 5 y 10 posiciones adelante
+    if (!isSuccess) {
+      reinsertFailedCardIntoQueue(card, currentIndexRef.current);
+    }
 
     // La tarjeta SIEMPRE se da vuelta con animación 3D (tanto acierto como fallo)
     Animated.timing(cardFlipAnim, {
@@ -1123,6 +1152,11 @@ export default function ReviewScreen() {
       }
       setSessionCount((prev) => prev + 1);
 
+      // Si la tarjeta fue fallada o se presionó "No me acuerdo", reinsertar entre 5 y 10 posiciones adelante
+      if (evaluation.computedRating === Rating.Again) {
+        reinsertFailedCardIntoQueue(currentCard, currentIndexRef.current);
+      }
+
       const cards = dueCardsRef.current;
       const nextIndex = currentIndexRef.current + 1;
       if (nextIndex < cards.length) {
@@ -1171,13 +1205,8 @@ export default function ReviewScreen() {
 
       setTimeout(async () => {
         if (action === 'soon') {
-          // Poner en el medio de la cola restante
-          const remainingCount = cards.length - (currIdx + 1);
-          const insertOffset = Math.max(1, Math.floor(remainingCount / 2));
-          const targetIdx = currIdx + 1 + insertOffset;
-          cards.splice(targetIdx, 0, currentCard);
-          dueCardsRef.current = cards;
-          setDueCards([...cards]);
+          // Reinsertar entre 5 y 10 tarjetas más adelante
+          reinsertFailedCardIntoQueue(currentCard, currIdx);
 
           const nextIndex = currIdx + 1;
           currentIndexRef.current = nextIndex;
@@ -1556,6 +1585,7 @@ export default function ReviewScreen() {
     currentCard?.languageCode === 'es-ES';
   const lang = isCustomCard ? 'es-ES' : (currentCard?.languageCode || 'zh-CN');
   const isIdeographic = !isCustomCard && (lang.startsWith('zh') || lang.startsWith('ja'));
+  const isJapanese = !isCustomCard && lang.startsWith('ja');
 
   return (
     <KeyboardAvoidingView
@@ -1811,8 +1841,8 @@ export default function ReviewScreen() {
                     {Boolean(currentCard.displayReading) && (
                       <>
                         <Text style={[styles.flipBackLabel, { color: colors.textMuted }]}>Pronunciación</Text>
-                        <Text style={[styles.flipHeroReadingSmall, { color: colors.primary, marginBottom: 6 }]} numberOfLines={1}>
-                          {currentCard.displayReading}
+                        <Text style={[styles.flipHeroReadingSmall, { color: colors.primary, marginBottom: 6 }]} numberOfLines={2}>
+                          {isJapanese ? formatJapaneseReading(currentCard.displayReading) : currentCard.displayReading}
                         </Text>
 
                         {/* Desglose por sílaba Pinyin con círculos de porcentaje y barra de llenado (memoizado) */}

@@ -627,18 +627,22 @@ export async function extractAnkiPackageAsync(fileUri: string): Promise<AnkiPack
 
       if (!reading) {
         if (onIdx >= 0 || kunIdx >= 0) {
-          const on = onIdx >= 0 ? fieldValues[onIdx] : '';
-          const kun = kunIdx >= 0 ? fieldValues[kunIdx] : '';
-          if (on && kun) {
-            reading = `${on} / ${kun}`;
-          } else {
-            reading = on || kun;
+          const rawOn = onIdx >= 0 ? fieldValues[onIdx] : '';
+          const rawKun = kunIdx >= 0 ? fieldValues[kunIdx] : '';
+          const cleanOn = rawOn.replace(/[・]/g, '').trim();
+          const cleanKun = rawKun.replace(/[・]/g, '').trim();
+          if (cleanOn && cleanKun) {
+            reading = `On: ${cleanOn}  •  Kun: ${cleanKun}`;
+          } else if (cleanOn) {
+            reading = `On: ${cleanOn}`;
+          } else if (cleanKun) {
+            reading = `Kun: ${cleanKun}`;
           }
         } else if (readingIdx >= 0) {
-          reading = fieldValues[readingIdx];
+          reading = fieldValues[readingIdx].replace(/[・]/g, '').trim();
         }
       }
-      reading = reading.replace(/\[sound:[^\]]+\]/gi, '').trim();
+      reading = reading.replace(/\[sound:[^\]]+\]/gi, '').replace(/[・]/g, '').trim();
 
       if (meaningIdx >= 0 && fieldValues[meaningIdx]) {
         meaning = fieldValues[meaningIdx];

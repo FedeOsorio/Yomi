@@ -18,7 +18,7 @@ import { State } from 'ts-fsrs';
 import { speakText } from '../../../lib/audio-service';
 import { getQuickHskLevel } from '../../../lib/hsk-data';
 import { cleanAndFormatMeanings, extractKanjis, parseFurigana } from '../../../lib/japanese-search';
-import { classifyJapaneseWord } from '../../../lib/japanese-utils';
+import { classifyJapaneseWord, formatJapaneseReading } from '../../../lib/japanese-utils';
 import { getKanjiJlptLevel, getQuickJlptLevel } from '../../../lib/jlpt-data';
 import { getStorageItem, setStorageItem } from '../../../lib/storage-service';
 import {
@@ -800,10 +800,10 @@ export default function WordDetailScreen() {
     }
   }
 
-  // Lectura limpia sin romanización en paréntesis
+  // Lectura limpia sin romanización en paréntesis y formateada On/Kun
   const rawReading = word.pinyinDisplay || '';
   const cleanReading = lang.startsWith('ja')
-    ? rawReading.replace(/\s*\([^)]*\)/g, '').trim()
+    ? formatJapaneseReading(rawReading.replace(/\s*\([^)]*\)/g, '').trim())
     : rawReading;
 
   // Categoría gramatical (explícita o heurística para japonés)

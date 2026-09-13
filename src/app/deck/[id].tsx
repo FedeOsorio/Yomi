@@ -1,22 +1,22 @@
 import { Ionicons } from '@expo/vector-icons';
 import { eq } from 'drizzle-orm';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import React, { memo, useCallback, useState } from 'react';
+import { memo, useCallback, useState } from 'react';
 import { Alert, FlatList, Modal, Platform, Pressable, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { db } from '../../../db';
-import { decks, words, srsItems } from '../../../db/schema';
+import { decks, srsItems, words } from '../../../db/schema';
 import { exportDeckToYomiFormat } from '../../../lib/anki-importer';
 import { speakText } from '../../../lib/audio-service';
 import { ALL_LANGUAGES, deleteDeck } from '../../../lib/deck-service';
 import { getQuickHskLevel } from '../../../lib/hsk-data';
 import { cleanAndFormatMeanings } from '../../../lib/japanese-search';
+import { classifyJapaneseWord, isJapaneseDictionaryForm, formatJapaneseReading } from '../../../lib/japanese-utils';
 import { getQuickJlptLevel } from '../../../lib/jlpt-data';
-import { deleteWord, addCardToReview, removeCardFromReviewByWordId } from '../../../lib/word-service';
-import { classifyJapaneseWord, isJapaneseDictionaryForm } from '../../../lib/japanese-utils';
-import { ConjugationPracticeModal } from '../../components/ConjugationPracticeModal';
-import { CustomCardModal, CustomCardData } from '../../components/CustomCardModal';
+import { addCardToReview, deleteWord, removeCardFromReviewByWordId } from '../../../lib/word-service';
 import { useTheme } from '../../../providers/ThemeProvider';
+import { ConjugationPracticeModal } from '../../components/ConjugationPracticeModal';
+import { CustomCardData, CustomCardModal } from '../../components/CustomCardModal';
 import { Shadows, Spacing, Typography } from '../../constants/theme';
 
 interface DeckWordCardProps {
@@ -129,7 +129,7 @@ const DeckWordCard = memo(function DeckWordCard({
       {!isCustomDeck && (
         <View style={[styles.cardFooter, { borderTopColor: colors.border }]}>
           <Text style={[styles.viewDetailText, { color: colors.primary }]}>
-            Tocar para ver detalle y trazado
+            Ver detalle y trazado
           </Text>
           <Ionicons name="chevron-forward" size={14} color={colors.primary} />
         </View>
@@ -195,10 +195,10 @@ export default function DeckDetailScreen() {
           }
         }
 
-        // Limpiar cualquier romanización entre paréntesis para dejar únicamente Hiragana/Pinyin
+        // Limpiar cualquier romanización entre paréntesis para dejar únicamente Hiragana/Pinyin y formatear On/Kun
         const rawReading = w.pinyinDisplay || '';
         const cleanReading = isJapaneseDeck
-          ? rawReading.replace(/\s*\([^)]*\)/g, '').trim()
+          ? formatJapaneseReading(rawReading.replace(/\s*\([^)]*\)/g, '').trim())
           : rawReading;
 
         // Auto-clasificación si es japonés y no tenía categoría explícita
@@ -216,13 +216,13 @@ export default function DeckDetailScreen() {
         // Pre-calcular y formatear significados: en mazo custom se preserva íntegra la respuesta sin recortar
         const displayMeanings = isCustomDeck
           ? (() => {
-              try {
-                const parsed = JSON.parse(w.meanings);
-                return Array.isArray(parsed) ? parsed : [String(w.meanings)];
-              } catch {
-                return [w.meanings];
-              }
-            })()
+            try {
+              const parsed = JSON.parse(w.meanings);
+              return Array.isArray(parsed) ? parsed : [String(w.meanings)];
+            } catch {
+              return [w.meanings];
+            }
+          })()
           : cleanAndFormatMeanings(w.meanings).slice(0, 3);
 
         return {

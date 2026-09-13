@@ -908,4 +908,33 @@ export function conjugateJapanese(
   return { kanji: cleanWord, reading: cleanReading };
 }
 
+/**
+ * Limpia y embellece lecturas de Kanji / Vocabulario japonés:
+ * - Elimina puntos centrales molestos de okurigana (・)
+ * - Si contiene On'yomi y Kun'yomi (separados por /), los presenta con formato limpio: "On: ...  •  Kun: ..."
+ */
+export function formatJapaneseReading(reading: string): string {
+  if (!reading) return '';
+  let clean = reading.replace(/[・]/g, '').trim();
+
+  // Si ya tiene formato On/Kun explícito, devolver limpia de puntos
+  if (/\b(on|kun)\b/i.test(clean)) {
+    return clean;
+  }
+
+  // Si tiene formato tradicional "Katakana / Hiragana"
+  if (clean.includes('/')) {
+    const parts = clean.split('/').map((p) => p.trim());
+    if (parts.length === 2) {
+      const isPart0Katakana = /^[\u30a0-\u30ff\s,、]+$/.test(parts[0]);
+      const isPart1Hiragana = /^[\u3040-\u309f\s,、\-\~]+$/.test(parts[1]);
+      if (isPart0Katakana && isPart1Hiragana) {
+        return `On: ${parts[0]}  •  Kun: ${parts[1]}`;
+      }
+    }
+  }
+
+  return clean;
+}
+
 

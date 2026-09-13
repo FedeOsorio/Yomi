@@ -80,6 +80,20 @@ export function checkReadingMatch(expectedReading: string, userInput: string): b
     return true;
   }
 
+  // Desglosar lecturas si expectedReading contiene On'yomi / Kun'yomi (On: ... • Kun: ...)
+  const candidateReadings = expectedReading
+    .split(/[\/\n,、;•|]/)
+    .map((r) =>
+      toNormalizedHiragana(
+        r.replace(/^(on|kun|音|訓)[:：\s]*/i, '').replace(/[・~～\s\(\)（）\-\.]/g, '')
+      )
+    )
+    .filter((r) => r.length > 0);
+
+  if (hiraUser.length > 0 && candidateReadings.includes(hiraUser)) {
+    return true;
+  }
+
   // 4. Comparación sin espacios
   const noSpaceExpected = cleanExpected.replace(/\s+/g, '');
   const noSpaceUser = cleanUser.replace(/\s+/g, '');
@@ -194,10 +208,14 @@ export function checkVoiceMatch(
       ? toNormalizedHiragana(jaNumEntry.kana)
       : toNormalizedHiragana(cleanTranscript);
 
-    // Desglosar múltiples lecturas si displayReading contiene On'yomi y Kun'yomi (separados por /, ,, 、, ;, saltos de línea)
+    // Desglosar múltiples lecturas si displayReading contiene On'yomi y Kun'yomi (separados por /, ,, 、, ;, •, |, saltos de línea)
     const validReadings = card.displayReading
-      .split(/[\/\n,、;]/)
-      .map((r) => toNormalizedHiragana(r.replace(/[・~～\s\(\)（）\-\.]/g, '')))
+      .split(/[\/\n,、;•|]/)
+      .map((r) =>
+        toNormalizedHiragana(
+          r.replace(/^(on|kun|音|訓)[:：\s]*/i, '').replace(/[・~～\s\(\)（）\-\.]/g, '')
+        )
+      )
       .filter((r) => r.length > 0);
 
     if (jaNumEntry) {
