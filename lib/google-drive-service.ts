@@ -140,9 +140,7 @@ export function useGoogleDriveAuth() {
   const androidId = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || undefined;
   const iosId = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || undefined;
 
-  const redirectUri = Platform.OS === 'android'
-    ? 'com.kuyi.yomi:/oauthredirect'
-    : Platform.OS === 'ios'
+  const redirectUri = Platform.OS === 'android' || Platform.OS === 'ios'
     ? 'com.kuyi.yomi:/oauthredirect'
     : makeRedirectUri();
 
