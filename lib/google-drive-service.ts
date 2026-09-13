@@ -122,8 +122,10 @@ export async function loginWithGoogleAsync(): Promise<{
 
   let metadata: GoogleDriveBackupMetadata | null = null;
   try {
-    metadata = await findDriveBackupFile(accessToken);
-  } catch {}
+    metadata = await findDriveBackupFile(accessToken, true);
+  } catch (err) {
+    console.warn('[GoogleAuth] Error al buscar respaldo al iniciar sesión:', err);
+  }
 
   return {
     profile,
@@ -416,10 +418,11 @@ export async function findDriveBackupFile(
 
   const now = Date.now();
   if (!forceRefresh && !tokenParam && (now - lastDriveQueryTime < DRIVE_QUERY_CACHE_MS)) {
-    return await getStoredDriveBackupMeta();
+    const cached = await getStoredDriveBackupMeta();
+    if (cached) return cached;
   }
 
-  if (activeFindDrivePromise) {
+  if (activeFindDrivePromise && !forceRefresh && !tokenParam) {
     return activeFindDrivePromise;
   }
 
@@ -434,7 +437,9 @@ export async function findDriveBackupFile(
         }
       }
 
-      const url = `https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name='${GOOGLE_DRIVE_BACKUP_FILENAME}' and trashed=false&fields=files(id,name,modifiedTime,size)&pageSize=1`;
+      // Buscar todos los archivos vigentes en el appDataFolder ordenados por fecha de modificación
+      const q = 'trashed = false';
+      const url = `https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=${encodeURIComponent(q)}&fields=files(id,name,modifiedTime,size)&orderBy=modifiedTime%20desc&pageSize=10`;
 
       let res = await fetch(url, {
         headers: {
@@ -459,6 +464,9 @@ export async function findDriveBackupFile(
       if (!res.ok) {
         const errText = await res.text().catch(() => '');
         console.warn('Advertencia al consultar Google Drive:', res.status, errText);
+        if (res.status === 403) {
+          throw new Error('Permiso de Google Drive pendiente o API no habilitada (403).');
+        }
         return await getStoredDriveBackupMeta();
       }
 
@@ -466,7 +474,8 @@ export async function findDriveBackupFile(
       lastDriveQueryTime = Date.now();
 
       if (Array.isArray(json.files) && json.files.length > 0) {
-        const file = json.files[0];
+        // Priorizar el archivo oficial 'yomi-backup.json' o tomar el más reciente
+        const file = json.files.find((f: any) => f.name === GOOGLE_DRIVE_BACKUP_FILENAME) || json.files[0];
         const meta: GoogleDriveBackupMetadata = {
           fileId: file.id,
           name: file.name,
@@ -477,6 +486,8 @@ export async function findDriveBackupFile(
         return meta;
       }
 
+      // Si no se encontraron archivos en Google Drive, limpiar caché previa
+      await removeStorageItem(STORAGE_KEY_DRIVE_BACKUP);
       return null;
     } finally {
       activeFindDrivePromise = null;
@@ -607,7 +618,7 @@ export async function downloadBackupFromGoogleDrive(tokenParam?: string): Promis
     accessToken = await getValidGoogleAccessToken();
   }
 
-  const existingFile = await findDriveBackupFile(accessToken);
+  const existingFile = await findDriveBackupFile(accessToken, true);
   if (!existingFile) {
     throw new Error('No se encontró ninguna copia de seguridad en tu cuenta de Google Drive.');
   }

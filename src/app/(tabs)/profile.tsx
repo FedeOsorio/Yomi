@@ -91,7 +91,7 @@ export default function ProfileScreen() {
 
       const token = await getStoredGoogleToken();
       if (token) {
-        findDriveBackupFile()
+        findDriveBackupFile(token, true)
           .then((meta) => {
             if (meta) setDriveBackupMeta(meta);
           })
@@ -160,6 +160,10 @@ export default function ProfileScreen() {
       setGoogleUser(result.profile);
       if (result.metadata) {
         setDriveBackupMeta(result.metadata);
+      } else {
+        findDriveBackupFile(result.token, true).then((meta) => {
+          if (meta) setDriveBackupMeta(meta);
+        }).catch(console.warn);
       }
 
       const scopeCheck = await checkTokenDriveScope(result.token);
@@ -278,6 +282,17 @@ export default function ProfileScreen() {
 
       const pkg = parseBackupFile(content);
       const formattedDate = new Date(pkg.createdAt).toLocaleString();
+
+      getStoredDriveBackupMeta().then((meta) => {
+        if (meta) {
+          setDriveBackupMeta({
+            ...meta,
+            decksCount: pkg.metadata.decksCount,
+            wordsCount: pkg.metadata.wordsCount,
+            srsCount: pkg.metadata.srsCount,
+          });
+        }
+      });
 
       Alert.alert(
         'Restaurar desde Google Drive',
@@ -559,7 +574,24 @@ export default function ProfileScreen() {
         </View>
 
         {/* Estado de la última copia en la nube */}
-        <View style={[styles.backupStatusBox, { backgroundColor: colors.surfaceHighlight }]}>
+        <TouchableOpacity
+          style={[styles.backupStatusBox, { backgroundColor: colors.surfaceHighlight }]}
+          onPress={async () => {
+            if (!googleUser) return;
+            try {
+              const meta = await findDriveBackupFile(true);
+              if (meta) {
+                setDriveBackupMeta(meta);
+                Alert.alert('Copia Encontrada', `Última copia: ${new Date(meta.modifiedTime).toLocaleString()}`);
+              } else {
+                Alert.alert('Google Drive', 'No se encontraron copias en tu espacio privado de Google Drive.');
+              }
+            } catch (err: any) {
+              Alert.alert('Error al consultar Drive', err.message || 'No se pudo consultar Google Drive.');
+            }
+          }}
+          activeOpacity={0.7}
+        >
           <Ionicons
             name="cloud-done-outline"
             size={16}
@@ -570,7 +602,7 @@ export default function ProfileScreen() {
             <Text style={[styles.backupStatusText, { color: colors.textMuted }]}>
               {driveBackupMeta
                 ? `Última copia: ${new Date(driveBackupMeta.modifiedTime).toLocaleString()} ${formatBytes(driveBackupMeta.sizeBytes) ? `${formatBytes(driveBackupMeta.sizeBytes)}` : ''}`
-                : 'Sin copias en Google Drive aún'}
+                : 'Sin copias en Google Drive aún (toca para reintentar)'}
             </Text>
             {driveBackupMeta && driveBackupMeta.decksCount !== undefined && (
               <Text style={[styles.backupStatusSubText, { color: colors.textMuted }]}>
@@ -578,7 +610,7 @@ export default function ProfileScreen() {
               </Text>
             )}
           </View>
-        </View>
+        </TouchableOpacity>
 
         {/* Botones de acción Drive */}
         <View style={styles.backupActionsContainer}>
@@ -751,12 +783,6 @@ export default function ProfileScreen() {
             iconColor: '#3B82F6',
             title: 'Multidispositivo sin pérdidas',
             description: 'Cambiá de teléfono o reinstalá la app y recuperá toda tu colección y estadísticas con un solo toque.',
-          },
-          {
-            icon: 'refresh-circle-outline',
-            iconColor: '#F59E0B',
-            title: 'Sesión sin vencimiento',
-            description: 'La sesión se renueva de forma automática en segundo plano para que nunca se interrumpan tus respaldos.',
           },
         ]}
         primaryButtonText={googleUser ? 'Entendido' : 'Vincular Google Drive'}
