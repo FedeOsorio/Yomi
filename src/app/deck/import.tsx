@@ -47,6 +47,7 @@ export default function ImportDeckScreen() {
   const [targetMode, setTargetMode] = useState<'existing' | 'new'>(params.deckId ? 'existing' : 'new');
   const [newDeckName, setNewDeckName] = useState('');
   const [selectedLang, setSelectedLang] = useState('ja-JP');
+  const [importedDeckType, setImportedDeckType] = useState<'language' | 'custom'>('language');
 
   // Entrada de datos (Texto plano / CSV / TSV)
   const [rawText, setRawText] = useState('');
@@ -123,6 +124,9 @@ export default function ImportDeckScreen() {
         if (result.languageCode) {
           setSelectedLang(result.languageCode);
         }
+        if (result.deckType) {
+          setImportedDeckType(result.deckType);
+        }
 
         setParseResult({
           delimiter: 'Anki (.apkg)',
@@ -190,7 +194,7 @@ export default function ImportDeckScreen() {
       }
       setIsProcessing(true);
       try {
-        targetDeckId = await createDeck(newDeckName.trim(), selectedLang);
+        targetDeckId = await createDeck(newDeckName.trim(), selectedLang, importedDeckType);
       } catch (e) {
         setIsProcessing(false);
         Alert.alert('Error', 'No se pudo crear el nuevo mazo.');

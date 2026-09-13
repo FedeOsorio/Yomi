@@ -70,7 +70,7 @@ export async function processIncomingBackupFile(uri: string): Promise<boolean> {
             text: 'Importar Mazo',
             onPress: async () => {
               try {
-                const deckId = await createDeck(result.deckName, result.languageCode);
+                const deckId = await createDeck(result.deckName, result.languageCode, result.deckType);
                 const { inserted, skipped } = await saveBatchWords(deckId, result.items);
                 notifyDataChanged();
                 Alert.alert(

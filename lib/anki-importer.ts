@@ -533,6 +533,7 @@ export function uint8ArrayToBase64(bytes: Uint8Array): string {
 export interface AnkiPackageExtractResult {
   deckName: string;
   languageCode: string;
+  deckType: 'language' | 'custom';
   items: ParsedVocabularyItem[];
   totalNotes: number;
 }
@@ -680,15 +681,35 @@ export async function extractAnkiPackageAsync(fileUri: string): Promise<AnkiPack
     }
 
     let languageCode = 'ja-JP';
+    let deckType: 'language' | 'custom' = 'language';
+
     if (hasJapaneseChars || /jlpt|kanji|n5|n4|n3|n2|n1/i.test(deckName)) {
       languageCode = 'ja-JP';
+      deckType = 'language';
     } else if (hasChineseChars || /hsk|hanzi|pinyin/i.test(deckName)) {
       languageCode = 'zh-CN';
+      deckType = 'language';
+    } else {
+      // Mazo genérico o personalizado (Preguntas y Respuestas, Medicina, Historia, etc.)
+      languageCode = 'es-ES';
+      deckType = 'custom';
+    }
+
+    // Si es un mazo personalizado (no ideográfico), asegurar que cada tarjeta conserve
+    // la respuesta completa en el dorso (sin fragmentar por delimitadores de vocabulario)
+    if (deckType === 'custom') {
+      for (let i = 0; i < items.length; i++) {
+        items[i].reading = undefined;
+        if (items[i].meanings.length > 1) {
+          items[i].meanings = [items[i].meanings.join('; ')];
+        }
+      }
     }
 
     return {
       deckName,
       languageCode,
+      deckType,
       items,
       totalNotes: items.length,
     };
