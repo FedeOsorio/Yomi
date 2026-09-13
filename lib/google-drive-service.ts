@@ -242,6 +242,26 @@ export function notifyGoogleUserChanged(user: GoogleUserProfile | null) {
   });
 }
 
+type DriveBackupListener = (meta: GoogleDriveBackupMetadata | null) => void;
+const driveBackupListeners = new Set<DriveBackupListener>();
+
+export function onDriveBackupChange(callback: DriveBackupListener) {
+  driveBackupListeners.add(callback);
+  return () => {
+    driveBackupListeners.delete(callback);
+  };
+}
+
+export function notifyDriveBackupChanged(meta: GoogleDriveBackupMetadata | null) {
+  driveBackupListeners.forEach((cb) => {
+    try {
+      cb(meta);
+    } catch (e) {
+      console.warn('Error in drive backup listener:', e);
+    }
+  });
+}
+
 /**
  * Obtiene el perfil del usuario de Google guardado localmente.
  */
@@ -390,6 +410,7 @@ export async function disconnectGoogleAccount(): Promise<void> {
   await removeStorageItem(STORAGE_KEY_REFRESH_TOKEN);
   await removeStorageItem(STORAGE_KEY_DRIVE_BACKUP);
   notifyGoogleUserChanged(null);
+  notifyDriveBackupChanged(null);
 }
 
 /**
@@ -483,11 +504,13 @@ export async function findDriveBackupFile(
           sizeBytes: file.size ? parseInt(file.size, 10) : undefined,
         };
         await setStorageItem(STORAGE_KEY_DRIVE_BACKUP, JSON.stringify(meta));
+        notifyDriveBackupChanged(meta);
         return meta;
       }
 
       // Si no se encontraron archivos en Google Drive, limpiar caché previa
       await removeStorageItem(STORAGE_KEY_DRIVE_BACKUP);
+      notifyDriveBackupChanged(null);
       return null;
     } finally {
       activeFindDrivePromise = null;
@@ -601,6 +624,7 @@ export async function uploadBackupToGoogleDrive(tokenParam?: string): Promise<{
   };
 
   await setStorageItem(STORAGE_KEY_DRIVE_BACKUP, JSON.stringify(savedMeta));
+  notifyDriveBackupChanged(savedMeta);
 
   return {
     success: true,

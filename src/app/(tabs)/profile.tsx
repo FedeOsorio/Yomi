@@ -36,6 +36,7 @@ import {
   GoogleDriveBackupMetadata,
   GoogleUserProfile,
   loginWithGoogleAsync,
+  onDriveBackupChange,
   onGoogleUserChange,
   uploadBackupToGoogleDrive
 } from '../../../lib/google-drive-service';
@@ -113,18 +114,32 @@ export default function ProfileScreen() {
   }, []);
 
   useEffect(() => {
-    const unsubscribe = onGoogleUserChange((user) => {
+    const unsubscribeUser = onGoogleUserChange((user) => {
       console.log('[Profile] onGoogleUserChange received:', user?.email);
       setGoogleUser(user);
       if (user) {
         getStoredDriveBackupMeta().then((meta) => {
           if (meta) setDriveBackupMeta(meta);
         });
+        getStoredGoogleToken().then((token) => {
+          if (token) {
+            findDriveBackupFile(token, true).catch(() => {});
+          }
+        });
       } else {
         setDriveBackupMeta(null);
       }
     });
-    return unsubscribe;
+
+    const unsubscribeBackup = onDriveBackupChange((meta) => {
+      console.log('[Profile] onDriveBackupChange received:', meta?.modifiedTime);
+      setDriveBackupMeta(meta);
+    });
+
+    return () => {
+      unsubscribeUser();
+      unsubscribeBackup();
+    };
   }, []);
 
   const handleConnectGoogle = async () => {

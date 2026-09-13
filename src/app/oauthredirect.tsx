@@ -11,7 +11,11 @@ export default function OAuthRedirectScreen() {
   useEffect(() => {
     WebBrowser.maybeCompleteAuthSession();
     const timer = setTimeout(() => {
-      router.replace('/(tabs)/profile');
+      if (router.canGoBack()) {
+        router.back();
+      } else {
+        router.replace('/(tabs)/profile');
+      }
     }, 150);
     return () => clearTimeout(timer);
   }, [router]);
