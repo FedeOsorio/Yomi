@@ -110,20 +110,6 @@ const DeckWordCard = memo(function DeckWordCard({
         >
           {Array.isArray(item.displayMeanings) ? item.displayMeanings.join(', ') : item.displayMeanings || ''}
         </Text>
-
-        {isCustomDeck && !item.isInReview && (
-          <TouchableOpacity
-            style={styles.reAddReviewBtn}
-            onPress={(e) => {
-              e.stopPropagation();
-              onToggleReview?.(item.id, true);
-            }}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Ionicons name="add" size={13} color="#10B981" style={{ marginRight: 2 }} />
-            <Text style={styles.reAddReviewText}>SRS</Text>
-          </TouchableOpacity>
-        )}
       </View>
 
       {!isCustomDeck && (
@@ -131,8 +117,24 @@ const DeckWordCard = memo(function DeckWordCard({
           <Text style={[styles.viewDetailText, { color: colors.primary }]}>
             Ver detalle y trazado
           </Text>
-          <Ionicons name="chevron-forward" size={14} color={colors.primary} />
+          <Ionicons name="chevron-forward" size={13} color={colors.primary} />
         </View>
+      )}
+
+      {isCustomDeck && !item.isInReview && (
+        <TouchableOpacity
+          style={[styles.cardFooter, { borderTopColor: colors.border }]}
+          onPress={(e) => {
+            e.stopPropagation();
+            onToggleReview?.(item.id, true);
+          }}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Text style={[styles.viewDetailText, { color: '#10B981' }]}>
+            + Agregar al repaso
+          </Text>
+          <Ionicons name="add" size={15} color="#10B981" />
+        </TouchableOpacity>
       )}
     </TouchableOpacity>
   );
@@ -650,7 +652,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   card: {
-    padding: Spacing.md,
+    paddingHorizontal: Spacing.md,
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.sm,
     borderRadius: 16,
     marginBottom: Spacing.md,
     borderWidth: 1,
@@ -750,14 +754,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
-    marginTop: Spacing.xs,
-    paddingTop: Spacing.xs,
-    borderTopWidth: 1,
+    marginTop: Spacing.sm,
+    paddingTop: Spacing.sm,
+    paddingBottom: 2,
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
   viewDetailText: {
     fontSize: 11,
     fontWeight: '600',
     marginRight: 4,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
   headerFlagText: {
     fontSize: 18,

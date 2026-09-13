@@ -544,7 +544,7 @@ export default function ReviewScreen() {
     setLoading(true);
     try {
       const d = await getDecksWithStats();
-      setDecksList(d);
+      setDecksList(d.filter((deck) => deck.activeCardsCount > 0));
     } catch (e) {
       console.warn('Error al cargar mazos con stats:', e);
     } finally {
@@ -969,7 +969,7 @@ export default function ReviewScreen() {
           try {
             setLoading(true);
             const d = await getDecksWithStats();
-            setDecksList(d);
+            setDecksList(d.filter((deck) => deck.activeCardsCount > 0));
             const deck = d.find((item) => item.id === paramDeckId);
             const deckName = deck ? deck.name : 'Mazo';
             const hasDue = (deck?.dueCount || 0) > 0;
@@ -1419,9 +1419,9 @@ export default function ReviewScreen() {
         {decksList.length === 0 ? (
           <View style={styles.emptyGridContainer}>
             <Ionicons name="albums-outline" size={54} color={colors.textMuted} />
-            <Text style={[styles.emptyGridTitle, { color: colors.text }]}>No tienes mazos creados</Text>
+            <Text style={[styles.emptyGridTitle, { color: colors.text }]}>No hay tarjetas en repaso</Text>
             <Text style={[styles.emptyGridSub, { color: colors.textMuted }]}>
-              Crea tu primer mazo desde la pestaña de Inicio para comenzar a estudiar con el sistema SRS.
+              Agrega tarjetas al repaso (+ Agregar al repaso) desde tus mazos para comenzar a estudiar con el sistema SRS.
             </Text>
             <TouchableOpacity
               style={[styles.primaryBtn, { backgroundColor: colors.primary, marginTop: Spacing.md }]}
