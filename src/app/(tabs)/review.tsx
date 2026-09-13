@@ -603,6 +603,12 @@ export default function ReviewScreen() {
         ? await getAllCardsForPractice(deckId === 'all' ? undefined : deckId)
         : await getDueCards(deckId === 'all' ? undefined : deckId);
 
+      // Mezclar aleatoriamente (Fisher-Yates) para que el repaso no siga el orden secuencial del mazo
+      for (let i = cards.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [cards[i], cards[j]] = [cards[j], cards[i]];
+      }
+
       setDueCards(cards);
       dueCardsRef.current = cards;
 
@@ -768,7 +774,7 @@ export default function ReviewScreen() {
       useNativeDriver: true,
     }).start();
 
-    speakText(card.displayText, lang);
+    speakText(card.displayText, lang, card.displayReading);
 
     // Solo actualizar FSRS si NO es modo de práctica libre
     // Se usa la ref en lugar del state para evitar stale closure (el estado puede no estar actualizado
@@ -1039,7 +1045,7 @@ export default function ReviewScreen() {
   const handleSpeak = () => {
     if (!currentCard) return;
     const lang = currentCard.languageCode || 'zh-CN';
-    speakText(currentCard.displayText, lang);
+    speakText(currentCard.displayText, lang, currentCard.displayReading);
   };
 
   // 1. Comprobar respuestas escritas

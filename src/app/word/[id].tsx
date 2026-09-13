@@ -725,7 +725,11 @@ export default function WordDetailScreen() {
   const handlePlayAudio = () => {
     if (!data) return;
     const lang = data.deck?.languageCode || 'zh-CN';
-    speakText(data.word.simplified, lang);
+    const rawReading = data.word.pinyinDisplay || '';
+    const cleanReading = lang.startsWith('ja')
+      ? rawReading.replace(/\s*\([^)]*\)/g, '').trim()
+      : rawReading;
+    speakText(data.word.simplified, lang, cleanReading);
   };
 
   const handleDelete = () => {

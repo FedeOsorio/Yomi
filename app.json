@@ -2,7 +2,7 @@
   "expo": {
     "name": "Yomi",
     "slug": "Yomi",
-    "version": "0.1.5",
+    "version": "0.2.0",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "yomi",
@@ -30,13 +30,31 @@
       "intentFilters": [
         {
           "action": "VIEW",
-          "category": ["DEFAULT", "BROWSABLE"],
+          "category": [
+            "DEFAULT",
+            "BROWSABLE"
+          ],
           "data": [
-            { "scheme": "content" },
-            { "scheme": "file" },
-            { "mimeType": "*/*", "pathPattern": ".*\\.yomi" },
-            { "mimeType": "application/octet-stream" },
-            { "mimeType": "application/json" }
+            {
+              "scheme": "content"
+            },
+            {
+              "scheme": "file"
+            },
+            {
+              "mimeType": "*/*",
+              "pathPattern": ".*\\.yomi"
+            },
+            {
+              "mimeType": "*/*",
+              "pathPattern": ".*\\.apkg"
+            },
+            {
+              "mimeType": "application/octet-stream"
+            },
+            {
+              "mimeType": "application/json"
+            }
           ]
         }
       ]

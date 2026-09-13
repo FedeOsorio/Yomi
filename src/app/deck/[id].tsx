@@ -23,7 +23,7 @@ interface DeckWordCardProps {
   item: any;
   colors: any;
   onPress: (id: string) => void;
-  onSpeak: (text: string) => void;
+  onSpeak: (text: string, reading?: string) => void;
   onDelete: (id: string, text: string) => void;
   onEdit?: (item: any) => void;
   onToggleReview?: (id: string, shouldAdd: boolean) => void;
@@ -79,7 +79,7 @@ const DeckWordCard = memo(function DeckWordCard({
               style={styles.iconActionBtn}
               onPress={(e) => {
                 e.stopPropagation();
-                onSpeak(item.simplified);
+                onSpeak(item.simplified, item.displayReading);
               }}
             >
               <Ionicons name="volume-medium-outline" size={20} color={colors.primary} />
@@ -334,9 +334,9 @@ export default function DeckDetailScreen() {
     );
   };
 
-  const handleSpeak = useCallback((text: string) => {
+  const handleSpeak = useCallback((text: string, reading?: string) => {
     const lang = isCustomDeck ? 'es-ES' : (deckInfo?.languageCode || 'zh-CN');
-    speakText(text, lang);
+    speakText(text, lang, reading);
   }, [isCustomDeck, deckInfo?.languageCode]);
 
   const handlePressWord = useCallback((wordId: string) => {

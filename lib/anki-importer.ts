@@ -6,6 +6,10 @@
  * máxima escalabilidad, testabilidad y reutilización en cualquier entorno.
  */
 
+import * as FileSystem from 'expo-file-system/legacy';
+import * as SQLite from 'expo-sqlite';
+import { unzipSync } from 'fflate';
+
 export interface RawImportRow {
   [key: string]: string;
 }
@@ -43,6 +47,7 @@ export interface ParseResult {
 export function cleanHtmlAndAnkiTags(raw: string): string {
   if (!raw) return '';
   return raw
+    .replace(/\[sound:[^\]]+\]/gi, '')
     .replace(/<br\s*[\/]?>/gi, '\n')
     .replace(/<\/div>/gi, '\n')
     .replace(/<[^>]+>/g, '')
@@ -479,6 +484,219 @@ export function isYomiPackage(content: string): boolean {
     return obj && obj.format === 'yomi-deck-v1';
   } catch {
     return false;
+  }
+}
+
+const B64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+const B64_LOOKUP = new Uint8Array(256);
+for (let i = 0; i < B64_CHARS.length; i++) {
+  B64_LOOKUP[B64_CHARS.charCodeAt(i)] = i;
+}
+
+export function base64ToUint8Array(b64: string): Uint8Array {
+  const clean = b64.replace(/[\s=]/g, '');
+  const len = clean.length;
+  const byteLen = Math.floor((len * 3) / 4);
+  const bytes = new Uint8Array(byteLen);
+
+  let p = 0;
+  for (let i = 0; i < len; i += 4) {
+    const b0 = B64_LOOKUP[clean.charCodeAt(i)];
+    const b1 = B64_LOOKUP[clean.charCodeAt(i + 1)];
+    const b2 = i + 2 < len ? B64_LOOKUP[clean.charCodeAt(i + 2)] : 64;
+    const b3 = i + 3 < len ? B64_LOOKUP[clean.charCodeAt(i + 3)] : 64;
+
+    bytes[p++] = (b0 << 2) | (b1 >> 4);
+    if (b2 < 64 && p < byteLen) bytes[p++] = ((b1 & 15) << 4) | (b2 >> 2);
+    if (b3 < 64 && p < byteLen) bytes[p++] = ((b2 & 3) << 6) | b3;
+  }
+
+  return bytes;
+}
+
+export function uint8ArrayToBase64(bytes: Uint8Array): string {
+  let result = '';
+  const len = bytes.length;
+  for (let i = 0; i < len; i += 3) {
+    const b0 = bytes[i];
+    const b1 = i + 1 < len ? bytes[i + 1] : 0;
+    const b2 = i + 2 < len ? bytes[i + 2] : 0;
+
+    result += B64_CHARS[b0 >> 2];
+    result += B64_CHARS[((b0 & 3) << 4) | (b1 >> 4)];
+    result += i + 1 < len ? B64_CHARS[((b1 & 15) << 2) | (b2 >> 6)] : '=';
+    result += i + 2 < len ? B64_CHARS[b2 & 63] : '=';
+  }
+  return result;
+}
+
+export interface AnkiPackageExtractResult {
+  deckName: string;
+  languageCode: string;
+  items: ParsedVocabularyItem[];
+  totalNotes: number;
+}
+
+/**
+ * Descomprime un paquete nativo de Anki (.apkg), abre su base de datos SQLite
+ * interna (collection.anki2) y extrae todas las notas con sus lecturas y significados.
+ */
+export async function extractAnkiPackageAsync(fileUri: string): Promise<AnkiPackageExtractResult> {
+  const base64 = await FileSystem.readAsStringAsync(fileUri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+
+  const bytes = base64ToUint8Array(base64);
+  const unzipped = unzipSync(bytes);
+
+  const dbBytes = unzipped['collection.anki2'] || unzipped['collection.anki21'];
+  if (!dbBytes) {
+    throw new Error('El archivo .apkg no contiene una base de datos válida de Anki (collection.anki2).');
+  }
+
+  let ankiDb: SQLite.SQLiteDatabase | null = null;
+  const tempDbName = `temp_anki_${Date.now()}`;
+  let tempDbCreated = false;
+
+  try {
+    ankiDb = await SQLite.deserializeDatabaseAsync(dbBytes);
+  } catch {
+    // Fallback: guardar en carpeta de bases de datos de SQLite y abrir tradicionalmente
+    tempDbCreated = true;
+    const targetDir = SQLite.defaultDatabaseDirectory || `${FileSystem.documentDirectory}SQLite/`;
+    const dirInfo = await FileSystem.getInfoAsync(targetDir);
+    if (!dirInfo.exists) {
+      await FileSystem.makeDirectoryAsync(targetDir, { intermediates: true });
+    }
+    const tempDbPath = `${targetDir}${tempDbName}.db`;
+    await FileSystem.writeAsStringAsync(tempDbPath, uint8ArrayToBase64(dbBytes), {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    ankiDb = await SQLite.openDatabaseAsync(`${tempDbName}.db`);
+  }
+
+  try {
+    const colRows = await ankiDb.getAllAsync<{ decks: string; models: string }>(
+      'SELECT decks, models FROM col LIMIT 1'
+    );
+    if (!colRows || colRows.length === 0) {
+      throw new Error('La base de datos de Anki no contiene información de colección.');
+    }
+
+    const decks = JSON.parse(colRows[0].decks || '{}');
+    const models = JSON.parse(colRows[0].models || '{}');
+
+    const deckList = Object.values(decks) as Array<{ id: number; name: string }>;
+    const namedDeck = deckList.find((d) => d.name !== 'Default') || deckList[0];
+    const deckName = namedDeck ? namedDeck.name : 'Mazo Anki';
+
+    const notes = await ankiDb.getAllAsync<{ id: number; mid: number; flds: string; tags: string }>(
+      'SELECT id, mid, flds, tags FROM notes'
+    );
+
+    const items: ParsedVocabularyItem[] = [];
+    let hasJapaneseChars = false;
+    let hasChineseChars = false;
+
+    for (const note of notes) {
+      const model = models[note.mid];
+      const fieldNames: string[] = model && Array.isArray(model.flds)
+        ? model.flds.map((f: any) => String(f.name || '').toLowerCase().trim())
+        : [];
+      const fieldValues = (note.flds || '').split('\x1f').map(cleanHtmlAndAnkiTags);
+
+      let text = '';
+      let reading = '';
+      let meaning = '';
+
+      const kanjiIdx = fieldNames.findIndex((n) => /^(kanji|word|vocab|front|término|termino|palabra|expression|expr|hanzi)$/i.test(n));
+      const onIdx = fieldNames.findIndex((n) => /^(ja_on|onyomi|on-yomi|on)$/i.test(n));
+      const kunIdx = fieldNames.findIndex((n) => /^(ja_kun|kunyomi|kun-yomi|kun)$/i.test(n));
+      const readingIdx = fieldNames.findIndex((n) => /^(furigana|reading|lectura|pinyin|kana|pronunciation|pronunciación)$/i.test(n));
+      const meaningIdx = fieldNames.findIndex((n) => /^(meaning|meanings|definition|translation|significado|significados|back|glossary)$/i.test(n));
+      const levelIdx = fieldNames.findIndex((n) => /^(level|jlpt|hsk|nivel)$/i.test(n));
+
+      text = kanjiIdx >= 0 && fieldValues[kanjiIdx] ? fieldValues[kanjiIdx] : (fieldValues[0] || '');
+      text = text.replace(/\[sound:[^\]]+\]/gi, '').trim();
+
+      const furiganaParsed = parseAnkiFuriganaSyntax(text);
+      if (furiganaParsed.reading) {
+        text = furiganaParsed.text;
+        reading = furiganaParsed.reading;
+      }
+
+      if (!reading) {
+        if (onIdx >= 0 || kunIdx >= 0) {
+          const on = onIdx >= 0 ? fieldValues[onIdx] : '';
+          const kun = kunIdx >= 0 ? fieldValues[kunIdx] : '';
+          if (on && kun) {
+            reading = `${on} / ${kun}`;
+          } else {
+            reading = on || kun;
+          }
+        } else if (readingIdx >= 0) {
+          reading = fieldValues[readingIdx];
+        }
+      }
+      reading = reading.replace(/\[sound:[^\]]+\]/gi, '').trim();
+
+      if (meaningIdx >= 0 && fieldValues[meaningIdx]) {
+        meaning = fieldValues[meaningIdx];
+      } else if (fieldValues.length > 1) {
+        const fallbackIdx = fieldValues.findIndex(
+          (val, idx) => idx !== kanjiIdx && idx !== onIdx && idx !== kunIdx && idx !== readingIdx && val.trim().length > 0
+        );
+        meaning = fallbackIdx >= 0 ? fieldValues[fallbackIdx] : '';
+      }
+      meaning = meaning.replace(/\[sound:[^\]]+\]/gi, '').trim();
+
+      const splitMeanings = meaning
+        .split(/[;\n\r\/]+/)
+        .map((m) => m.trim())
+        .filter((m) => m.length > 0);
+
+      if (/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/.test(text + reading)) {
+        if (/[\u3040-\u309f\u30a0-\u30ff]/.test(text + reading)) {
+          hasJapaneseChars = true;
+        } else {
+          hasChineseChars = true;
+        }
+      }
+
+      const levelVal = levelIdx >= 0 ? fieldValues[levelIdx] : undefined;
+
+      if (text.length > 0) {
+        items.push({
+          text,
+          reading: reading || undefined,
+          meanings: splitMeanings.length > 0 ? splitMeanings : [meaning],
+          level: levelVal || undefined,
+        });
+      }
+    }
+
+    let languageCode = 'ja-JP';
+    if (hasJapaneseChars || /jlpt|kanji|n5|n4|n3|n2|n1/i.test(deckName)) {
+      languageCode = 'ja-JP';
+    } else if (hasChineseChars || /hsk|hanzi|pinyin/i.test(deckName)) {
+      languageCode = 'zh-CN';
+    }
+
+    return {
+      deckName,
+      languageCode,
+      items,
+      totalNotes: items.length,
+    };
+  } finally {
+    if (ankiDb) {
+      await ankiDb.closeAsync().catch(() => {});
+    }
+    if (tempDbCreated) {
+      try {
+        await SQLite.deleteDatabaseAsync(`${tempDbName}.db`);
+      } catch {}
+    }
   }
 }
 

@@ -28,12 +28,30 @@ const LANGUAGE_LOCALE_MAP: Record<string, string> = {
 
 /**
  * Reproduce la pronunciación en audio de un texto en el idioma nativo especificado.
+ * Para japonés, si se proporciona una lectura (reading/furigana), se extrae la lectura primaria
+ * en kana para evitar lecturas arcaicas o erróneas en caracteres sueltos (ej. "三" -> "MI" en vez de "SAN").
  */
-export async function speakText(text: string, languageCode: string = 'zh-CN'): Promise<void> {
+export async function speakText(
+  text: string,
+  languageCode: string = 'zh-CN',
+  reading?: string
+): Promise<void> {
   if (!text || !text.trim()) return;
 
   const targetLang = LANGUAGE_LOCALE_MAP[languageCode] || languageCode || 'zh-CN';
-  const cleanText = text.trim();
+  let cleanText = text.trim();
+
+  // Si es japonés y se proporcionó una lectura (ej. kanji suelto o tarjeta con furigana)
+  if (targetLang.startsWith('ja') && reading && reading.trim()) {
+    // Extraer la primera lectura antes de separadores /, ,, 、, ; o saltos de línea
+    const primaryPart = reading.split(/[\/\n,、;]/)[0] || '';
+    // Quitar símbolos auxiliares como puntos de separación (・), guiones, tildes, o paréntesis
+    const cleanedKana = primaryPart.replace(/[・~～\s\(\)（）\-\.]/g, '').trim();
+    // Si contiene caracteres kana (hiragana o katakana), usarla para que TTS hable la lectura exacta
+    if (/[\u3040-\u30ff]/.test(cleanedKana)) {
+      cleanText = cleanedKana;
+    }
+  }
 
   try {
     Speech.stop();

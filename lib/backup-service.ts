@@ -289,6 +289,10 @@ export function parseBackupFile(content: string): YomiFullBackupPackage {
     cleanContent = cleanContent.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
   }
 
+  if (cleanContent.startsWith('PK\x03\x04') || cleanContent.startsWith('PK')) {
+    throw new Error('El archivo seleccionado es un paquete binario de Anki (.apkg), no una copia de seguridad JSON de Yomi.');
+  }
+
   // Normalizar comillas tipográficas / smart quotes de teclados móviles o WhatsApp
   cleanContent = cleanContent
     .replace(/[\u201C\u201D\u201E\u201F\u00AB\u00BB]/g, '"')

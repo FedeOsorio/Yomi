@@ -157,7 +157,19 @@ export function splitMeaningsSafely(text: string): string[] {
     else if (char === '[' || char === '【') bracketDepth++;
     else if (char === ']' || char === '】') bracketDepth = Math.max(0, bracketDepth - 1);
 
-    if ((char === ',' || char === ';' || char === '、' || char === '；') && parenDepth === 0 && bracketDepth === 0) {
+    const isNumberSeparator =
+      (char === ',' || char === '.') &&
+      i > 0 &&
+      i < text.length - 1 &&
+      /\d/.test(text[i - 1]) &&
+      /\d/.test(text[i + 1]);
+
+    if (
+      !isNumberSeparator &&
+      (char === ',' || char === ';' || char === '、' || char === '；') &&
+      parenDepth === 0 &&
+      bracketDepth === 0
+    ) {
       const trimmed = current.trim();
       if (trimmed) parts.push(trimmed);
       current = '';

@@ -194,17 +194,26 @@ export function checkVoiceMatch(
       ? toNormalizedHiragana(jaNumEntry.kana)
       : toNormalizedHiragana(cleanTranscript);
 
+    // Desglosar múltiples lecturas si displayReading contiene On'yomi y Kun'yomi (separados por /, ,, 、, ;, saltos de línea)
+    const validReadings = card.displayReading
+      .split(/[\/\n,、;]/)
+      .map((r) => toNormalizedHiragana(r.replace(/[・~～\s\(\)（）\-\.]/g, '')))
+      .filter((r) => r.length > 0);
+
     if (jaNumEntry) {
       // Coincidencia exacta de kanji (ej. "11" → "十一" === "十一")
       if (cleanText === jaNumEntry.kanji) return true;
-      // Coincidencia exacta de kana con la lectura esperada (ej. "いち" === "いち")
-      if (toNormalizedHiragana(cleanReading) === toNormalizedHiragana(jaNumEntry.kana)) return true;
+      const numKana = toNormalizedHiragana(jaNumEntry.kana);
+      // Coincidencia exacta de kana con la lectura esperada (ej. "いち" === "いち" o si figura entre las lecturas válidas)
+      if (toNormalizedHiragana(cleanReading) === numKana || validReadings.includes(numKana)) return true;
     }
 
     const readingKana = toNormalizedHiragana(cleanReading);
     const textKana = toNormalizedHiragana(cleanText);
 
     if (effectiveTranscriptKana.length > 0) {
+      // Coincidencia con cualquiera de las lecturas válidas del kanji (on'yomi o kun'yomi)
+      if (validReadings.some((r) => effectiveTranscriptKana === r || effectiveTranscriptKana.includes(r))) return true;
       if (readingKana.length > 0 && (effectiveTranscriptKana === readingKana || effectiveTranscriptKana.includes(readingKana))) return true;
       if (textKana.length > 0 && (effectiveTranscriptKana === textKana || effectiveTranscriptKana.includes(textKana))) return true;
     }
