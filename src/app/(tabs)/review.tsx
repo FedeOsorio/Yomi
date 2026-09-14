@@ -52,6 +52,8 @@ import { getFloatingTabBarStyle, Shadows, Spacing, Typography } from '../../cons
 import { VoiceTranscriptArea } from '../../components/review/VoiceTranscriptArea';
 import { VoiceMicControl } from '../../components/review/VoiceMicControl';
 import { ReviewMethodModal } from '../../components/review/ReviewMethodModal';
+import { SessionSummaryView } from '../../components/review/SessionSummaryView';
+import { useReviewStore } from '../../stores/reviewStore';
 
 const VOICE_TIMEOUT_SECONDS = 15;
 
@@ -265,27 +267,53 @@ export default function ReviewScreen() {
   const navigation = useNavigation();
   const { deckId: paramDeckId } = useLocalSearchParams<{ deckId?: string }>();
 
-  // Estados de navegación entre Selección de Mazos vs Sesión de Estudio
-  const [decksList, setDecksList] = useState<DeckWithStats[]>([]);
-  const [selectedDeckId, setSelectedDeckId] = useState<string | null>(null);
-  const [selectedDeckName, setSelectedDeckName] = useState<string>('');
+  // Estados y acciones desde reviewStore
+  const decksList = useReviewStore((s) => s.decksList);
+  const selectedDeckId = useReviewStore((s) => s.selectedDeckId);
+  const selectedDeckName = useReviewStore((s) => s.selectedDeckName);
+  const studyMethod = useReviewStore((s) => s.studyMethod);
+  const isPracticeMode = useReviewStore((s) => s.isPracticeMode);
+  const showMethodModal = useReviewStore((s) => s.showMethodModal);
+  const pendingSelection = useReviewStore((s) => s.pendingSelection);
 
-  // Modal selector de método (Clásico vs Manos Libres) y modo práctica
-  const [showMethodModal, setShowMethodModal] = useState(false);
-  const [pendingSelection, setPendingSelection] = useState<{
-    deckId: string | 'all';
-    deckName: string;
-    hasDue: boolean;
-  } | null>(null);
-  const [studyMethod, setStudyMethod] = useState<'text' | 'voice'>('text');
-  const [isPracticeMode, setIsPracticeMode] = useState(false);
-  // Ref paralelo para leer el valor actual desde closures de setTimeout (evita stale closure)
-  const isPracticeModeRef = useRef(false);
+  const dueCards = useReviewStore((s) => s.dueCards);
+  const currentIndex = useReviewStore((s) => s.currentIndex);
+  const loading = useReviewStore((s) => s.loading);
+  const isProcessing = useReviewStore((s) => s.isProcessing);
+  const sessionCompleted = useReviewStore((s) => s.sessionCompleted);
+  const sessionCount = useReviewStore((s) => s.sessionCount);
 
-  // Estados de control de voz y avance continuo automático
-  const [isListening, setIsListening] = useState(false);
-  const [speechTranscript, setSpeechTranscript] = useState('');
-  const [speechStatus, setSpeechStatus] = useState<'idle' | 'listening' | 'evaluating' | 'correct' | 'incorrect'>('idle');
+  const inputReading = useReviewStore((s) => s.inputReading);
+  const inputMeaning = useReviewStore((s) => s.inputMeaning);
+  const isChecked = useReviewStore((s) => s.isChecked);
+  const evaluation = useReviewStore((s) => s.evaluation);
+  const currentCompoundWords = useReviewStore((s) => s.currentCompoundWords);
+
+  const isListening = useReviewStore((s) => s.isListening);
+  const speechTranscript = useReviewStore((s) => s.speechTranscript);
+  const speechStatus = useReviewStore((s) => s.speechStatus);
+
+  const fetchDecksData = useReviewStore((s) => s.fetchDecksData);
+  const promptStudyMethod = useReviewStore((s) => s.promptStudyMethod);
+  const setShowMethodModal = useReviewStore((s) => s.setShowMethodModal);
+  const startSession = useReviewStore((s) => s.startSession);
+  const exitSession = useReviewStore((s) => s.exitSession);
+  const setInputReading = useReviewStore((s) => s.setInputReading);
+  const setInputMeaning = useReviewStore((s) => s.setInputMeaning);
+  const setIsChecked = useReviewStore((s) => s.setIsChecked);
+  const setEvaluation = useReviewStore((s) => s.setEvaluation);
+  const setCurrentCompoundWords = useReviewStore((s) => s.setCurrentCompoundWords);
+  const setIsListening = useReviewStore((s) => s.setIsListening);
+  const setSpeechTranscript = useReviewStore((s) => s.setSpeechTranscript);
+  const setSpeechStatus = useReviewStore((s) => s.setSpeechStatus);
+  const setIsProcessing = useReviewStore((s) => s.setIsProcessing);
+  const recordFailedCard = useReviewStore((s) => s.recordFailedCard);
+  const resetCurrentCardForm = useReviewStore((s) => s.resetCurrentCardForm);
+  const advanceCard = useReviewStore((s) => s.advanceCard);
+  const reinsertCurrentCardAhead = useReviewStore((s) => s.reinsertCurrentCardAhead);
+  const reinsertCurrentCardAtEnd = useReviewStore((s) => s.reinsertCurrentCardAtEnd);
+
+  // Control de timers y animación de voz
   const autoTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isCardEvaluatedRef = useRef<boolean>(false);
   const accumulatedSpeechRef = useRef<string>('');
@@ -390,7 +418,6 @@ export default function ReviewScreen() {
           autoTimerRef.current = null;
         }
         isCardEvaluatedRef.current = true;
-        isPracticeModeRef.current = false;
         speechService.stop();
         setIsListening(false);
         setSpeechStatus('idle');
@@ -452,150 +479,36 @@ export default function ReviewScreen() {
     });
   }, [selectedDeckId, selectedDeckName, colors]);
 
-  // Estados de la sesión activa
-  const [dueCards, setDueCards] = useState<DueCardWithContext[]>([]);
-  const dueCardsRef = useRef<DueCardWithContext[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const currentIndexRef = useRef<number>(0);
-  const [loading, setLoading] = useState(true);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [sessionCompleted, setSessionCompleted] = useState(false);
-  const [sessionCount, setSessionCount] = useState(0);
-
-  // Mantener los refs sincronizados con el estado
-  useEffect(() => {
-    dueCardsRef.current = dueCards;
-  }, [dueCards]);
-
-  useEffect(() => {
-    currentIndexRef.current = currentIndex;
-  }, [currentIndex]);
-
-  // Rastreo de tarjetas falladas y procesadas en la sesión activa para evitar inflar repasos o dar 'Good' por repetición inmediata
-  const sessionFailedCardIdsRef = useRef<Set<string>>(new Set());
-  const sessionProcessedCardIdsRef = useRef<Set<string>>(new Set());
-
-  // Estados del cuestionario interactivo
-  const [inputReading, setInputReading] = useState('');
-  const [inputMeaning, setInputMeaning] = useState('');
-  const [isChecked, setIsChecked] = useState(false);
-  const [evaluation, setEvaluation] = useState<{
-    isReadingCorrect: boolean;
-    isMeaningCorrect: boolean;
-    computedRating: Rating;
-    voiceScore?: { score: number; label: string; breakdown?: PinyinBreakdownItem[] };
-  } | null>(null);
-
-  const [currentCompoundWords, setCurrentCompoundWords] = useState<CompoundWord[]>([]);
-
-  // Cargar lista de mazos con sus métricas pendientes y reparar decks japoneses legacy
-  const fetchDecksData = async () => {
-    setLoading(true);
-    try {
-      // Auto-reparar tarjetas del SRS que quedaron programadas erróneamente a 3+ días por bugs previos
-      await healCorruptedSrsIntervals().catch(() => {});
-
-      const d = await getDecksWithStats();
-      // Auto-reparar mazos japoneses creados con 'zh-CN' por defecto en versiones anteriores
-      for (const deck of d) {
-        if (deck.languageCode === 'zh-CN') {
-          const sampleWords = await db.select().from(words).where(eq(words.deckId, deck.id)).limit(5);
-          const isJapanese = sampleWords.some(
-            (w) =>
-              /[\u3040-\u30ff]/.test(w.pinyinDisplay || '') ||
-              /[\u3040-\u30ff]/.test(w.simplified || '') ||
-              /[\u3040-\u30ff]/.test(w.auxiliaryInfo || '')
-          );
-          if (isJapanese) {
-            await db.update(decks).set({ languageCode: 'ja-JP' }).where(eq(decks.id, deck.id));
-            deck.languageCode = 'ja-JP';
-          }
-        }
-      }
-      setDecksList(d.filter((deck) => deck.activeCardsCount > 0));
-    } catch (e) {
-      console.warn('Error al cargar mazos con stats:', e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Abre el modal para elegir entre Modo Clásico y Modo Manos Libres
-  const promptStudyMethod = useCallback((deckId: string | 'all', deckName: string, hasDue: boolean) => {
-    const targetDeck = decksList.find((d) => d.id === deckId);
-    if (targetDeck?.type === 'custom') {
-      // Mazos personalizados usan el flujo directo de autoevaluación SRS
-      startSession(deckId, deckName, 'text', !hasDue);
-      return;
-    }
-    setPendingSelection({ deckId, deckName, hasDue });
-    setShowMethodModal(true);
-  }, [decksList]);
-
   const handleSelectMethod = (method: 'text' | 'voice') => {
     if (!pendingSelection) return;
     const { deckId, deckName, hasDue } = pendingSelection;
     setShowMethodModal(false);
-    // Si no tiene pendientes oficiales, se activa el modo práctica libre sin alterar el FSRS
-    startSession(deckId, deckName, method, !hasDue);
+    handleStartSession(deckId, deckName, method, !hasDue);
   };
 
   // Inicia la sesión para un mazo específico o para todos los mazos ('all')
-  const startSession = async (
+  const handleStartSession = async (
     deckId: string | 'all',
     deckName: string,
     method: 'text' | 'voice' = 'text',
     practiceMode: boolean = false
   ) => {
-    setLoading(true);
-    setSelectedDeckId(deckId);
-    setSelectedDeckName(deckName);
-    setStudyMethod(method);
-    setIsPracticeMode(practiceMode);
-    isPracticeModeRef.current = practiceMode; // Sincronizar ref para que closures de setTimeout lean el valor correcto
-    setSessionCompleted(false);
-    setSessionCount(0);
-    setCurrentIndex(0);
-    currentIndexRef.current = 0;
-    sessionFailedCardIdsRef.current = new Set();
-    sessionProcessedCardIdsRef.current = new Set();
     resetForm();
-
     if (autoTimerRef.current) {
       clearTimeout(autoTimerRef.current);
       autoTimerRef.current = null;
     }
 
-    try {
-      let cards: DueCardWithContext[] = [];
+    await startSession(deckId, deckName, method, practiceMode);
+    const cards = useReviewStore.getState().dueCards;
 
-      cards = practiceMode
-        ? await getAllCardsForPractice(deckId === 'all' ? undefined : deckId)
-        : await getDueCards(deckId === 'all' ? undefined : deckId);
-
-      // Mezclar aleatoriamente (Fisher-Yates) para que el repaso no siga el orden secuencial del mazo
-      for (let i = cards.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [cards[i], cards[j]] = [cards[j], cards[i]];
-      }
-
-      setDueCards(cards);
-      dueCardsRef.current = cards;
-
-      // Si es modo voz y hay tarjetas, iniciamos el reconocimiento continuo en la primera tarjeta
-      if (method === 'voice' && cards.length > 0) {
-        const firstCard = cards[0];
-        const lang = getEffectiveCardLanguage(firstCard);
-        setTimeout(() => {
-          startVoiceListeningForCard(firstCard, lang);
-        }, 500);
-      }
-    } catch (e) {
-      console.warn('Error al cargar tarjetas de sesión:', e);
-      setDueCards([]);
-      dueCardsRef.current = [];
-    } finally {
-      setLoading(false);
+    // Si es modo voz y hay tarjetas, iniciamos el reconocimiento continuo en la primera tarjeta
+    if (method === 'voice' && cards.length > 0) {
+      const firstCard = cards[0];
+      const lang = getEffectiveCardLanguage(firstCard);
+      setTimeout(() => {
+        startVoiceListeningForCard(firstCard, lang);
+      }, 500);
     }
   };
 
@@ -820,30 +733,6 @@ export default function ReviewScreen() {
     await initRecognizer();
   };
 
-  // Reinserta la tarjeta fallada de forma aleatoria entre 5 y 10 posiciones más adelante en la cola
-  const reinsertFailedCardIntoQueue = (cardToReinsert: DueCardWithContext, curIndex: number) => {
-    const currentList = [...dueCardsRef.current];
-    const remainingCount = currentList.length - (curIndex + 1);
-
-    if (remainingCount <= 0) {
-      // Era la última tarjeta, se añade al final para repasarla nuevamente
-      currentList.push(cardToReinsert);
-    } else if (remainingCount <= 5) {
-      // Si quedan 5 o menos tarjetas, se coloca al final de la cola
-      currentList.push(cardToReinsert);
-    } else {
-      // Se mezcla de forma aleatoria entre 5 y 10 tarjetas más adelante dentro de las tarjetas restantes
-      const minOffset = 5;
-      const maxOffset = Math.min(10, remainingCount);
-      const offset = Math.floor(Math.random() * (maxOffset - minOffset + 1)) + minOffset;
-      const targetPos = curIndex + 1 + offset;
-      currentList.splice(targetPos, 0, cardToReinsert);
-    }
-
-    dueCardsRef.current = currentList;
-    setDueCards(currentList);
-  };
-
   // Evaluación y feedback de voz con avance continuo y Flip 3D (tanto acierto como fallo)
   const handleVoiceEvaluation = async (
     card: DueCardWithContext,
@@ -880,8 +769,8 @@ export default function ReviewScreen() {
 
     // Si falló (tiempo agotado o pronunciación errónea), registrar fallo de sesión y reinsertar en la cola
     if (!isSuccess) {
-      sessionFailedCardIdsRef.current.add(card.id);
-      reinsertFailedCardIntoQueue(card, currentIndexRef.current);
+      recordFailedCard(card.id);
+      reinsertCurrentCardAhead(5, 10);
     }
 
     // La tarjeta SIEMPRE se da vuelta con animación 3D nativa fluida a 60 FPS
@@ -899,8 +788,8 @@ export default function ReviewScreen() {
     });
 
     // Desacoplar la escritura SQLite FSRS para no bloquear el hilo de render durante la rotación 3D
-    if (!isPracticeModeRef.current) {
-      const wasFailedInSession = sessionFailedCardIdsRef.current.has(card.id);
+    if (!isPracticeMode) {
+      const wasFailedInSession = useReviewStore.getState().sessionFailedCardIds.has(card.id);
 
       if (!isSuccess) {
         // Fallo: suma a reps, incrementa lapsos y fija el repaso para mañana
@@ -919,7 +808,6 @@ export default function ReviewScreen() {
         }, 350);
       }
     }
-    setSessionCount((prev) => prev + 1);
   };
 
   const startCountdownTimer = (durationMs: number) => {
@@ -1004,24 +892,16 @@ export default function ReviewScreen() {
 
     // En el punto medio de la rotación (150ms, cuando está de perfil e invisible), actualizar el contenido
     setTimeout(() => {
-      const cards = dueCardsRef.current;
-      const nextIndex = currentIndexRef.current + 1;
-      if (nextIndex < cards.length) {
-        const nextCard = cards[nextIndex];
-        currentIndexRef.current = nextIndex;
-        setCurrentIndex(nextIndex);
-        setInputReading('');
-        setInputMeaning('');
-        setIsChecked(false);
-        setEvaluation(null);
-        setSpeechTranscript('');
-        setSpeechStatus('listening');
-        const lang = getEffectiveCardLanguage(nextCard);
-        setTimeout(() => {
-          startVoiceListeningForCard(nextCard, lang);
-        }, 150);
+      const hasNext = advanceCard();
+      if (hasNext) {
+        const nextCard = useReviewStore.getState().getCurrentCard();
+        if (nextCard) {
+          const lang = getEffectiveCardLanguage(nextCard);
+          setTimeout(() => {
+            startVoiceListeningForCard(nextCard, lang);
+          }, 150);
+        }
       } else {
-        setSessionCompleted(true);
         speechService.abort().catch(() => {});
         setIsListening(false);
         setSpeechStatus('idle');
@@ -1037,31 +917,20 @@ export default function ReviewScreen() {
       autoTimerRef.current = null;
     }
     isCardEvaluatedRef.current = true;
-    isPracticeModeRef.current = false;
     voiceProgressAnim.stopAnimation();
     voiceProgressAnim.setValue(0);
     flipCountdownAnim.stopAnimation();
     flipCountdownAnim.setValue(0);
+    cardFlipAnim.setValue(0);
     speechService.abort().catch(() => {});
-    setIsListening(false);
-    setSpeechStatus('idle');
     setSpeechTranscript('');
     accumulatedSpeechRef.current = '';
-    setSelectedDeckId(null);
-    setSelectedDeckName('');
-    setDueCards([]);
-    dueCardsRef.current = [];
-    setCurrentIndex(0);
-    currentIndexRef.current = 0;
-    setSessionCompleted(false);
+    exitSession();
     fetchDecksData();
   };
 
   const resetForm = () => {
-    setInputReading('');
-    setInputMeaning('');
-    setIsChecked(false);
-    setEvaluation(null);
+    resetCurrentCardForm();
     cardFlipAnim.setValue(0);
   };
 
@@ -1071,13 +940,12 @@ export default function ReviewScreen() {
         // Si se abrió con un deckId específico por parámetro de navegación
         (async () => {
           try {
-            setLoading(true);
-            const d = await getDecksWithStats();
-            setDecksList(d.filter((deck) => deck.activeCardsCount > 0));
-            const deck = d.find((item) => item.id === paramDeckId);
+            await fetchDecksData();
+            const currentDecks = useReviewStore.getState().decksList;
+            const deck = currentDecks.find((item) => item.id === paramDeckId);
             const deckName = deck ? deck.name : 'Mazo';
             const hasDue = (deck?.dueCount || 0) > 0;
-            startSession(paramDeckId, deckName, 'text', !hasDue);
+            handleStartSession(paramDeckId, deckName, 'text', !hasDue);
           } catch (e) {
             console.warn('Error al iniciar sesión con paramDeckId:', e);
             fetchDecksData();
@@ -1267,38 +1135,29 @@ export default function ReviewScreen() {
 
     try {
       const isAgain = evaluation.computedRating === Rating.Again;
-      const wasFailedInSession = sessionFailedCardIdsRef.current.has(currentCard.id);
+      const wasFailedInSession = useReviewStore.getState().sessionFailedCardIds.has(currentCard.id);
 
       if (isAgain) {
-        sessionFailedCardIdsRef.current.add(currentCard.id);
+        recordFailedCard(currentCard.id);
       }
 
-      if (!isPracticeModeRef.current) {
+      if (!isPracticeMode) {
         if (isAgain) {
           await processCardReview(currentCard.id, Rating.Again);
         } else {
           await processCardReview(currentCard.id, evaluation.computedRating, { wasFailedInSession });
         }
       }
-      setSessionCount((prev) => prev + 1);
 
       // Si la tarjeta fue fallada o se presionó "No me acuerdo", reinsertar entre 5 y 10 posiciones adelante
       if (isAgain) {
-        reinsertFailedCardIntoQueue(currentCard, currentIndexRef.current);
+        reinsertCurrentCardAhead(5, 10);
       }
 
-      const cards = dueCardsRef.current;
-      const nextIndex = currentIndexRef.current + 1;
-      if (nextIndex < cards.length) {
-        currentIndexRef.current = nextIndex;
-        setCurrentIndex(nextIndex);
-        resetForm();
-      } else {
-        setSessionCompleted(true);
-      }
+      advanceCard();
+      cardFlipAnim.setValue(0);
     } catch (e) {
       console.error('Error al guardar repaso FSRS:', e);
-    } finally {
       setIsProcessing(false);
     }
   };
@@ -1322,8 +1181,6 @@ export default function ReviewScreen() {
 
     try {
       const cardId = currentCard.id;
-      const cards = [...dueCardsRef.current];
-      const currIdx = currentIndexRef.current;
 
       // Rotar la tarjeta suavemente de regreso al frente
       Animated.timing(cardFlipAnim, {
@@ -1334,50 +1191,29 @@ export default function ReviewScreen() {
       }).start();
 
       setTimeout(async () => {
-        if (action === 'soon') {
-          // Reinsertar entre 5 y 10 tarjetas más adelante
-          reinsertFailedCardIntoQueue(currentCard, currIdx);
-
-          const nextIndex = currIdx + 1;
-          currentIndexRef.current = nextIndex;
-          setCurrentIndex(nextIndex);
-          resetForm();
-        } else if (action === 'later') {
-          // Poner al final de la cola
-          cards.push(currentCard);
-          dueCardsRef.current = cards;
-          setDueCards([...cards]);
-
-          const nextIndex = currIdx + 1;
-          currentIndexRef.current = nextIndex;
-          setCurrentIndex(nextIndex);
-          resetForm();
-        } else if (action === 'next_day') {
-          // Aumenta 1 día en el SRS
-          await rescheduleCardNextDay(cardId);
-          setSessionCount((prev) => prev + 1);
-          const nextIndex = currIdx + 1;
-          if (nextIndex < cards.length) {
-            currentIndexRef.current = nextIndex;
-            setCurrentIndex(nextIndex);
-            resetForm();
-          } else {
-            setSessionCompleted(true);
+        try {
+          if (action === 'soon') {
+            // Reinsertar entre 5 y 10 tarjetas más adelante
+            reinsertCurrentCardAhead(5, 10);
+            advanceCard(false);
+          } else if (action === 'later') {
+            // Poner al final de la cola
+            reinsertCurrentCardAtEnd();
+            advanceCard(false);
+          } else if (action === 'next_day') {
+            // Aumenta 1 día en el SRS
+            await rescheduleCardNextDay(cardId);
+            advanceCard(true);
+          } else if (action === 'never') {
+            // Quita la tarjeta definitivamente del repaso
+            await removeCardFromReview(cardId);
+            advanceCard(true);
           }
-        } else if (action === 'never') {
-          // Quita la tarjeta definitivamente del repaso
-          await removeCardFromReview(cardId);
-          setSessionCount((prev) => prev + 1);
-          const nextIndex = currIdx + 1;
-          if (nextIndex < cards.length) {
-            currentIndexRef.current = nextIndex;
-            setCurrentIndex(nextIndex);
-            resetForm();
-          } else {
-            setSessionCompleted(true);
-          }
+          cardFlipAnim.setValue(0);
+        } catch (err) {
+          console.error('Error al procesar acción interna custom:', err);
+          setIsProcessing(false);
         }
-        setIsProcessing(false);
       }, 140);
     } catch (e) {
       console.error('Error al procesar acción de tarjeta custom:', e);
@@ -1592,40 +1428,20 @@ export default function ReviewScreen() {
   if (dueCards.length === 0 || sessionCompleted) {
     return (
       <View style={[styles.container, { backgroundColor: colors.background, paddingTop: Spacing.sm }]}>
-        <View style={styles.completedBox}>
-          <View style={[styles.completedIconBox, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}>
-            <Ionicons name="trophy" size={54} color={colors.primary} />
-          </View>
-          <Text style={[styles.completedTitle, { color: colors.text }]}>
-            {sessionCompleted ? '¡Sesión completada!' : '¡Mazo al día!'}
-          </Text>
-          <Text style={[styles.completedSub, { color: colors.textMuted }]}>
-            {sessionCompleted
-              ? `Completaste la verificación de ${sessionCount} tarjeta(s) en "${selectedDeckName}".`
-              : `No tienes tarjetas pendientes de repaso en "${selectedDeckName}".`}
-          </Text>
-
-          <TouchableOpacity
-            style={[styles.primaryBtn, { backgroundColor: colors.primary }]}
-            onPress={handleExitSession}
-          >
-            <Ionicons name="albums-outline" size={20} color="#FFF" style={{ marginRight: 6 }} />
-            <Text style={styles.primaryBtnText}>Volver a mis mazos</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.secondaryBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}
-            onPress={() => {
-              if (selectedDeckId) {
-                promptStudyMethod(selectedDeckId, selectedDeckName, false);
-              } else {
-                handleExitSession();
-              }
-            }}
-          >
-            <Text style={[styles.secondaryBtnText, { color: colors.primary }]}>Practicar todo el mazo libremente</Text>
-          </TouchableOpacity>
-        </View>
+        <SessionSummaryView
+          sessionCompleted={sessionCompleted}
+          sessionCount={sessionCount}
+          selectedDeckName={selectedDeckName}
+          colors={colors}
+          onExitSession={handleExitSession}
+          onPracticeAll={() => {
+            if (selectedDeckId) {
+              promptStudyMethod(selectedDeckId, selectedDeckName, false);
+            } else {
+              handleExitSession();
+            }
+          }}
+        />
 
         <ReviewMethodModal
           visible={showMethodModal}
