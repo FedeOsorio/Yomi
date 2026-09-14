@@ -208,8 +208,16 @@ export function checkVoiceMatch(
       ? toNormalizedHiragana(jaNumEntry.kana)
       : toNormalizedHiragana(cleanTranscript);
 
-    // Desglosar múltiples lecturas si displayReading contiene On'yomi y Kun'yomi (separados por /, ,, 、, ;, •, |, saltos de línea)
-    const validReadings = card.displayReading
+    // Desglosar múltiples lecturas si displayReading o auxiliaryInfo contiene On'yomi y Kun'yomi (separados por /, ,, 、, ;, •, |, saltos de línea)
+    let allReadingsStr = card.displayReading || '';
+    if (card.auxiliaryInfo) {
+      try {
+        const aux = JSON.parse(card.auxiliaryInfo);
+        if (aux.kanjiReadings) allReadingsStr += ` • ${aux.kanjiReadings}`;
+      } catch {}
+    }
+
+    const validReadings = allReadingsStr
       .split(/[\/\n,、;•|]/)
       .map((r) =>
         toNormalizedHiragana(

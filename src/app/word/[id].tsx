@@ -19,7 +19,7 @@ import { speakText } from '../../../lib/audio-service';
 import { getQuickHskLevel } from '../../../lib/hsk-data';
 import { cleanAndFormatMeanings, extractKanjis, parseFurigana } from '../../../lib/japanese-search';
 import { classifyJapaneseWord, formatJapaneseReading } from '../../../lib/japanese-utils';
-import { getKanjiJlptLevel, getQuickJlptLevel } from '../../../lib/jlpt-data';
+import { getKanjiJlptLevel, getQuickJlptLevel, getKanjiEssentialReading } from '../../../lib/jlpt-data';
 import { getStorageItem, setStorageItem } from '../../../lib/storage-service';
 import {
   CompoundWord,
@@ -30,6 +30,7 @@ import {
   updateWordSelectedMeanings,
   deleteWordMeaning,
   updateWordMeaningText,
+  updateWordReading,
 } from '../../../lib/word-service';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { Shadows, Spacing, Typography } from '../../constants/theme';
@@ -506,6 +507,8 @@ export default function WordDetailScreen() {
   const [selectedMeanings, setSelectedMeanings] = useState<string[]>([]);
   const [editingMeaning, setEditingMeaning] = useState<string | null>(null);
   const [editMeaningText, setEditMeaningText] = useState('');
+  const [isEditingReading, setIsEditingReading] = useState(false);
+  const [editReadingText, setEditReadingText] = useState('');
 
   const fetchDetail = async () => {
     if (typeof id === 'string') {
@@ -646,6 +649,45 @@ export default function WordDetailScreen() {
       setEditMeaningText('');
     } catch (e) {
       Alert.alert('Error', 'No se pudo actualizar el significado.');
+    }
+  };
+
+  const handleStartEditReading = () => {
+    if (!data) return;
+    setEditReadingText(data.word.pinyinDisplay || '');
+    setIsEditingReading(true);
+  };
+
+  const handleSaveEditedReading = async () => {
+    if (!data) return;
+    const trimmed = editReadingText.trim();
+    if (!trimmed) {
+      Alert.alert('Aviso', 'La lectura no puede estar vacía.');
+      return;
+    }
+
+    try {
+      const res = await updateWordReading(data.word.id, trimmed);
+      setData((prev) => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          word: {
+            ...prev.word,
+            pinyinDisplay: res.updatedReading,
+            pinyinNumeric: res.updatedReading.toLowerCase(),
+          },
+          srsItem: prev.srsItem
+            ? {
+                ...prev.srsItem,
+                displayReading: res.updatedReading,
+              }
+            : null,
+        };
+      });
+      setIsEditingReading(false);
+    } catch (e) {
+      Alert.alert('Error', 'No se pudo actualizar la lectura.');
     }
   };
 
@@ -806,6 +848,26 @@ export default function WordDetailScreen() {
     ? formatJapaneseReading(rawReading.replace(/\s*\([^)]*\)/g, '').trim())
     : rawReading;
 
+  let parsedAux: Record<string, any> = {};
+  if (word.auxiliaryInfo) {
+    try {
+      parsedAux = JSON.parse(word.auxiliaryInfo);
+    } catch {}
+  }
+
+  const isSingleKanji = isJapanese && word.simplified.length === 1 && /[\u4e00-\u9faf]/.test(word.simplified);
+  const kanjiMeta = isSingleKanji ? getKanjiEssentialReading(word.simplified, parsedAux.onReading, parsedAux.kunReading) : null;
+  const kanjiReadingsDisplay = parsedAux.kanjiReadings || kanjiMeta?.kanjiReadings;
+  const onReadingCandidate = parsedAux.onReading || kanjiMeta?.onReading;
+  const kunReadingCandidate = parsedAux.kunReading || kanjiMeta?.kunReading;
+
+  // Para furigana, asegurar kana puro para evitar romper ruby sobre el kanji
+  const furiganaReading = isJapanese
+    ? (cleanReading.includes('•') || /\b(on|kun)\b/i.test(cleanReading)
+        ? (kanjiMeta?.essentialReading || cleanReading.split(/[\/•]/)[0].replace(/^(on|kun)[:：\s]*/i, '').trim())
+        : cleanReading)
+    : cleanReading;
+
   // Categoría gramatical (explícita o heurística para japonés)
   const activeCategory = category || (isJapanese ? classifyJapaneseWord(word.simplified, cleanReading) : undefined);
 
@@ -826,7 +888,7 @@ export default function WordDetailScreen() {
   };
 
   const srsStateInfo = getSrsStateLabel(srsItem?.state);
-  const furiganaPairs = parseFurigana(word.simplified, cleanReading);
+  const furiganaPairs = parseFurigana(word.simplified, furiganaReading);
   const kanjisList = extractKanjis(word.simplified);
 
   return (
@@ -923,11 +985,34 @@ export default function WordDetailScreen() {
                   })}
                 </View>
 
-                {cleanReading && cleanReading !== word.simplified ? (
-                  <Text style={[styles.readingTextBelow, { color: colors.primaryHover }]}>
-                    {cleanReading}
-                  </Text>
-                ) : null}
+                <View style={styles.readingRowContainer}>
+                  {cleanReading && cleanReading !== word.simplified ? (
+                    <Text style={[styles.readingTextBelow, { color: colors.primaryHover }]}>
+                      {cleanReading}
+                    </Text>
+                  ) : null}
+                  {!isCustomDeck && (
+                    <TouchableOpacity
+                      style={styles.editReadingBtn}
+                      onPress={handleStartEditReading}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons name="pencil-outline" size={15} color={colors.primary} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {Boolean(kanjiReadingsDisplay) && (
+                  <View style={[styles.kanjiReadingsCard, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}>
+                    <View style={styles.kanjiReadingsHeader}>
+                      <Ionicons name="book-outline" size={14} color={colors.primary} />
+                      <Text style={[styles.kanjiReadingsTitle, { color: colors.textMuted }]}>Lecturas del Kanji:</Text>
+                    </View>
+                    <Text style={[styles.kanjiReadingsBody, { color: colors.text }]}>
+                      {kanjiReadingsDisplay}
+                    </Text>
+                  </View>
+                )}
               </>
             )}
           </View>
@@ -1263,6 +1348,93 @@ export default function WordDetailScreen() {
               <TouchableOpacity
                 style={[styles.editModalSaveBtn, { backgroundColor: colors.primary }]}
                 onPress={handleSaveEditedMeaning}
+              >
+                <Text style={styles.editModalSaveText}>Guardar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal para Editar Lectura */}
+      <Modal
+        visible={isEditingReading}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsEditingReading(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.editModalCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View style={styles.editModalHeader}>
+              <Text style={[styles.editModalTitle, { color: colors.text }]}>Editar Lectura</Text>
+              <TouchableOpacity onPress={() => setIsEditingReading(false)} style={styles.modalCloseBtn}>
+                <Ionicons name="close" size={20} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={[styles.editModalSubtitle, { color: colors.textMuted }]}>
+              Modifica la pronunciación para audio, furigana y repaso.
+            </Text>
+
+            {(onReadingCandidate || kunReadingCandidate) && (
+              <View style={styles.quickReadingsRow}>
+                {kunReadingCandidate ? (
+                  <TouchableOpacity
+                    style={[styles.quickReadingChip, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}
+                    onPress={() => {
+                      const cleanK = kunReadingCandidate.split(/[,、\/\s]/)[0].replace(/[・\-\~]/g, '').trim();
+                      setEditReadingText(cleanK);
+                    }}
+                  >
+                    <Text style={[styles.quickReadingChipLabel, { color: colors.primary }]}>
+                      Kun: {kunReadingCandidate.split(/[,、\/\s]/)[0].replace(/[・\-\~]/g, '')}
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
+                {onReadingCandidate ? (
+                  <TouchableOpacity
+                    style={[styles.quickReadingChip, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}
+                    onPress={() => {
+                      const cleanO = onReadingCandidate.split(/[,、\/\s]/)[0].replace(/[・\-\~]/g, '').trim();
+                      setEditReadingText(cleanO);
+                    }}
+                  >
+                    <Text style={[styles.quickReadingChipLabel, { color: colors.primary }]}>
+                      On: {onReadingCandidate.split(/[,、\/\s]/)[0].replace(/[・\-\~]/g, '')}
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            )}
+
+            <TextInput
+              style={[
+                styles.editMeaningInput,
+                {
+                  backgroundColor: colors.surfaceHighlight,
+                  color: colors.text,
+                  borderColor: colors.border,
+                  minHeight: 48,
+                },
+              ]}
+              value={editReadingText}
+              onChangeText={setEditReadingText}
+              placeholder="Ej: やま, なに, ni3 hao3"
+              placeholderTextColor={colors.textMuted}
+              autoFocus
+            />
+
+            <View style={styles.editModalActionsRow}>
+              <TouchableOpacity
+                style={[styles.editModalCancelBtn, { borderColor: colors.border }]}
+                onPress={() => setIsEditingReading(false)}
+              >
+                <Text style={[styles.editModalCancelText, { color: colors.textMuted }]}>Cancelar</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.editModalSaveBtn, { backgroundColor: colors.primary }]}
+                onPress={handleSaveEditedReading}
               >
                 <Text style={styles.editModalSaveText}>Guardar</Text>
               </TouchableOpacity>
@@ -1815,5 +1987,62 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontWeight: 'bold',
     fontSize: 14,
+  },
+  readingRowContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  editReadingBtn: {
+    padding: 4,
+    borderRadius: 6,
+    opacity: 0.85,
+  },
+  kanjiReadingsCard: {
+    marginTop: Spacing.sm,
+    paddingHorizontal: Spacing.sm + 2,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignSelf: 'stretch',
+  },
+  kanjiReadingsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  kanjiReadingsTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  kanjiReadingsBody: {
+    fontSize: 13,
+    fontWeight: '600',
+    lineHeight: 18,
+  },
+  editModalSubtitle: {
+    fontSize: 13,
+    marginBottom: Spacing.sm,
+  },
+  quickReadingsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: Spacing.sm,
+    flexWrap: 'wrap',
+  },
+  quickReadingChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  quickReadingChipLabel: {
+    fontSize: 12,
+    fontWeight: '700',
   },
 });

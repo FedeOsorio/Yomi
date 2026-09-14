@@ -634,6 +634,7 @@ export async function saveBatchWords(
     reading?: string;
     meanings: string[];
     level?: string;
+    rawExtras?: Record<string, string>;
   }>
 ): Promise<{ inserted: number; skipped: number }> {
   let inserted = 0;
@@ -662,7 +663,12 @@ export async function saveBatchWords(
 
     const wordId = generateUUID();
     const meaningsJson = JSON.stringify(item.meanings.length > 0 ? item.meanings : [cleanText]);
-    const auxInfo = item.level ? JSON.stringify({ level: item.level.trim() }) : null;
+    const auxPayload: Record<string, any> = {};
+    if (item.level) auxPayload.level = item.level.trim();
+    if (item.rawExtras) {
+      Object.assign(auxPayload, item.rawExtras);
+    }
+    const auxInfo = Object.keys(auxPayload).length > 0 ? JSON.stringify(auxPayload) : null;
 
     await db.insert(words).values({
       id: wordId,
@@ -688,6 +694,41 @@ export async function saveBatchWords(
   }
 
   return { inserted, skipped };
+}
+
+/**
+ * Modifica la lectura (pronunciación/furigana) de una palabra existente,
+ * actualizando tanto la tabla 'words' como 'srs_items' para que el repaso y el audio
+ * reflejen inmediatamente el cambio.
+ */
+export async function updateWordReading(
+  wordId: string,
+  newReading: string
+): Promise<{ updatedReading: string }> {
+  const trimmed = newReading.trim();
+  if (!trimmed) {
+    return { updatedReading: '' };
+  }
+
+  await db.update(words)
+    .set({
+      pinyinDisplay: trimmed,
+      pinyinNumeric: trimmed.toLowerCase(),
+    })
+    .where(eq(words.id, wordId));
+
+  await db.update(srsItems)
+    .set({
+      displayReading: trimmed,
+    })
+    .where(
+      and(
+        eq(srsItems.itemType, 'word'),
+        eq(srsItems.itemId, wordId)
+      )
+    );
+
+  return { updatedReading: trimmed };
 }
 
 export interface ConjugableWord {

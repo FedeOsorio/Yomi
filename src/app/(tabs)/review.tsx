@@ -1094,8 +1094,17 @@ export default function ReviewScreen() {
       } catch (e) { }
     }
 
+    let altKanjiReadings: string | undefined;
+    if (currentCard.auxiliaryInfo) {
+      try {
+        const aux = JSON.parse(currentCard.auxiliaryInfo);
+        if (aux.kanjiReadings) altKanjiReadings = aux.kanjiReadings;
+      } catch {}
+    }
+
     const isReadingCorrect = isIdeographic
-      ? checkReadingMatch(currentCard.displayReading, inputReading)
+      ? (checkReadingMatch(currentCard.displayReading, inputReading) ||
+         (altKanjiReadings ? checkReadingMatch(altKanjiReadings, inputReading) : false))
       : true;
 
     const isMeaningCorrect = checkMeaningMatch(activeTargetMeanings, inputMeaning);
@@ -1841,9 +1850,25 @@ export default function ReviewScreen() {
                     {Boolean(currentCard.displayReading) && (
                       <>
                         <Text style={[styles.flipBackLabel, { color: colors.textMuted }]}>Pronunciación</Text>
-                        <Text style={[styles.flipHeroReadingSmall, { color: colors.primary, marginBottom: 6 }]} numberOfLines={2}>
+                        <Text style={[styles.flipHeroReadingSmall, { color: colors.primary, marginBottom: 4 }]} numberOfLines={2}>
                           {isJapanese ? formatJapaneseReading(currentCard.displayReading) : currentCard.displayReading}
                         </Text>
+
+                        {/* Desglose On/Kun adicional para tarjetas de Kanji */}
+                        {(() => {
+                          let kanjiReadings: string | undefined;
+                          if (currentCard.auxiliaryInfo) {
+                            try {
+                              const aux = JSON.parse(currentCard.auxiliaryInfo);
+                              kanjiReadings = aux.kanjiReadings;
+                            } catch {}
+                          }
+                          return kanjiReadings && kanjiReadings !== currentCard.displayReading ? (
+                            <Text style={[styles.flipKanjiReadingsSub, { color: colors.textMuted }]} numberOfLines={1}>
+                              {kanjiReadings}
+                            </Text>
+                          ) : null;
+                        })()}
 
                         {/* Desglose por sílaba Pinyin con círculos de porcentaje y barra de llenado (memoizado) */}
                         {evaluation?.voiceScore?.breakdown && evaluation.voiceScore.breakdown.length > 0 && (
@@ -2295,6 +2320,13 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     marginBottom: 2,
     textAlign: 'center',
+  },
+  flipKanjiReadingsSub: {
+    fontSize: 12,
+    fontWeight: '500',
+    marginBottom: 6,
+    textAlign: 'center',
+    opacity: 0.85,
   },
   flipHeroWordLarge: {
     fontSize: 32,

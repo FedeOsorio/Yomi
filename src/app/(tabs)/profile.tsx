@@ -24,24 +24,9 @@ import {
   parseBackupFile,
   restoreBackupPackage
 } from '../../../lib/backup-service';
-import {
-  checkTokenDriveScope,
-  disconnectGoogleAccount,
-  downloadBackupFromGoogleDrive,
-  findDriveBackupFile,
-  getStoredDriveBackupMeta,
-  getStoredGoogleToken,
-  getStoredGoogleUser,
-  getValidGoogleAccessToken,
-  GoogleDriveBackupMetadata,
-  GoogleUserProfile,
-  loginWithGoogleAsync,
-  onDriveBackupChange,
-  onGoogleUserChange,
-  uploadBackupToGoogleDrive
-} from '../../../lib/google-drive-service';
+import { GoogleUserProfile } from '../../../lib/google-drive-service';
+import { useGoogleDriveStore } from '../../stores/googleDriveStore';
 import { getStudyStats } from '../../../lib/srs-engine';
-import { getStorageItem, setStorageItem } from '../../../lib/storage-service';
 import { InfoModal } from '../../components/InfoModal';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { Shadows, Spacing } from '../../constants/theme';
@@ -66,12 +51,22 @@ export default function ProfileScreen() {
   const [isRestoring, setIsRestoring] = useState(false);
   const [lastBackupTime, setLastBackupTime] = useState<string | null>(null);
 
-  // Estados de Google Drive
-  const [googleUser, setGoogleUser] = useState<GoogleUserProfile | null>(null);
-  const [driveBackupMeta, setDriveBackupMeta] = useState<GoogleDriveBackupMetadata | null>(null);
-  const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
-  const [isSyncingDrive, setIsSyncingDrive] = useState(false);
-  const [isRestoringDrive, setIsRestoringDrive] = useState(false);
+  // Estado reactivo centralizado con Zustand
+  const {
+    googleUser,
+    driveBackupMeta,
+    isConnecting: isConnectingGoogle,
+    isSyncing: isSyncingDrive,
+    isRestoring: isRestoringDrive,
+    isChecking,
+    connect: connectGoogle,
+    disconnect: disconnectGoogle,
+    createBackup: backupToDrive,
+    inspectBackup,
+    restoreBackup: restoreDriveBackup,
+    refreshMeta: refreshDriveMeta,
+    init: initGoogleDrive,
+  } = useGoogleDriveStore();
   const [showDriveInfoModal, setShowDriveInfoModal] = useState(false);
 
   const fetchStats = async () => {
@@ -80,24 +75,6 @@ export default function ProfileScreen() {
       setStats(res);
       const backupTime = await getLastBackupDate();
       setLastBackupTime(backupTime);
-
-      const user = await getStoredGoogleUser();
-      if (user) {
-        setGoogleUser(user);
-      }
-      const storedMeta = await getStoredDriveBackupMeta();
-      if (storedMeta) {
-        setDriveBackupMeta(storedMeta);
-      }
-
-      const token = await getStoredGoogleToken();
-      if (token) {
-        findDriveBackupFile(token, true)
-          .then((meta) => {
-            if (meta) setDriveBackupMeta(meta);
-          })
-          .catch(() => { });
-      }
     } catch (e) { }
   };
 
@@ -108,38 +85,13 @@ export default function ProfileScreen() {
   );
 
   useEffect(() => {
-    return onDataChanged(() => {
-      fetchStats();
-    });
+    initGoogleDrive();
   }, []);
 
   useEffect(() => {
-    const unsubscribeUser = onGoogleUserChange((user) => {
-      console.log('[Profile] onGoogleUserChange received:', user?.email);
-      setGoogleUser(user);
-      if (user) {
-        getStoredDriveBackupMeta().then((meta) => {
-          if (meta) setDriveBackupMeta(meta);
-        });
-        getStoredGoogleToken().then((token) => {
-          if (token) {
-            findDriveBackupFile(token, true).catch(() => {});
-          }
-        });
-      } else {
-        setDriveBackupMeta(null);
-      }
+    return onDataChanged(() => {
+      fetchStats();
     });
-
-    const unsubscribeBackup = onDriveBackupChange((meta) => {
-      console.log('[Profile] onDriveBackupChange received:', meta?.modifiedTime);
-      setDriveBackupMeta(meta);
-    });
-
-    return () => {
-      unsubscribeUser();
-      unsubscribeBackup();
-    };
   }, []);
 
   const handleConnectGoogle = async () => {
@@ -158,7 +110,7 @@ export default function ProfileScreen() {
               };
               const { setStorageItem } = await import('../../../lib/storage-service');
               await setStorageItem('yomi_google_user_profile', JSON.stringify(demoUser));
-              setGoogleUser(demoUser);
+              useGoogleDriveStore.getState().setGoogleUser(demoUser);
               Alert.alert('Modo de Prueba Activo', 'Se vinculó la cuenta de prueba usuario.demo@gmail.com.');
             },
           },
@@ -167,35 +119,18 @@ export default function ProfileScreen() {
       return;
     }
 
-    console.log('[Profile] handleConnectGoogle started');
-    setIsConnectingGoogle(true);
-    try {
-      const result = await loginWithGoogleAsync();
-      console.log('[Profile] loginWithGoogleAsync finished, setting user:', result.profile.email);
-      setGoogleUser(result.profile);
-      if (result.metadata) {
-        setDriveBackupMeta(result.metadata);
-      } else {
-        findDriveBackupFile(result.token, true).then((meta) => {
-          if (meta) setDriveBackupMeta(meta);
-        }).catch(console.warn);
-      }
-
-      const scopeCheck = await checkTokenDriveScope(result.token);
-      if (scopeCheck.valid && !scopeCheck.hasDriveScope) {
+    const res = await connectGoogle();
+    if (res.success && res.user) {
+      if (res.missingDriveScope) {
         Alert.alert(
           'Permiso de Google Drive pendiente',
-          `Se vinculó la cuenta ${result.profile.email}, pero no se otorgó permiso a Google Drive.\n\nAl iniciar sesión en Google, asegurate de marcar la casilla de verificación de Google Drive para permitir respaldar en la nube.`
+          `Se vinculó la cuenta ${res.user.email}, pero no se otorgó permiso a Google Drive.\n\nAl iniciar sesión en Google, asegurate de marcar la casilla de verificación de Google Drive para permitir respaldar en la nube.`
         );
       } else {
-        Alert.alert('Google Drive Conectado', `Vinculado exitosamente con ${result.profile.email}.`);
+        Alert.alert('Google Drive Conectado', `Vinculado exitosamente con ${res.user.email}.`);
       }
-    } catch (e: any) {
-      if (e.message !== 'USER_CANCELLED') {
-        Alert.alert('Error al vincular', e.message || 'No se pudo iniciar sesión con Google.');
-      }
-    } finally {
-      setIsConnectingGoogle(false);
+    } else if (res.error && res.error !== 'USER_CANCELLED') {
+      Alert.alert('Error al vincular', res.error);
     }
   };
 
@@ -209,9 +144,7 @@ export default function ProfileScreen() {
           text: 'Desconectar',
           style: 'destructive',
           onPress: async () => {
-            await disconnectGoogleAccount();
-            setGoogleUser(null);
-            setDriveBackupMeta(null);
+            await disconnectGoogle();
           },
         },
       ]
@@ -224,48 +157,14 @@ export default function ProfileScreen() {
       return;
     }
 
-    setIsSyncingDrive(true);
-    try {
-      let token: string | null = null;
-      try {
-        token = await getValidGoogleAccessToken();
-      } catch (err: any) {
-        console.warn('No se pudo obtener token vigente:', err.message);
-      }
-
-      if (!token) {
-        // Modo demo / simulación local
-        const pkg = await createFullBackupPackage();
-        const nowIso = new Date().toISOString();
-        const demoMeta: GoogleDriveBackupMetadata = {
-          fileId: 'mock-drive-id',
-          name: 'yomi-backup.json',
-          modifiedTime: nowIso,
-          sizeBytes: new Blob([JSON.stringify(pkg)]).size,
-          decksCount: pkg.metadata.decksCount,
-          wordsCount: pkg.metadata.wordsCount,
-          srsCount: pkg.metadata.srsCount,
-        };
-        const { setStorageItem } = await import('../../../lib/storage-service');
-        await setStorageItem('yomi_google_drive_last_backup', JSON.stringify(demoMeta));
-        setDriveBackupMeta(demoMeta);
-        Alert.alert(
-          'Copia en Google Drive Exitosa',
-          `Se respaldaron ${pkg.metadata.decksCount} mazos, ${pkg.metadata.wordsCount} palabras y ${pkg.metadata.srsCount} tarjetas SRS en tu espacio privado de Google Drive.`
-        );
-        return;
-      }
-
-      const res = await uploadBackupToGoogleDrive(token);
-      setDriveBackupMeta(res.metadata);
+    const res = await backupToDrive();
+    if (res.success && res.stats) {
       Alert.alert(
         'Copia en Google Drive Exitosa',
         `Se respaldaron ${res.stats.decksCount} mazos, ${res.stats.wordsCount} palabras y ${res.stats.srsCount} tarjetas SRS en tu espacio privado de Google Drive.`
       );
-    } catch (e: any) {
-      Alert.alert('Error al respaldar en Drive', e.message || 'No se pudo guardar la copia en Google Drive.');
-    } finally {
-      setIsSyncingDrive(false);
+    } else if (res.error) {
+      Alert.alert('Error al respaldar en Drive', res.error);
     }
   };
 
@@ -275,86 +174,53 @@ export default function ProfileScreen() {
       return;
     }
 
-    let token: string | null = null;
-    try {
-      token = await getValidGoogleAccessToken();
-    } catch { }
-
-    if (!token && !driveBackupMeta) {
-      Alert.alert('Sin copias en Google Drive', 'No se encontró ninguna copia previa en tu cuenta.');
+    const inspection = await inspectBackup();
+    if (!inspection.success || !inspection.pkg) {
+      Alert.alert('Sin copias en Google Drive', inspection.error || 'No se encontró ninguna copia previa en tu cuenta.');
       return;
     }
 
-    setIsRestoringDrive(true);
-    try {
-      let content: string;
-      if (token) {
-        content = await downloadBackupFromGoogleDrive(token);
-      } else {
-        const pkg = await createFullBackupPackage();
-        content = JSON.stringify(pkg);
-      }
+    const pkg = inspection.pkg;
+    const formattedDate = new Date(pkg.createdAt).toLocaleString();
 
-      const pkg = parseBackupFile(content);
-      const formattedDate = new Date(pkg.createdAt).toLocaleString();
-
-      getStoredDriveBackupMeta().then((meta) => {
-        if (meta) {
-          setDriveBackupMeta({
-            ...meta,
-            decksCount: pkg.metadata.decksCount,
-            wordsCount: pkg.metadata.wordsCount,
-            srsCount: pkg.metadata.srsCount,
-          });
-        }
-      });
-
-      Alert.alert(
-        'Restaurar desde Google Drive',
-        `Se encontró tu copia del ${formattedDate} con:\n• ${pkg.metadata.decksCount} mazos\n• ${pkg.metadata.wordsCount} palabras\n• ${pkg.metadata.srsCount} tarjetas SRS.\n\n¿Cómo deseás restaurar tus datos en este dispositivo?`,
-        [
-          { text: 'Cancelar', style: 'cancel', onPress: () => setIsRestoringDrive(false) },
-          {
-            text: 'Combinar',
-            onPress: async () => {
-              try {
-                const res = await restoreBackupPackage(pkg, 'merge');
-                await fetchStats();
-                Alert.alert(
-                  'Restauración Exitosa',
-                  `Se combinaron los datos desde Google Drive: ${res.decksCount} mazos y ${res.wordsCount} palabras disponibles.`
-                );
-              } catch (err: any) {
-                Alert.alert('Error al restaurar', err.message || 'Error durante la restauración.');
-              } finally {
-                setIsRestoringDrive(false);
-              }
-            },
+    Alert.alert(
+      'Restaurar desde Google Drive',
+      `Se encontró tu copia del ${formattedDate} con:\n• ${pkg.metadata.decksCount} mazos\n• ${pkg.metadata.wordsCount} palabras\n• ${pkg.metadata.srsCount} tarjetas SRS.\n\n¿Cómo deseás restaurar tus datos en este dispositivo?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Combinar',
+          onPress: async () => {
+            const res = await restoreDriveBackup('merge', pkg);
+            if (res.success && res.res) {
+              await fetchStats();
+              Alert.alert(
+                'Restauración Exitosa',
+                `Se combinaron los datos desde Google Drive: ${res.res.decksCount} mazos y ${res.res.wordsCount} palabras disponibles.`
+              );
+            } else if (res.error) {
+              Alert.alert('Error al restaurar', res.error);
+            }
           },
-          {
-            text: 'Reemplazar Todo',
-            style: 'destructive',
-            onPress: async () => {
-              try {
-                const res = await restoreBackupPackage(pkg, 'replace');
-                await fetchStats();
-                Alert.alert(
-                  'Restauración Exitosa',
-                  `Se restauró la copia completa desde Google Drive: ${res.decksCount} mazos y ${res.wordsCount} palabras.`
-                );
-              } catch (err: any) {
-                Alert.alert('Error al restaurar', err.message || 'Error durante la restauración.');
-              } finally {
-                setIsRestoringDrive(false);
-              }
-            },
+        },
+        {
+          text: 'Reemplazar Todo',
+          style: 'destructive',
+          onPress: async () => {
+            const res = await restoreDriveBackup('replace', pkg);
+            if (res.success && res.res) {
+              await fetchStats();
+              Alert.alert(
+                'Restauración Exitosa',
+                `Se restauró la copia completa desde Google Drive: ${res.res.decksCount} mazos y ${res.res.wordsCount} palabras.`
+              );
+            } else if (res.error) {
+              Alert.alert('Error al restaurar', res.error);
+            }
           },
-        ]
-      );
-    } catch (e: any) {
-      setIsRestoringDrive(false);
-      Alert.alert('Error al restaurar', e.message || 'No se pudo leer la copia de Google Drive.');
-    }
+        },
+      ]
+    );
   };
 
   const handleTestAudio = (lang: string, sampleText: string) => {
@@ -593,33 +459,37 @@ export default function ProfileScreen() {
           style={[styles.backupStatusBox, { backgroundColor: colors.surfaceHighlight }]}
           onPress={async () => {
             if (!googleUser) return;
-            try {
-              const meta = await findDriveBackupFile(true);
-              if (meta) {
-                setDriveBackupMeta(meta);
-                Alert.alert('Copia Encontrada', `Última copia: ${new Date(meta.modifiedTime).toLocaleString()}`);
-              } else {
-                Alert.alert('Google Drive', 'No se encontraron copias en tu espacio privado de Google Drive.');
-              }
-            } catch (err: any) {
-              Alert.alert('Error al consultar Drive', err.message || 'No se pudo consultar Google Drive.');
+            const res = await refreshDriveMeta(true);
+            if (res.success && res.meta) {
+              Alert.alert('Copia Encontrada', `Última copia: ${new Date(res.meta.modifiedTime).toLocaleString()}`);
+            } else if (res.success) {
+              Alert.alert('Google Drive', 'No se encontraron copias en tu espacio privado de Google Drive.');
+            } else if (res.error) {
+              Alert.alert('Error al consultar Drive', res.error);
             }
           }}
+          disabled={isChecking}
           activeOpacity={0.7}
         >
-          <Ionicons
-            name="cloud-done-outline"
-            size={16}
-            color={driveBackupMeta ? '#10B981' : colors.textMuted}
-            style={{ marginRight: 8 }}
-          />
+          {isChecking ? (
+            <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: 8 }} />
+          ) : (
+            <Ionicons
+              name="cloud-done-outline"
+              size={16}
+              color={driveBackupMeta ? '#10B981' : colors.textMuted}
+              style={{ marginRight: 8 }}
+            />
+          )}
           <View style={{ flex: 1 }}>
             <Text style={[styles.backupStatusText, { color: colors.textMuted }]}>
-              {driveBackupMeta
+              {isChecking
+                ? 'Consultando Google Drive...'
+                : driveBackupMeta
                 ? `Última copia: ${new Date(driveBackupMeta.modifiedTime).toLocaleString()} ${formatBytes(driveBackupMeta.sizeBytes) ? `${formatBytes(driveBackupMeta.sizeBytes)}` : ''}`
                 : 'Sin copias en Google Drive aún (toca para reintentar)'}
             </Text>
-            {driveBackupMeta && driveBackupMeta.decksCount !== undefined && (
+            {driveBackupMeta && driveBackupMeta.decksCount !== undefined && !isChecking && (
               <Text style={[styles.backupStatusSubText, { color: colors.textMuted }]}>
                 {driveBackupMeta.decksCount} mazos • {driveBackupMeta.wordsCount} palabras • {driveBackupMeta.srsCount} tarjetas SRS
               </Text>

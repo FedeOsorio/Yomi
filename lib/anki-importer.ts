@@ -9,6 +9,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import * as SQLite from 'expo-sqlite';
 import { unzipSync } from 'fflate';
+import { getKanjiEssentialReading } from './jlpt-data';
 
 export interface RawImportRow {
   [key: string]: string;
@@ -245,6 +246,54 @@ export function isHeaderRow(row: string[]): boolean {
 }
 
 /**
+ * Enriquece un ítem de vocabulario con la lectura esencial canónica (especialmente para Kanjis N5/N4)
+ * y preserva el desglose On/Kun en rawExtras.
+ */
+function enrichVocabularyItem(
+  mainText: string,
+  reading: string,
+  meanings: string[],
+  level?: string,
+  extras?: Record<string, string>
+): ParsedVocabularyItem {
+  const cleanMain = mainText.trim();
+  const isSingleKanji = cleanMain.length === 1 && /[\u4e00-\u9faf]/.test(cleanMain);
+  let finalReading = reading.trim();
+  const rawExtras: Record<string, string> = { ...(extras || {}) };
+
+  if (isSingleKanji) {
+    let rawOn = rawExtras.onReading || '';
+    let rawKun = rawExtras.kunReading || '';
+    if (!rawOn && !rawKun && (finalReading.includes('/') || /\b(on|kun)\b/i.test(finalReading) || finalReading.includes('•'))) {
+      const parts = finalReading.split(/[\/•]/).map((p) => p.trim());
+      parts.forEach((p) => {
+        if (/^on[:：\s]/i.test(p) || /^[\u30a0-\u30ff\s,、]+$/.test(p)) {
+          rawOn = p.replace(/^on[:：\s]*/i, '').trim();
+        } else if (/^kun[:：\s]/i.test(p) || /^[\u3040-\u309f\s,、\-\~]+$/.test(p)) {
+          rawKun = p.replace(/^kun[:：\s]*/i, '').trim();
+        }
+      });
+    }
+
+    const kanjiDetails = getKanjiEssentialReading(cleanMain, rawOn, rawKun);
+    if (kanjiDetails.essentialReading && kanjiDetails.essentialReading !== cleanMain) {
+      finalReading = kanjiDetails.essentialReading;
+    }
+    if (kanjiDetails.kanjiReadings) rawExtras.kanjiReadings = kanjiDetails.kanjiReadings;
+    if (kanjiDetails.onReading) rawExtras.onReading = kanjiDetails.onReading;
+    if (kanjiDetails.kunReading) rawExtras.kunReading = kanjiDetails.kunReading;
+  }
+
+  return {
+    text: cleanMain,
+    reading: finalReading || undefined,
+    meanings,
+    level: level || undefined,
+    rawExtras: Object.keys(rawExtras).length > 0 ? rawExtras : undefined,
+  };
+}
+
+/**
  * Analiza texto completo exportado (CSV, TSV o TXT) y genera el resultado estructurado
  * con sugerencia de columnas y filas parseadas.
  */
@@ -348,12 +397,7 @@ export function parseVocabularyFile(content: string, customDelimiter?: string): 
 
     const meanings = splitMeanings.length > 0 ? splitMeanings : [cleanMeaningStr];
 
-    items.push({
-      text: mainText,
-      reading: reading || undefined,
-      meanings,
-      level: cleanHtmlAndAnkiTags(rawLevel) || undefined,
-    });
+    items.push(enrichVocabularyItem(mainText, reading, meanings, cleanHtmlAndAnkiTags(rawLevel)));
   });
 
   return {
@@ -395,12 +439,9 @@ export function applyMappingToRows(
       .map((m) => m.trim())
       .filter((m) => m.length > 0);
 
-    items.push({
-      text: mainText,
-      reading: reading || undefined,
-      meanings: splitMeanings.length > 0 ? splitMeanings : [cleanMeaningStr],
-      level: cleanHtmlAndAnkiTags(rawLevel) || undefined,
-    });
+    const meanings = splitMeanings.length > 0 ? splitMeanings : [cleanMeaningStr];
+
+    items.push(enrichVocabularyItem(mainText, reading, meanings, cleanHtmlAndAnkiTags(rawLevel)));
   });
 
   return items;
@@ -626,10 +667,11 @@ export async function extractAnkiPackageAsync(fileUri: string): Promise<AnkiPack
         reading = furiganaParsed.reading;
       }
 
+      const rawOn = onIdx >= 0 ? fieldValues[onIdx] : '';
+      const rawKun = kunIdx >= 0 ? fieldValues[kunIdx] : '';
+
       if (!reading) {
         if (onIdx >= 0 || kunIdx >= 0) {
-          const rawOn = onIdx >= 0 ? fieldValues[onIdx] : '';
-          const rawKun = kunIdx >= 0 ? fieldValues[kunIdx] : '';
           const cleanOn = rawOn.replace(/[・]/g, '').trim();
           const cleanKun = rawKun.replace(/[・]/g, '').trim();
           if (cleanOn && cleanKun) {
@@ -671,12 +713,18 @@ export async function extractAnkiPackageAsync(fileUri: string): Promise<AnkiPack
       const levelVal = levelIdx >= 0 ? fieldValues[levelIdx] : undefined;
 
       if (text.length > 0) {
-        items.push({
-          text,
-          reading: reading || undefined,
-          meanings: splitMeanings.length > 0 ? splitMeanings : [meaning],
-          level: levelVal || undefined,
-        });
+        items.push(
+          enrichVocabularyItem(
+            text,
+            reading,
+            splitMeanings.length > 0 ? splitMeanings : [meaning],
+            levelVal,
+            {
+              ...(rawOn ? { onReading: rawOn.replace(/[・]/g, '').trim() } : {}),
+              ...(rawKun ? { kunReading: rawKun.replace(/[・]/g, '').trim() } : {}),
+            }
+          )
+        );
       }
     }
 
