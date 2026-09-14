@@ -1,5 +1,6 @@
 import { romajiToHiragana, containsJapanese, deconjugateJapanese, classifyJapaneseWord, conjugateJapanese, JapaneseConjugationForm, toNormalizedHiragana } from './japanese-utils';
 import { getQuickJlptLevel } from './jlpt-data';
+import { getStorageItem, setStorageItem } from './storage-service';
 
 export interface JapaneseEntry {
   id: string;
@@ -240,14 +241,60 @@ export function cleanAndFormatMeanings(meanings: string[] | string): string[] {
   return result;
 }
 
+const TRANSLATION_CACHE_KEY = 'yomi_translation_cache';
 const translationCache = new Map<string, string>();
+let isCacheLoaded = false;
+let saveCacheTimeout: NodeJS.Timeout | null = null;
+
+/**
+ * Carga la caché persistente desde el almacenamiento local.
+ */
+async function ensureTranslationCacheLoaded(): Promise<void> {
+  if (isCacheLoaded) return;
+  try {
+    const raw = await getStorageItem(TRANSLATION_CACHE_KEY);
+    if (raw) {
+      const parsed: Record<string, string> = JSON.parse(raw);
+      for (const [k, v] of Object.entries(parsed)) {
+        translationCache.set(k, v);
+      }
+    }
+  } catch (e) {
+    console.warn('Error al cargar caché de traducciones:', e);
+  } finally {
+    isCacheLoaded = true;
+  }
+}
+
+/**
+ * Guarda las traducciones en almacenamiento local con debounce para no saturar el disco.
+ */
+function persistTranslationCacheDebounced(): void {
+  if (saveCacheTimeout) clearTimeout(saveCacheTimeout);
+  saveCacheTimeout = setTimeout(async () => {
+    try {
+      const obj: Record<string, string> = {};
+      let count = 0;
+      for (const [k, v] of translationCache.entries()) {
+        obj[k] = v;
+        count++;
+        if (count >= 2000) break; // Máximo 2000 traducciones cacheadas
+      }
+      await setStorageItem(TRANSLATION_CACHE_KEY, JSON.stringify(obj));
+    } catch (e) {
+      console.warn('Error al persistir caché de traducciones:', e);
+    }
+  }, 1000);
+}
 
 /**
  * Traduce un conjunto de textos al español en 1 sola solicitud HTTP por lotes,
- * utilizando caché en memoria para evitar llamadas redundantes y prevenir rate limits (HTTP 429).
+ * utilizando caché persistente en disco para funcionar 100% offline y evitar rate limits (HTTP 429).
  */
 export async function translateBatchToSpanish(texts: string[], fromLang: 'en' | 'ja' = 'en'): Promise<string[]> {
   if (!texts || texts.length === 0) return [];
+
+  await ensureTranslationCacheLoaded();
 
   const results: string[] = new Array(texts.length);
   const pendingIndices: number[] = [];
@@ -272,6 +319,8 @@ export async function translateBatchToSpanish(texts: string[], fromLang: 'en' | 
     return results;
   }
 
+  let hasNewTranslations = false;
+
   // Dividir en grupos de hasta 15 frases por llamada para máxima estabilidad y evitar rate limits
   const CHUNK_SIZE = 15;
   for (let c = 0; c < pendingTexts.length; c += CHUNK_SIZE) {
@@ -280,9 +329,15 @@ export async function translateBatchToSpanish(texts: string[], fromLang: 'en' | 
     const joinedQuery = chunkTexts.join(' \n\n ');
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500); // 3.5s timeout defensivo
+
       const res = await fetch(
-        `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${fromLang}&tl=es&dt=t&q=${encodeURIComponent(joinedQuery)}`
+        `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${fromLang}&tl=es&dt=t&q=${encodeURIComponent(joinedQuery)}`,
+        { signal: controller.signal }
       );
+      clearTimeout(timeoutId);
+
       if (res.ok) {
         const data = await res.json();
         if (data && data[0] && Array.isArray(data[0])) {
@@ -295,12 +350,13 @@ export async function translateBatchToSpanish(texts: string[], fromLang: 'en' | 
             const capitalized = capitalizeFirst(translatedPart);
             translationCache.set(`${fromLang}::${originalText.toLowerCase()}`, capitalized);
             results[originalIndex] = capitalized;
+            hasNewTranslations = true;
           }
           continue;
         }
       }
     } catch (err) {
-      console.warn('Error en traducción por lotes:', err);
+      console.warn('Error en traducción por lotes (posible modo offline):', err);
     }
 
     // Fallback individual si el lote falló
@@ -308,21 +364,32 @@ export async function translateBatchToSpanish(texts: string[], fromLang: 'en' | 
       const originalIndex = chunkIndices[j];
       const originalText = chunkTexts[j];
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000);
+
         const singleRes = await fetch(
-          `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${fromLang}&tl=es&dt=t&q=${encodeURIComponent(originalText)}`
+          `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${fromLang}&tl=es&dt=t&q=${encodeURIComponent(originalText)}`,
+          { signal: controller.signal }
         );
+        clearTimeout(timeoutId);
+
         if (singleRes.ok) {
           const singleData = await singleRes.json();
           if (singleData && singleData[0] && singleData[0][0] && singleData[0][0][0]) {
             const translated = capitalizeFirst(singleData[0][0][0].trim());
             translationCache.set(`${fromLang}::${originalText.toLowerCase()}`, translated);
             results[originalIndex] = translated;
+            hasNewTranslations = true;
             continue;
           }
         }
       } catch { }
       results[originalIndex] = capitalizeFirst(originalText);
     }
+  }
+
+  if (hasNewTranslations) {
+    persistTranslationCacheDebounced();
   }
 
   return results;

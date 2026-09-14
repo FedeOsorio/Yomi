@@ -4,6 +4,8 @@ import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from '
 import {
   ActivityIndicator,
   Animated,
+  AppState,
+  type AppStateStatus,
   BackHandler,
   Easing,
   FlatList,
@@ -40,94 +42,18 @@ import {
   getAllCardsForPractice,
   getDueCards,
   healCorruptedSrsIntervals,
-  JA_NUMBERS,
   processCardReview,
   removeCardFromReview,
   rescheduleCardNextDay,
-  ZH_NUMBERS,
 } from '../../../lib/srs-engine';
 import { CompoundWord, getCompoundWordsForChar } from '../../../lib/word-service';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { getFloatingTabBarStyle, Shadows, Spacing, Typography } from '../../constants/theme';
+import { VoiceTranscriptArea } from '../../components/review/VoiceTranscriptArea';
+import { VoiceMicControl } from '../../components/review/VoiceMicControl';
+import { ReviewMethodModal } from '../../components/review/ReviewMethodModal';
 
-const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 const VOICE_TIMEOUT_SECONDS = 15;
-const CIRCLE_RADIUS = 46;
-const CIRCUMFERENCE = 2 * Math.PI * CIRCLE_RADIUS;
-
-interface SpokenRubyData {
-  mainText: string;
-  rubyText?: string;
-}
-
-/**
- * Da formato estilo Ruby a lo que pronuncia el usuario:
- * Texto principal en Hiragana o Katakana, y los Kanjis correspondientes ubicados arriba.
- */
-function getSpokenRubyDisplay(
-  transcript: string,
-  card: DueCardWithContext | null,
-  lang: string
-): SpokenRubyData {
-  if (!transcript) return { mainText: '' };
-  const trimmed = transcript.trim();
-  const isJapanese = (lang || '').toLowerCase().startsWith('ja');
-  const isChinese = (lang || '').toLowerCase().startsWith('zh');
-
-  if (isJapanese) {
-    // 1. Números arábigos a Kana con Kanji arriba
-    if (JA_NUMBERS[trimmed]) {
-      return {
-        mainText: JA_NUMBERS[trimmed].kana,
-        rubyText: JA_NUMBERS[trimmed].kanji,
-      };
-    }
-
-    // 2. Si coincide con la tarjeta actual (o contiene sus kanjis)
-    if (card) {
-      const isMatch = checkVoiceMatch(card, transcript, lang);
-      const cardHasKanji = /[\u4e00-\u9faf]/.test(card.displayText);
-
-      if (isMatch) {
-        if (cardHasKanji) {
-          return {
-            mainText: card.displayReading, // Hiragana o Katakana
-            rubyText: card.displayText,   // Kanji arriba estilo Ruby
-          };
-        } else {
-          return {
-            mainText: card.displayText,   // Kana puro
-          };
-        }
-      }
-    }
-
-    // 3. Si Google Speech transcribió Romaji, convertir a Hiragana
-    let converted = transcript;
-    if (/[a-zA-Z]/.test(converted)) {
-      converted = romajiToHiragana(converted);
-    }
-    return { mainText: converted };
-  }
-
-  if (isChinese) {
-    if (ZH_NUMBERS[trimmed]) {
-      return {
-        mainText: ZH_NUMBERS[trimmed].pinyin,
-        rubyText: ZH_NUMBERS[trimmed].hanzi,
-      };
-    }
-    if (card && checkVoiceMatch(card, transcript, lang)) {
-      return {
-        mainText: card.displayReading,
-        rubyText: card.displayText,
-      };
-    }
-    return { mainText: transcript };
-  }
-
-  return { mainText: transcript };
-}
 
 interface DeckGridCardProps {
   item: DeckWithStats;
@@ -441,6 +367,19 @@ export default function ReviewScreen() {
     return () => subscription.remove();
   }, [selectedDeckId]);
 
+  // Pausar y liberar el micrófono si la app pasa a segundo plano (llamada, minimizar, bloquear pantalla)
+  useEffect(() => {
+    const handleAppStateChange = (nextState: AppStateStatus) => {
+      if (nextState === 'background' || nextState === 'inactive') {
+        stopSpeech();
+        speechService.abort().catch(() => {});
+        setIsListening(false);
+      }
+    };
+    const sub = AppState.addEventListener('change', handleAppStateChange);
+    return () => sub.remove();
+  }, []);
+
   // Al perder el foco (p. ej. al cambiar de pestaña o salir de la pantalla), detener el micrófono y limpiar la sesión
   useFocusEffect(
     useCallback(() => {
@@ -745,6 +684,7 @@ export default function ReviewScreen() {
 
   // Ciclo continuo de escucha con el micrófono con temporizador de 15 segundos sincronizado al inicio real
   const startVoiceListeningForCard = async (card: DueCardWithContext, lang: string) => {
+    stopSpeech();
     if (autoTimerRef.current) {
       clearTimeout(autoTimerRef.current);
       autoTimerRef.current = null;
@@ -998,7 +938,7 @@ export default function ReviewScreen() {
       toValue: 1,
       duration: durationMs,
       easing: Easing.linear,
-      useNativeDriver: false,
+      useNativeDriver: true,
     }).start();
 
     autoTimerRef.current = setTimeout(() => {
@@ -1033,7 +973,7 @@ export default function ReviewScreen() {
       toValue: 1,
       duration: remainingMs,
       easing: Easing.linear,
-      useNativeDriver: false,
+      useNativeDriver: true,
     }).start();
 
     autoTimerRef.current = setTimeout(() => {
@@ -1050,7 +990,8 @@ export default function ReviewScreen() {
     isCountdownPausedRef.current = false;
     flipCountdownAnim.stopAnimation();
     flipCountdownAnim.setValue(0);
-    // Asegurar que la sesión de micrófono previa quede completamente liberada de inmediato
+    // Detener cualquier reproducción TTS activa y asegurar que el micrófono previo quede liberado
+    stopSpeech();
     speechService.abort().catch(() => {});
 
     // Rotar la tarjeta suavemente de regreso al frente a 60 FPS
@@ -1636,91 +1577,14 @@ export default function ReviewScreen() {
           />
         )}
 
-        {renderMethodModal()}
+        <ReviewMethodModal
+          visible={showMethodModal}
+          pendingSelection={pendingSelection}
+          colors={colors}
+          onClose={() => setShowMethodModal(false)}
+          onSelectMethod={handleSelectMethod}
+        />
       </View>
-    );
-  }
-
-  // Helper para renderizar el modal de selección de método
-  function renderMethodModal() {
-    return (
-      <Modal
-        visible={showMethodModal}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setShowMethodModal(false)}
-      >
-        <Pressable style={styles.modalBackdrop} onPress={() => setShowMethodModal(false)}>
-          <Pressable style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.border }]} onPress={(e) => e.stopPropagation()}>
-            <View style={styles.modalHeaderRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.modalTitle, { color: colors.text }]} numberOfLines={1}>
-                  {pendingSelection?.deckName}
-                </Text>
-                <Text style={[styles.modalSub, { color: pendingSelection?.hasDue ? colors.primary : '#10B981' }]}>
-                  {pendingSelection?.hasDue
-                    ? 'Repaso Oficial SRS (FSRS v5)'
-                    : 'Mazo al día • Modo Práctica Libre'}
-                </Text>
-              </View>
-              <TouchableOpacity onPress={() => setShowMethodModal(false)} style={styles.modalCloseBtn}>
-                <Ionicons name="close" size={22} color={colors.textMuted} />
-              </TouchableOpacity>
-            </View>
-
-            <Text style={[styles.modalSectionLabel, { color: colors.textMuted }]}>
-              ¿CÓMO QUIERES ESTUDIAR HOY?
-            </Text>
-
-            {/* Opción 1: Modo Clásico (Teclado) */}
-            <TouchableOpacity
-              style={[styles.methodOptionCard, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}
-              activeOpacity={0.8}
-              onPress={() => handleSelectMethod('text')}
-            >
-              <View style={[styles.methodIconBox, { backgroundColor: colors.surface }]}>
-                <Ionicons name="create-outline" size={24} color={colors.text} />
-              </View>
-              <View style={styles.methodTextCol}>
-                <Text style={[styles.methodTitle, { color: colors.text }]}>Modo Clásico (Escritura)</Text>
-                <Text style={[styles.methodDesc, { color: colors.textMuted }]}>
-                  Escribe la lectura o el significado con el teclado para fijar la memoria.
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-            </TouchableOpacity>
-
-            {/* Opción 2: Modo Manos Libres (Micrófono) */}
-            <TouchableOpacity
-              style={[
-                styles.methodOptionCard,
-                {
-                  backgroundColor: colors.primary + '12',
-                  borderColor: colors.primary,
-                },
-              ]}
-              activeOpacity={0.8}
-              onPress={() => handleSelectMethod('voice')}
-            >
-              <View style={[styles.methodIconBox, { backgroundColor: colors.primary }]}>
-                <Ionicons name="mic" size={24} color="#FFF" />
-              </View>
-              <View style={styles.methodTextCol}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Text style={[styles.methodTitle, { color: colors.text }]}>Modo Manos Libres (Voz)</Text>
-                  <View style={[styles.newBadge, { backgroundColor: colors.primary }]}>
-                    <Text style={styles.newBadgeText}>NUEVO</Text>
-                  </View>
-                </View>
-                <Text style={[styles.methodDesc, { color: colors.textMuted }]}>
-                  Pronuncia en voz alta. Flujo de tarjetas 100% automático.
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color={colors.primary} />
-            </TouchableOpacity>
-          </Pressable>
-        </Pressable>
-      </Modal>
     );
   }
 
@@ -1763,7 +1627,13 @@ export default function ReviewScreen() {
           </TouchableOpacity>
         </View>
 
-        {renderMethodModal()}
+        <ReviewMethodModal
+          visible={showMethodModal}
+          pendingSelection={pendingSelection}
+          colors={colors}
+          onClose={() => setShowMethodModal(false)}
+          onSelectMethod={handleSelectMethod}
+        />
       </View>
     );
   }
@@ -1832,33 +1702,12 @@ export default function ReviewScreen() {
         >
           {/* Lo que el usuario pronuncia con altura fija de 60px para que nunca salte */}
           {studyMethod === 'voice' && !isCustomCard && (
-            <View style={[styles.floatingTranscriptArea, isChecked && { opacity: 0 }]}>
-              {speechTranscript ? (
-                (() => {
-                  const spokenRuby = getSpokenRubyDisplay(
-                    speechTranscript,
-                    currentCard,
-                    getEffectiveCardLanguage(currentCard)
-                  );
-                  return (
-                    <View style={styles.rubySpokenContainer}>
-                      {spokenRuby.rubyText ? (
-                        <Text style={[styles.rubySpokenKanji, { color: colors.primary }]}>
-                          {spokenRuby.rubyText}
-                        </Text>
-                      ) : null}
-                      <Text style={[styles.rubySpokenKana, { color: colors.text }]}>
-                        “{spokenRuby.mainText}”
-                      </Text>
-                    </View>
-                  );
-                })()
-              ) : (
-                <Text style={[styles.floatingSpokenText, { color: colors.textMuted }]}>
-                  Pronuncia en voz alta...
-                </Text>
-              )}
-            </View>
+            <VoiceTranscriptArea
+              transcript={speechTranscript}
+              card={currentCard}
+              isChecked={isChecked}
+              colors={colors}
+            />
           )}
 
           {/* Contenedor Flip Card 3D */}
@@ -2071,84 +1920,23 @@ export default function ReviewScreen() {
           {studyMethod === 'voice' && (
             <View style={styles.voiceFloatingContainer}>
               {!isChecked ? (
-                <>
-                  {/* Contenedor del Micrófono con borde animado continuo y halo flotante */}
-                  <View style={styles.micCircleWrapper}>
-                    <Svg width={106} height={106} style={styles.micSvgRing}>
-                      {/* Círculo de fondo tenue */}
-                      <Circle
-                        cx="53"
-                        cy="53"
-                        r={CIRCLE_RADIUS}
-                        stroke={colors.surfaceHighlight}
-                        strokeWidth="3.5"
-                        fill="none"
-                      />
-                      {/* Círculo de progreso continuo a 60 FPS */}
-                      <AnimatedCircle
-                        cx="53"
-                        cy="53"
-                        r={CIRCLE_RADIUS}
-                        stroke={colors.primary}
-                        strokeWidth="4.5"
-                        strokeDasharray={`${CIRCUMFERENCE}`}
-                        strokeDashoffset={voiceProgressAnim.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [CIRCUMFERENCE, 0],
-                        })}
-                        strokeLinecap="round"
-                        fill="none"
-                        transform="rotate(-90 53 53)"
-                      />
-                    </Svg>
-
-                    {/* Botón flotante con halo suave de pulsación sin elevation */}
-                    <Animated.View
-                      style={[
-                        styles.micFloatingAura,
-                        {
-                          backgroundColor: isListening ? colors.primary + '16' : 'transparent',
-                          transform: [{ scale: micPulseAnim }],
-                        },
-                      ]}
-                    >
-                      <TouchableOpacity
-                        style={[
-                          styles.floatingMicButton,
-                          {
-                            backgroundColor: isListening ? colors.primary : colors.surfaceHighlight,
-                            borderColor: isListening ? colors.primaryHover : colors.border,
-                          },
-                        ]}
-                        activeOpacity={0.8}
-                        onPress={() => {
-                          if (isListening) {
-                            speechService.stop();
-                            setIsListening(false);
-                            setSpeechStatus('idle');
-                            voiceProgressAnim.stopAnimation();
-                          } else {
-                            startVoiceListeningForCard(currentCard, lang);
-                          }
-                        }}
-                      >
-                        <Ionicons
-                          name={isListening ? 'mic' : 'mic-outline'}
-                          size={38}
-                          color={isListening ? '#FFF' : colors.primary}
-                        />
-                      </TouchableOpacity>
-                    </Animated.View>
-                  </View>
-
-                  <Text style={[styles.floatingMicHintText, { color: colors.textMuted }]}>
-                    {speechStatus === 'listening'
-                      ? 'Escuchando tu pronunciación...'
-                      : speechStatus === 'evaluating'
-                        ? 'Evaluando respuesta...'
-                        : 'Toca el micrófono para comenzar'}
-                  </Text>
-                </>
+                <VoiceMicControl
+                  isListening={isListening}
+                  speechStatus={speechStatus}
+                  voiceProgressAnim={voiceProgressAnim}
+                  micPulseAnim={micPulseAnim}
+                  colors={colors}
+                  onPress={() => {
+                    if (isListening) {
+                      speechService.stop();
+                      setIsListening(false);
+                      setSpeechStatus('idle');
+                      voiceProgressAnim.stopAnimation();
+                    } else {
+                      startVoiceListeningForCard(currentCard, lang);
+                    }
+                  }}
+                />
               ) : (
                 evaluation?.voiceScore && (
                   <View style={styles.outsideVoiceScoreWrapper}>
@@ -2207,7 +1995,7 @@ export default function ReviewScreen() {
         </ScrollView>
       </View>
 
-      {/* Barra de cuenta regresiva visible solo cuando la tarjeta está dada vuelta en modo voz */}
+      {/* Barra de cuenta regresiva visible solo cuando la tarjeta está dada vuelta en modo voz (acelerada por GPU a 60 FPS) */}
       {studyMethod === 'voice' && isChecked && (
         <View style={styles.flipCountdownContainer}>
           <Animated.View
@@ -2215,10 +2003,14 @@ export default function ReviewScreen() {
               styles.flipCountdownBar,
               {
                 backgroundColor: colors.primary,
-                width: flipCountdownAnim.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: ['0%', '100%'],
-                }),
+                transform: [
+                  {
+                    scaleX: flipCountdownAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0, 1],
+                    }),
+                  },
+                ],
               },
             ]}
           />
@@ -2727,8 +2519,10 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   flipCountdownBar: {
+    width: '100%',
     height: 4,
     borderRadius: 2,
+    transformOrigin: 'left',
   },
   bottomBar: {
     padding: Spacing.md,
@@ -3026,70 +2820,6 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 155,
   },
-  floatingTranscriptArea: {
-    height: 60,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.lg,
-    marginBottom: Spacing.xs,
-  },
-  floatingSpokenText: {
-    fontSize: 22,
-    fontWeight: '700',
-    textAlign: 'center',
-    letterSpacing: 0.3,
-  },
-  rubySpokenContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  rubySpokenKanji: {
-    fontSize: 15,
-    fontWeight: '700',
-    letterSpacing: 2,
-    marginBottom: 1,
-    textAlign: 'center',
-  },
-  rubySpokenKana: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    letterSpacing: 0.5,
-    textAlign: 'center',
-  },
-  micCircleWrapper: {
-    width: 106,
-    height: 106,
-    justifyContent: 'center',
-    alignItems: 'center',
-    position: 'relative',
-    marginBottom: Spacing.xs,
-  },
-  micSvgRing: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-  },
-  micFloatingAura: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  floatingMicButton: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    borderWidth: 1.5,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  floatingMicHintText: {
-    fontSize: 13,
-    fontWeight: '500',
-    textAlign: 'center',
-    marginTop: 4,
-  },
   outsideVoiceScoreWrapper: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -3107,84 +2837,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     letterSpacing: 0.3,
-  },
-  // Estilos del Modal Selector de Método
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.65)',
-    justifyContent: 'flex-end',
-  },
-  modalCard: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    borderWidth: 1,
-    padding: Spacing.lg,
-    paddingBottom: 40,
-    ...Shadows.card,
-  },
-  modalHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: Spacing.md,
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 2,
-  },
-  modalSub: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  modalCloseBtn: {
-    padding: 4,
-  },
-  modalSectionLabel: {
-    fontSize: 11,
-    fontWeight: 'bold',
-    letterSpacing: 0.5,
-    marginBottom: Spacing.sm,
-  },
-  methodOptionCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: Spacing.md,
-    borderRadius: 16,
-    borderWidth: 1,
-    marginBottom: Spacing.sm,
-  },
-  methodIconBox: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: Spacing.md,
-  },
-  methodTextCol: {
-    flex: 1,
-    marginRight: Spacing.xs,
-  },
-  methodTitle: {
-    fontSize: 15,
-    fontWeight: 'bold',
-    marginBottom: 2,
-  },
-  methodDesc: {
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  newBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 6,
-    marginLeft: 6,
-  },
-  newBadgeText: {
-    color: '#FFF',
-    fontSize: 9,
-    fontWeight: 'bold',
   },
   // Estilos de tarjetas y flujo de Mazos Personalizados (Custom)
   customFrontBox: {

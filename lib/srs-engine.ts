@@ -4,7 +4,16 @@ import { db } from '../db';
 import { srsItems, words, decks } from '../db/schema';
 import { eq, lte, and } from 'drizzle-orm';
 import { toSearchKey } from './pinyin-utils';
-import { toNormalizedHiragana, romajiToHiragana, getEffectiveCardLanguage, expandNumberArtifacts } from './japanese-utils';
+import {
+  toNormalizedHiragana,
+  romajiToHiragana,
+  getEffectiveCardLanguage,
+  expandNumberArtifacts,
+  JA_NUMBERS,
+  ZH_NUMBERS,
+} from './japanese-utils';
+
+export { JA_NUMBERS, ZH_NUMBERS };
 
 // Inicializar motor FSRS con intervalos diarios (sin pasos de minutos intra-día)
 let _fsrsInstance: ReturnType<typeof fsrs> | null = null;
@@ -101,69 +110,6 @@ export function checkReadingMatch(expectedReading: string, userInput: string): b
 
   return false;
 }
-
-export const JA_NUMBERS: Record<string, { kana: string; kanji: string }> = {
-  '0': { kana: 'れい', kanji: '零' },
-  '1': { kana: 'いち', kanji: '一' },
-  '2': { kana: 'に', kanji: '二' },
-  '3': { kana: 'さん', kanji: '三' },
-  '4': { kana: 'よん', kanji: '四' },
-  '5': { kana: 'ご', kanji: '五' },
-  '6': { kana: 'ろく', kanji: '六' },
-  '7': { kana: 'なな', kanji: '七' },
-  '8': { kana: 'はち', kanji: '八' },
-  '9': { kana: 'きゅう', kanji: '九' },
-  '10': { kana: 'じゅう', kanji: '十' },
-  '11': { kana: 'じゅういち', kanji: '十一' },
-  '12': { kana: 'じゅうに', kanji: '十二' },
-  '13': { kana: 'じゅうさん', kanji: '十三' },
-  '14': { kana: 'じゅうよん', kanji: '十四' },
-  '15': { kana: 'じゅうご', kanji: '十五' },
-  '16': { kana: 'じゅうろく', kanji: '十六' },
-  '17': { kana: 'じゅうなな', kanji: '十七' },
-  '18': { kana: 'じゅうはち', kanji: '十八' },
-  '19': { kana: 'じゅうきゅう', kanji: '十九' },
-  '20': { kana: 'にじゅう', kanji: '二十' },
-  '30': { kana: 'さんじゅう', kanji: '三十' },
-  '40': { kana: 'よんじゅう', kanji: '四十' },
-  '50': { kana: 'ごじゅう', kanji: '五十' },
-  '100': { kana: 'ひゃく', kanji: '百' },
-  '200': { kana: 'にひゃく', kanji: '二百' },
-  '300': { kana: 'さんびゃく', kanji: '三百' },
-  '400': { kana: 'よんひゃく', kanji: '四百' },
-  '500': { kana: 'ごひゃく', kanji: '五百' },
-  '600': { kana: 'ろっぴゃく', kanji: '六百' },
-  '700': { kana: 'ななひゃく', kanji: '七百' },
-  '800': { kana: 'はっぴゃく', kanji: '八百' },
-  '900': { kana: 'きゅうひゃく', kanji: '九百' },
-  '1000': { kana: 'せん', kanji: '千' },
-  '2000': { kana: 'にせん', kanji: '二千' },
-  '3000': { kana: 'さんぜん', kanji: '三千' },
-  '4000': { kana: 'よんせん', kanji: '四千' },
-  '5000': { kana: 'ごせん', kanji: '五千' },
-  '6000': { kana: 'ろくせん', kanji: '六千' },
-  '7000': { kana: 'ななせん', kanji: '七千' },
-  '8000': { kana: 'はっせん', kanji: '八千' },
-  '9000': { kana: 'きゅうせん', kanji: '九千' },
-  '10000': { kana: 'いちまん', kanji: '一万' },
-  '100000': { kana: 'じゅうまん', kanji: '十万' },
-  '1000000': { kana: 'ひゃくまん', kanji: '百万' },
-};
-
-
-export const ZH_NUMBERS: Record<string, { pinyin: string; hanzi: string }> = {
-  '0': { pinyin: 'ling2', hanzi: '零' },
-  '1': { pinyin: 'yi1', hanzi: '一' },
-  '2': { pinyin: 'er4', hanzi: '二' },
-  '3': { pinyin: 'san1', hanzi: '三' },
-  '4': { pinyin: 'si4', hanzi: '四' },
-  '5': { pinyin: 'wu3', hanzi: '五' },
-  '6': { pinyin: 'liu4', hanzi: '六' },
-  '7': { pinyin: 'qi1', hanzi: '七' },
-  '8': { pinyin: 'ba1', hanzi: '八' },
-  '9': { pinyin: 'jiu3', hanzi: '九' },
-  '10': { pinyin: 'shi2', hanzi: '十' },
-};
 
 /**
  * Da formato legible a la transcripción de voz si el motor transcribió números arábigos

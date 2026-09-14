@@ -79,6 +79,7 @@ export const srsItems = sqliteTable('srs_items', {
 }, (table) => {
   return {
     srsDueIdx: index('idx_srs_due').on(table.due),
+    srsItemIdIdx: index('idx_srs_item_id').on(table.itemId),
     srsTypeItemIdx: index('idx_srs_type_item').on(table.itemType, table.itemId),
   };
 });

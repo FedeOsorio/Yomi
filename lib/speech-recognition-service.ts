@@ -31,6 +31,8 @@ export interface SpeechRecognitionOptions {
   maxAlternatives?: number;
   /** Modo continuo */
   continuous?: boolean;
+  /** Modelo de lenguaje en Android: 'free_form' (vocabulario general/fonético) o 'web_search' */
+  androidLanguageModel?: 'free_form' | 'web_search';
 }
 
 class SpeechRecognitionService {
@@ -125,7 +127,7 @@ class SpeechRecognitionService {
         continuous: options?.continuous ?? true,
         maxAlternatives: options?.maxAlternatives ?? 10,
         androidIntentOptions: {
-          EXTRA_LANGUAGE_MODEL: 'web_search', // Optimizado para términos y palabras sueltas
+          EXTRA_LANGUAGE_MODEL: options?.androidLanguageModel ?? 'free_form',
         },
       };
 
