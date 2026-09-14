@@ -367,9 +367,9 @@ export default function ReviewScreen() {
   const micPulseAnim = useRef(new Animated.Value(1)).current;
   const cardFlipAnim = useRef(new Animated.Value(0)).current;
   const flipCountdownAnim = useRef(new Animated.Value(1)).current;
-  const flipCountdownDurationRef = useRef<number>(10000);
+  const flipCountdownDurationRef = useRef<number>(8000);
   const flipCountdownStartTimeRef = useRef<number>(0);
-  const flipCountdownRemainingRef = useRef<number>(10000);
+  const flipCountdownRemainingRef = useRef<number>(8000);
   const isCountdownPausedRef = useRef<boolean>(false);
   const restartAttemptsRef = useRef<number>(0);
 
@@ -952,9 +952,9 @@ export default function ReviewScreen() {
       useNativeDriver: true,
     }).start(({ finished }) => {
       if (finished) {
-        // Reproducir audio TTS y arrancar temporizador de 10s recién cuando la tarjeta completó el giro
+        // Reproducir audio TTS y arrancar temporizador de 8s recién cuando la tarjeta completó el giro
         speakText(card.displayText, lang, card.displayReading);
-        startCountdownTimer(10000);
+        startCountdownTimer(8000);
       }
     });
 
