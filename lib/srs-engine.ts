@@ -4,7 +4,7 @@ import { db } from '../db';
 import { srsItems, words, decks } from '../db/schema';
 import { eq, lte, and } from 'drizzle-orm';
 import { toSearchKey } from './pinyin-utils';
-import { toNormalizedHiragana, romajiToHiragana, getEffectiveCardLanguage } from './japanese-utils';
+import { toNormalizedHiragana, romajiToHiragana, getEffectiveCardLanguage, expandNumberArtifacts } from './japanese-utils';
 
 // Inicializar motor FSRS con intervalos diarios (sin pasos de minutos intra-día)
 let _fsrsInstance: ReturnType<typeof fsrs> | null = null;
@@ -179,9 +179,14 @@ export function formatSpokenTranscript(transcript: string, lang: string): string
     if (JA_NUMBERS[trimmed]) {
       return JA_NUMBERS[trimmed].kana;
     }
-    // Si contiene letras latinas / hispanas (ej. "ue", "un", "yama", "o-i", "shuu"),
+    // Expandir artefactos numéricos de STT (ej. "5chi" -> "くち", "1tsu" -> "ひとつ")
+    const expanded = expandNumberArtifacts(trimmed);
+    if (expanded !== trimmed) {
+      return toNormalizedHiragana(expanded);
+    }
+    // Si contiene letras latinas / hispanas (ej. "ue", "un", "yama", "o-i", "shuu", "kuchi"),
     // convertirlas automáticamente a Hiragana limpio para mostrar siempre kana sin guiones
-    if (/[a-zA-Z]/.test(trimmed)) {
+    if (/[a-zA-Z0-9]/.test(trimmed)) {
       return romajiToHiragana(trimmed);
     }
     // Si contiene chōonpu katakana o guiones (ej. "シュー", "おーい", "お-い")
@@ -275,11 +280,14 @@ export function checkVoiceMatch(
     const textKana = toNormalizedHiragana(cleanText);
 
     if (effectiveTranscriptKana.length > 0) {
-      // Crear variantes fonéticas para vocales alargadas (ej. "おう" <-> "おお", como en "おおい" vs "おうい")
+      // Crear variantes fonéticas para vocales alargadas y equivalencias acústicas habituales en hablantes hispanos
+      // (ej. "おう" <-> "おお", "こうち" <-> "くち", "5chi" <-> "くち")
       const transcriptVariants = [
         effectiveTranscriptKana,
         effectiveTranscriptKana.replace(/おう/g, 'おお'),
         effectiveTranscriptKana.replace(/おお/g, 'おう'),
+        effectiveTranscriptKana.replace(/こう/g, 'く'),
+        effectiveTranscriptKana.replace(/く/g, 'こう'),
       ];
 
       const matchesTarget = (target: string): boolean => {
@@ -288,6 +296,8 @@ export function checkVoiceMatch(
           target,
           target.replace(/おう/g, 'おお'),
           target.replace(/おお/g, 'おう'),
+          target.replace(/こう/g, 'く'),
+          target.replace(/く/g, 'こう'),
         ];
         return transcriptVariants.some((tv) =>
           targetVariants.some((tg) => tv === tg || tv.includes(tg) || tg.includes(tv))

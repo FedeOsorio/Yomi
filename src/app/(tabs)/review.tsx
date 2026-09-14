@@ -722,8 +722,20 @@ export default function ReviewScreen() {
       if (card.displayText === '多' || card.displayText === '多い' || card.displayReading?.includes('おおい')) {
         extraVariants.push('おおい', 'オーイ', 'ooi', 'o-i');
       }
-      if (card.displayText === 'う' || card.displayReading === 'う') {
-        extraVariants.push('う', 'ウ', 'u');
+      if (card.displayText === '口' || card.displayReading?.includes('くち')) {
+        extraVariants.push('くち', 'クチ', '口', 'kuchi');
+      }
+      if (card.displayText === '耳' || card.displayReading?.includes('みみ')) {
+        extraVariants.push('みみ', 'ミミ', '耳', 'mimi');
+      }
+      if (card.displayText === '目' || card.displayReading?.includes('め')) {
+        extraVariants.push('め', 'メ', '目', 'me');
+      }
+      if (card.displayText === '手' || card.displayReading?.includes('て')) {
+        extraVariants.push('て', 'テ', '手', 'te');
+      }
+      if (card.displayText === '足' || card.displayReading?.includes('あし')) {
+        extraVariants.push('あし', 'アシ', '足', 'ashi');
       }
 
       strings.push(...extraVariants);

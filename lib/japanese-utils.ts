@@ -62,12 +62,44 @@ const ROMAJI_TO_HIRAGANA_MAP: Record<string, string> = {
 };
 
 /**
+ * Normaliza artefactos numéricos generados por Google STT (ej. "5chi" -> "kuchi", "1tsu" -> "ひとつ").
+ */
+export function expandNumberArtifacts(str: string): string {
+  if (!str) return '';
+  return str
+    .replace(/^5chi$/i, 'kuchi')
+    .replace(/^5ち$/i, 'くち')
+    .replace(/5chi/gi, 'kuchi')
+    .replace(/5ち/g, 'くち')
+    .replace(/1tsu/gi, 'ひとつ')
+    .replace(/2tsu/gi, 'ふたつ')
+    .replace(/3tsu/gi, 'みっつ')
+    .replace(/4tsu/gi, 'よっつ')
+    .replace(/5tsu/gi, 'いつつ')
+    .replace(/6tsu/gi, 'むっつ')
+    .replace(/7tsu/gi, 'ななつ')
+    .replace(/8tsu/gi, 'やっつ')
+    .replace(/9tsu/gi, 'ここのつ')
+    .replace(/10tsu/gi, 'とお')
+    .replace(/1つ/g, 'ひとつ')
+    .replace(/2つ/g, 'ふたつ')
+    .replace(/3つ/g, 'みっつ')
+    .replace(/4つ/g, 'よっつ')
+    .replace(/5つ/g, 'いつつ')
+    .replace(/6つ/g, 'むっつ')
+    .replace(/7つ/g, 'ななつ')
+    .replace(/8つ/g, 'やっつ')
+    .replace(/9つ/g, 'ここのつ')
+    .replace(/10つ/g, 'とお');
+}
+
+/**
  * Convierte una cadena de texto en Romaji a Hiragana (ej. "hon" -> "ほん", "arigatou" -> "ありがとう", "o-i" -> "おおい").
  */
 export function romajiToHiragana(romaji: string): string {
   if (!romaji) return '';
 
-  let text = romaji.toLowerCase().trim();
+  let text = expandNumberArtifacts(romaji.toLowerCase().trim());
 
   // 1. Normalizar vocales con macron de romanización (ej. ō -> ou, ū -> uu, etc.)
   text = text
@@ -356,6 +388,8 @@ const KANJI_READINGS_MAP: Record<string, string> = {
   '年': 'とし', '今': 'いま', '何': 'なに', '時': 'とき',
   '間': 'あいだ', '分': 'ふん', '半': 'はん', '前': 'まえ',
   '後': 'あと', '先': 'さき', '生': 'せい',
+  // Homófonos y nombres propios frecuentes en reconocimiento STT
+  '高知': 'こうち', 'コーチ': 'こうち',
 };
 
 /**
@@ -425,11 +459,11 @@ export function kanjiToHiragana(text: string): string {
  */
 export function toNormalizedHiragana(text: string): string {
   if (!text) return '';
-  let result = text.toLowerCase().trim();
+  let result = expandNumberArtifacts(text.toLowerCase().trim());
   // Si contiene kanji conocidos o números de transcripción de voz, resolver fonéticamente
   result = kanjiToHiragana(result);
-  // Si contiene caracteres romaji (a-z), convertir a hiragana
-  if (/[a-z]/.test(result)) {
+  // Si contiene caracteres romaji (a-z) o dígitos, convertir a hiragana
+  if (/[a-z0-9]/.test(result)) {
     result = romajiToHiragana(result);
   }
   // Convertir katakana a hiragana
