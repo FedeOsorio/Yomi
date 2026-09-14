@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -10,26 +11,21 @@ import {
   Easing,
   FlatList,
   KeyboardAvoidingView,
-  Modal,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
-  View,
+  View
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle } from 'react-native-svg';
 import { Rating } from 'ts-fsrs';
 import { speakText, stopSpeech } from '../../../lib/audio-service';
-import { ALL_LANGUAGES, DeckWithStats, getDeckById, getDecksWithStats, SUPPORTED_LANGUAGES } from '../../../lib/deck-service';
+import { ALL_LANGUAGES, DeckWithStats, SUPPORTED_LANGUAGES } from '../../../lib/deck-service';
 import { cleanAndFormatMeanings } from '../../../lib/japanese-search';
-import { romajiToHiragana, formatJapaneseReading, toNormalizedHiragana, getEffectiveCardLanguage } from '../../../lib/japanese-utils';
-import { db } from '../../../db';
-import { decks, words } from '../../../db/schema';
-import { eq } from 'drizzle-orm';
+import { formatJapaneseReading, getEffectiveCardLanguage, toNormalizedHiragana } from '../../../lib/japanese-utils';
+import { JLPT_KANJI_READINGS } from '../../../lib/jlpt-data';
 import { calculateChineseAccuracyScore, PinyinBreakdownItem } from '../../../lib/pinyin-utils';
 import { speechService } from '../../../lib/speech-recognition-service';
 import {
@@ -39,20 +35,18 @@ import {
   checkVoiceMatch,
   DueCardWithContext,
   formatSpokenTranscript,
-  getAllCardsForPractice,
-  getDueCards,
-  healCorruptedSrsIntervals,
   processCardReview,
   removeCardFromReview,
-  rescheduleCardNextDay,
+  rescheduleCardNextDay
 } from '../../../lib/srs-engine';
-import { CompoundWord, getCompoundWordsForChar } from '../../../lib/word-service';
+import { getCompoundWordsForChar } from '../../../lib/word-service';
 import { useTheme } from '../../../providers/ThemeProvider';
-import { getFloatingTabBarStyle, Shadows, Spacing, Typography } from '../../constants/theme';
-import { VoiceTranscriptArea } from '../../components/review/VoiceTranscriptArea';
-import { VoiceMicControl } from '../../components/review/VoiceMicControl';
 import { ReviewMethodModal } from '../../components/review/ReviewMethodModal';
+import { ReviewTextInputSection } from '../../components/review/ReviewTextInputSection';
 import { SessionSummaryView } from '../../components/review/SessionSummaryView';
+import { VoiceMicControl } from '../../components/review/VoiceMicControl';
+import { VoiceTranscriptArea } from '../../components/review/VoiceTranscriptArea';
+import { getFloatingTabBarStyle, Shadows, Spacing, Typography } from '../../constants/theme';
 import { useReviewStore } from '../../stores/reviewStore';
 
 const VOICE_TIMEOUT_SECONDS = 15;
@@ -283,14 +277,11 @@ export default function ReviewScreen() {
   const sessionCompleted = useReviewStore((s) => s.sessionCompleted);
   const sessionCount = useReviewStore((s) => s.sessionCount);
 
-  const inputReading = useReviewStore((s) => s.inputReading);
-  const inputMeaning = useReviewStore((s) => s.inputMeaning);
   const isChecked = useReviewStore((s) => s.isChecked);
   const evaluation = useReviewStore((s) => s.evaluation);
   const currentCompoundWords = useReviewStore((s) => s.currentCompoundWords);
 
   const isListening = useReviewStore((s) => s.isListening);
-  const speechTranscript = useReviewStore((s) => s.speechTranscript);
   const speechStatus = useReviewStore((s) => s.speechStatus);
 
   const fetchDecksData = useReviewStore((s) => s.fetchDecksData);
@@ -298,8 +289,6 @@ export default function ReviewScreen() {
   const setShowMethodModal = useReviewStore((s) => s.setShowMethodModal);
   const startSession = useReviewStore((s) => s.startSession);
   const exitSession = useReviewStore((s) => s.exitSession);
-  const setInputReading = useReviewStore((s) => s.setInputReading);
-  const setInputMeaning = useReviewStore((s) => s.setInputMeaning);
   const setIsChecked = useReviewStore((s) => s.setIsChecked);
   const setEvaluation = useReviewStore((s) => s.setEvaluation);
   const setCurrentCompoundWords = useReviewStore((s) => s.setCurrentCompoundWords);
@@ -321,9 +310,9 @@ export default function ReviewScreen() {
   const micPulseAnim = useRef(new Animated.Value(1)).current;
   const cardFlipAnim = useRef(new Animated.Value(0)).current;
   const flipCountdownAnim = useRef(new Animated.Value(1)).current;
-  const flipCountdownDurationRef = useRef<number>(8000);
+  const flipCountdownDurationRef = useRef<number>(7000);
   const flipCountdownStartTimeRef = useRef<number>(0);
-  const flipCountdownRemainingRef = useRef<number>(8000);
+  const flipCountdownRemainingRef = useRef<number>(7000);
   const isCountdownPausedRef = useRef<boolean>(false);
   const restartAttemptsRef = useRef<number>(0);
 
@@ -400,13 +389,29 @@ export default function ReviewScreen() {
     const handleAppStateChange = (nextState: AppStateStatus) => {
       if (nextState === 'background' || nextState === 'inactive') {
         stopSpeech();
-        speechService.abort().catch(() => {});
+        speechService.abort().catch(() => { });
         setIsListening(false);
       }
     };
     const sub = AppState.addEventListener('change', handleAppStateChange);
     return () => sub.remove();
   }, []);
+
+  // Mantener la pantalla encendida ÚNICAMENTE durante el repaso continuo por voz (manos libres)
+  useEffect(() => {
+    const isVoiceSessionActive = Boolean(selectedDeckId && studyMethod === 'voice' && !sessionCompleted);
+    const KEEP_AWAKE_TAG = 'yomi_voice_review';
+
+    if (isVoiceSessionActive) {
+      activateKeepAwakeAsync(KEEP_AWAKE_TAG);
+    } else {
+      deactivateKeepAwake(KEEP_AWAKE_TAG);
+    }
+
+    return () => {
+      deactivateKeepAwake(KEEP_AWAKE_TAG);
+    };
+  }, [selectedDeckId, studyMethod, sessionCompleted]);
 
   // Al perder el foco (p. ej. al cambiar de pestaña o salir de la pantalla), detener el micrófono y limpiar la sesión
   useFocusEffect(
@@ -544,7 +549,7 @@ export default function ReviewScreen() {
             if (clean) strings.push(clean);
           });
         }
-      } catch {}
+      } catch { }
     }
 
     const effectiveLang = getEffectiveCardLanguage(card);
@@ -562,6 +567,29 @@ export default function ReviewScreen() {
       });
 
       // Si es un kanji o palabra común, agregar variantes fonéticas directas (romaji y números)
+      const kanjiChar = (card.displayText || '').trim();
+      if (JLPT_KANJI_READINGS[kanjiChar]) {
+        const entry = JLPT_KANJI_READINGS[kanjiChar];
+        if (entry.on) {
+          entry.on.split(/[,、\s]+/).forEach((p) => {
+            const clean = p.trim();
+            if (clean) extraVariants.push(clean, toNormalizedHiragana(clean));
+          });
+        }
+        if (entry.kun) {
+          entry.kun.split(/[,、\s]+/).forEach((p) => {
+            const clean = p.replace(/[・~～\s\(\)（）\-\.]/g, '').trim();
+            if (clean) extraVariants.push(clean, toNormalizedHiragana(clean));
+          });
+        }
+        if (entry.essential) {
+          extraVariants.push(entry.essential, toNormalizedHiragana(entry.essential));
+        }
+      }
+
+      if (card.displayText === '時' || card.displayReading?.includes('とき') || card.displayReading?.includes('じ')) {
+        extraVariants.push('とき', 'じ', '時', 'toki', 'ji');
+      }
       if (card.displayText === '上' || card.displayReading?.includes('うえ')) {
         extraVariants.push('うえ', '上', 'ue');
       }
@@ -708,12 +736,12 @@ export default function ReviewScreen() {
               setSpeechStatus('evaluating');
               const matchedFormatted = formatSpokenTranscript(matchedHypo || currentTrimmed, lang);
               setSpeechTranscript(matchedFormatted);
-              // Dar tiempo mínimo a que el usuario vea reflejado lo que dijo antes de evaluar
+              // Dar tiempo adecuado para que el usuario vea claramente reflejada su pronunciación antes de evaluar y girar la tarjeta
               setTimeout(() => {
                 if (!isCardEvaluatedRef.current) {
                   handleVoiceEvaluation(card, true, matchedHypo || currentTrimmed);
                 }
-              }, 250);
+              }, 500);
             }
           },
           onError: (err) => {
@@ -743,7 +771,7 @@ export default function ReviewScreen() {
     voiceProgressAnim.stopAnimation();
 
     // Abortar el micrófono inmediatamente en segundo plano para liberar el hilo de render y empezar el giro sin lag
-    speechService.abort().catch(() => {});
+    speechService.abort().catch(() => { });
     setIsListening(false);
     setSpeechStatus(isSuccess ? 'correct' : 'incorrect');
     setIsChecked(true);
@@ -754,7 +782,7 @@ export default function ReviewScreen() {
     // La precisión fonética con desglose de tonos se calcula exclusivamente para Chino (Pinyin)
     // En japonés, el reconocimiento ASR estándar no mide acento tonal (pitch accent), por lo que se omite el badge
     if (lang.startsWith('zh')) {
-      const recognized = directTranscript || speechTranscript || accumulatedSpeechRef.current || '';
+      const recognized = directTranscript || useReviewStore.getState().speechTranscript || accumulatedSpeechRef.current || '';
       const res = calculateChineseAccuracyScore(recognized, card.displayText, card.displayReading);
       voiceScore = { score: res.score, label: res.label, breakdown: res.breakdown };
     }
@@ -781,9 +809,9 @@ export default function ReviewScreen() {
       useNativeDriver: true,
     }).start(({ finished }) => {
       if (finished) {
-        // Reproducir audio TTS y arrancar temporizador de 8s recién cuando la tarjeta completó el giro
+        // Reproducir audio TTS y arrancar temporizador de 7s recién cuando la tarjeta completó el giro
         speakText(card.displayText, lang, card.displayReading);
-        startCountdownTimer(8000);
+        startCountdownTimer(7000);
       }
     });
 
@@ -880,7 +908,7 @@ export default function ReviewScreen() {
     flipCountdownAnim.setValue(0);
     // Detener cualquier reproducción TTS activa y asegurar que el micrófono previo quede liberado
     stopSpeech();
-    speechService.abort().catch(() => {});
+    speechService.abort().catch(() => { });
 
     // Rotar la tarjeta suavemente de regreso al frente a 60 FPS
     Animated.timing(cardFlipAnim, {
@@ -902,7 +930,7 @@ export default function ReviewScreen() {
           }, 150);
         }
       } else {
-        speechService.abort().catch(() => {});
+        speechService.abort().catch(() => { });
         setIsListening(false);
         setSpeechStatus('idle');
       }
@@ -922,7 +950,7 @@ export default function ReviewScreen() {
     flipCountdownAnim.stopAnimation();
     flipCountdownAnim.setValue(0);
     cardFlipAnim.setValue(0);
-    speechService.abort().catch(() => {});
+    speechService.abort().catch(() => { });
     setSpeechTranscript('');
     accumulatedSpeechRef.current = '';
     exitSession();
@@ -1071,12 +1099,22 @@ export default function ReviewScreen() {
       try {
         const aux = JSON.parse(currentCard.auxiliaryInfo);
         if (aux.kanjiReadings) altKanjiReadings = aux.kanjiReadings;
-      } catch {}
+      } catch { }
     }
+
+    const isJapanese = lang.startsWith('ja');
+    const kanjiChar = (currentCard.displayText || '').trim();
+    if (isJapanese && JLPT_KANJI_READINGS[kanjiChar]) {
+      const entry = JLPT_KANJI_READINGS[kanjiChar];
+      const jlptReadings = [entry.essential, entry.on, entry.kun].filter(Boolean).join(' • ');
+      altKanjiReadings = altKanjiReadings ? `${altKanjiReadings} • ${jlptReadings}` : jlptReadings;
+    }
+
+    const { inputReading, inputMeaning } = useReviewStore.getState();
 
     const isReadingCorrect = isIdeographic
       ? (checkReadingMatch(currentCard.displayReading, inputReading) ||
-         (altKanjiReadings ? checkReadingMatch(altKanjiReadings, inputReading) : false))
+        (altKanjiReadings ? checkReadingMatch(altKanjiReadings, inputReading) : false))
       : true;
 
     const isMeaningCorrect = checkMeaningMatch(activeTargetMeanings, inputMeaning);
@@ -1519,7 +1557,6 @@ export default function ReviewScreen() {
           {/* Lo que el usuario pronuncia con altura fija de 60px para que nunca salte */}
           {studyMethod === 'voice' && !isCustomCard && (
             <VoiceTranscriptArea
-              transcript={speechTranscript}
               card={currentCard}
               isChecked={isChecked}
               colors={colors}
@@ -1571,38 +1608,12 @@ export default function ReviewScreen() {
                     {currentCard.displayText}
                   </Text>
 
-                  {/* Formulario de Respuestas Modo Clásico (Teclado) */}
+                  {/* Formulario de Respuestas Modo Clásico (Teclado) aislado para latencia cero */}
                   {studyMethod === 'text' && !isChecked && (
-                    <View style={styles.inputsSection}>
-                      {isIdeographic && (
-                        <View style={styles.inputGroup}>
-                          <Text style={[styles.inputLabel, { color: colors.textMuted }]}>1. ¿Cómo se pronuncia? (Pinyin / Lectura):</Text>
-                          <TextInput
-                            style={[styles.textInput, { backgroundColor: colors.surfaceHighlight, color: colors.text, borderColor: colors.border }]}
-                            placeholder="Ej. xue, ni3 hao3"
-                            placeholderTextColor={colors.textMuted}
-                            value={inputReading}
-                            onChangeText={setInputReading}
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                          />
-                        </View>
-                      )}
-
-                      <View style={styles.inputGroup}>
-                        <Text style={[styles.inputLabel, { color: colors.textMuted }]}>
-                          {isIdeographic ? '2. ¿Qué significa?' : '¿Qué significa esta palabra?'}
-                        </Text>
-                        <TextInput
-                          style={[styles.textInput, { backgroundColor: colors.surfaceHighlight, color: colors.text, borderColor: colors.border }]}
-                          placeholder="Ej. aprender, estudiar"
-                          placeholderTextColor={colors.textMuted}
-                          value={inputMeaning}
-                          onChangeText={setInputMeaning}
-                          autoCapitalize="none"
-                        />
-                      </View>
-                    </View>
+                    <ReviewTextInputSection
+                      isIdeographic={isIdeographic}
+                      colors={colors}
+                    />
                   )}
                 </>
               )}
@@ -1704,7 +1715,7 @@ export default function ReviewScreen() {
                             try {
                               const aux = JSON.parse(currentCard.auxiliaryInfo);
                               kanjiReadings = aux.kanjiReadings;
-                            } catch {}
+                            } catch { }
                           }
                           return kanjiReadings && kanjiReadings !== currentCard.displayReading ? (
                             <Text style={[styles.flipKanjiReadingsSub, { color: colors.textMuted }]} numberOfLines={1}>

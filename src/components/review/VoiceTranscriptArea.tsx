@@ -2,7 +2,8 @@ import React, { memo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Spacing } from '../../constants/theme';
 import { DueCardWithContext, JA_NUMBERS, ZH_NUMBERS, checkVoiceMatch } from '../../../lib/srs-engine';
-import { romajiToHiragana, getEffectiveCardLanguage } from '../../../lib/japanese-utils';
+import { toNormalizedHiragana, romajiToHiragana, getEffectiveCardLanguage } from '../../../lib/japanese-utils';
+import { useReviewStore } from '../../stores/reviewStore';
 
 export interface SpokenRubyData {
   mainText: string;
@@ -32,24 +33,25 @@ export function getSpokenRubyDisplay(
       const cardHasKanji = /[\u4e00-\u9faf]/.test(card.displayText);
 
       if (isMatch) {
+        const cleanSpoken = toNormalizedHiragana(transcript).replace(/[a-zA-Z]/g, '');
         if (cardHasKanji) {
           return {
-            mainText: card.displayReading,
+            mainText: cleanSpoken || card.displayReading,
             rubyText: card.displayText,
           };
         } else {
           return {
-            mainText: card.displayText,
+            mainText: cleanSpoken || card.displayText,
           };
         }
       }
     }
 
-    let converted = transcript;
-    if (/[a-zA-Z]/.test(converted)) {
-      converted = romajiToHiragana(converted);
+    let converted = toNormalizedHiragana(transcript).replace(/[a-zA-Z]/g, '');
+    if (!converted) {
+      converted = romajiToHiragana(transcript).replace(/[a-zA-Z]/g, '');
     }
-    return { mainText: converted };
+    return { mainText: converted || transcript.replace(/[a-zA-Z]/g, '') };
   }
 
   if (isChinese) {
@@ -72,7 +74,7 @@ export function getSpokenRubyDisplay(
 }
 
 export interface VoiceTranscriptAreaProps {
-  transcript: string;
+  transcript?: string;
   card: DueCardWithContext | null;
   isChecked: boolean;
   colors: {
@@ -83,11 +85,14 @@ export interface VoiceTranscriptAreaProps {
 }
 
 export const VoiceTranscriptArea = memo(function VoiceTranscriptArea({
-  transcript,
+  transcript: propTranscript,
   card,
   isChecked,
   colors,
 }: VoiceTranscriptAreaProps) {
+  const storeTranscript = useReviewStore((s) => s.speechTranscript);
+  const transcript = propTranscript !== undefined ? propTranscript : storeTranscript;
+
   const spokenRuby = transcript
     ? getSpokenRubyDisplay(transcript, card, getEffectiveCardLanguage(card))
     : null;

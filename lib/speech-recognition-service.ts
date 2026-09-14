@@ -126,8 +126,13 @@ class SpeechRecognitionService {
         interimResults: true,
         continuous: options?.continuous ?? true,
         maxAlternatives: options?.maxAlternatives ?? 10,
+        iosTaskHint: 'dictation',
+        iosVoiceProcessingEnabled: true,
         androidIntentOptions: {
           EXTRA_LANGUAGE_MODEL: options?.androidLanguageModel ?? 'free_form',
+          EXTRA_MASK_OFFENSIVE_WORDS: false,
+          EXTRA_ENABLE_BIASING_DEVICE_CONTEXT: true,
+          EXTRA_ENABLE_FORMATTING: 'latency',
         },
       };
 

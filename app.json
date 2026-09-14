@@ -2,7 +2,7 @@
   "expo": {
     "name": "Yomi",
     "slug": "Yomi",
-    "version": "0.2.1",
+    "version": "0.2.2",
     "orientation": "default",
     "scheme": [
       "yomi",
@@ -83,7 +83,8 @@
           "microphonePermission": "Permite a Yomi acceder al micrófono para practicar tu pronunciación en voz alta."
         }
       ],
-      "expo-sharing"
+      "expo-sharing",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,

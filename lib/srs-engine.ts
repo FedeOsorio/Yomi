@@ -12,6 +12,7 @@ import {
   JA_NUMBERS,
   ZH_NUMBERS,
 } from './japanese-utils';
+import { JLPT_KANJI_READINGS } from './jlpt-data';
 
 export { JA_NUMBERS, ZH_NUMBERS };
 
@@ -127,18 +128,15 @@ export function formatSpokenTranscript(transcript: string, lang: string): string
     }
     // Expandir artefactos numéricos de STT (ej. "5chi" -> "くち", "1tsu" -> "ひとつ")
     const expanded = expandNumberArtifacts(trimmed);
-    if (expanded !== trimmed) {
-      return toNormalizedHiragana(expanded);
+    const hira = toNormalizedHiragana(expanded);
+    if (hira) {
+      return hira;
     }
-    // Si contiene letras latinas / hispanas (ej. "ue", "un", "yama", "o-i", "shuu", "kuchi"),
-    // convertirlas automáticamente a Hiragana limpio para mostrar siempre kana sin guiones
-    if (/[a-zA-Z0-9]/.test(trimmed)) {
-      return romajiToHiragana(trimmed);
+    const romajiConverted = romajiToHiragana(trimmed).replace(/[a-zA-Z]/g, '');
+    if (romajiConverted) {
+      return romajiConverted;
     }
-    // Si contiene chōonpu katakana o guiones (ej. "シュー", "おーい", "お-い")
-    if (/[ー\-]/.test(trimmed)) {
-      return toNormalizedHiragana(trimmed);
-    }
+    return trimmed.replace(/[a-zA-Z]/g, '');
   }
   if (isChinese && ZH_NUMBERS[trimmed]) {
     return ZH_NUMBERS[trimmed].hanzi;
@@ -203,6 +201,16 @@ export function checkVoiceMatch(
         const aux = JSON.parse(card.auxiliaryInfo);
         if (aux.kanjiReadings) allReadingsStr += ` • ${aux.kanjiReadings}`;
       } catch {}
+    }
+
+    // Si la tarjeta o displayText es un kanji de nuestro catálogo canónico (JLPT_KANJI_READINGS),
+    // incorporar automáticamente sus lecturas On'yomi, Kun'yomi y esencial (ej. 時 -> on: 'ジ' (じ), kun: 'とき')
+    const kanjiChar = (card.displayText || '').trim();
+    if (JLPT_KANJI_READINGS[kanjiChar]) {
+      const entry = JLPT_KANJI_READINGS[kanjiChar];
+      if (entry.on) allReadingsStr += ` • ${entry.on}`;
+      if (entry.kun) allReadingsStr += ` • ${entry.kun}`;
+      if (entry.essential) allReadingsStr += ` • ${entry.essential}`;
     }
 
     const validReadings = allReadingsStr

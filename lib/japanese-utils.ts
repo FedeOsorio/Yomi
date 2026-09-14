@@ -59,6 +59,18 @@ const ROMAJI_TO_HIRAGANA_MAP: Record<string, string> = {
   // P
   'pa': 'ぱ', 'pi': 'ぴ', 'pu': 'ぷ', 'pe': 'ぺ', 'po': 'ぽ',
   'pya': 'ぴゃ', 'pyu': 'ぴゅ', 'pyo': 'ぴょ',
+
+  // Adaptaciones fonéticas español / latino (evitan que queden letras hispanas en el visor)
+  'ca': 'か', 'co': 'こ', 'cu': 'く', 'ci': 'し', 'ce': 'せ',
+  'que': 'け', 'qui': 'き',
+  'la': 'ら', 'li': 'り', 'lu': 'る', 'le': 'れ', 'lo': 'ろ',
+  'lya': 'りゃ', 'lyu': 'りゅ', 'lyo': 'りょ',
+  'va': 'ば', 'vi': 'び', 'vu': 'ぶ', 've': 'べ', 'vo': 'ぼ',
+  'gue': 'げ', 'gui': 'ぎ',
+  'lla': 'や', 'lli': 'り', 'llu': 'ゆ', 'lle': 'え', 'llo': 'よ',
+  'ña': 'にゃ', 'ñi': 'に', 'ñu': 'にゅ', 'ñe': 'ね', 'ño': 'にょ',
+  'che': 'ちぇ',
+  'je': 'じぇ',
 };
 
 export const JA_NUMBERS: Record<string, { kana: string; kanji: string }> = {
@@ -223,9 +235,17 @@ export function romajiToHiragana(romaji: string): string {
       continue;
     }
 
-    // Caracter no reconocido o ya en kana/kanji/espacio (ignorar guiones remanentes)
+    // Caracter no reconocido o consonante aislada de voz/español
     if (text[i] !== '-' && text[i] !== '_') {
-      result += text[i];
+      const ch = text[i];
+      const isolatedMap: Record<string, string> = {
+        'j': 'じ', 'c': 'く', 'k': 'く', 't': 'と', 's': 'す',
+        'm': 'む', 'r': 'る', 'l': 'る', 'p': 'ぷ', 'b': 'ぶ',
+        'g': 'ぐ', 'd': 'ど', 'z': 'ず', 'f': 'ふ', 'h': 'は',
+        'y': 'い', 'w': 'う', 'v': 'ぶ', 'q': 'く', 'x': 'くす',
+        'ñ': 'ん',
+      };
+      result += isolatedMap[ch] || ch;
     }
     i++;
   }
@@ -452,6 +472,8 @@ const KANJI_READINGS_MAP: Record<string, string> = {
   '後': 'あと', '先': 'さき', '生': 'せい',
   // Homófonos y nombres propios frecuentes en reconocimiento STT
   '高知': 'こうち', 'コーチ': 'こうち',
+  // Homófonos habituales de "ji" (じ) generados por Google STT
+  '字': 'じ', '事': 'じ', '自': 'じ', '地': 'じ', '次': 'じ', '寺': 'じ', '辞': 'じ', '児': 'じ',
 };
 
 /**
@@ -544,8 +566,8 @@ export function toNormalizedHiragana(text: string): string {
       default: return ch;
     }
   });
-  // Eliminar signos de puntuación, puntos japoneses, guiones y espacios
-  return result.replace(/[\s.,!?;:。、！？・\-_~～\u30fc]/g, '');
+  // Eliminar signos de puntuación, puntos japoneses, guiones, espacios y cualquier letra latina residual
+  return result.replace(/[\s.,!?;:。、！？・\-_~～\u30fc]/g, '').replace(/[a-zA-Z]/g, '');
 }
 
 /**
