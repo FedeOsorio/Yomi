@@ -10,7 +10,7 @@ import { sqliteTable, text, integer, real, index, primaryKey } from 'drizzle-orm
 
 export const decks = sqliteTable('decks', {
   id: text('id').primaryKey(),
-  languageCode: text('language_code').notNull().default('zh-CN'),
+  languageCode: text('language_code').notNull().default('ja-JP'),
   name: text('name').notNull(),
   type: text('type', { enum: ['language', 'custom'] }).notNull().default('language'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),

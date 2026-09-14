@@ -88,7 +88,7 @@ export async function getDefaultDeckId(): Promise<string> {
   await db.insert(decks).values({
     id,
     name: 'Mi Vocabulario',
-    languageCode: 'zh-CN',
+    languageCode: 'ja-JP',
     type: 'language',
     createdAt: new Date(),
   });

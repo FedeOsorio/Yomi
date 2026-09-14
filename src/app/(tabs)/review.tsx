@@ -24,7 +24,10 @@ import { Rating } from 'ts-fsrs';
 import { speakText, stopSpeech } from '../../../lib/audio-service';
 import { ALL_LANGUAGES, DeckWithStats, getDeckById, getDecksWithStats, SUPPORTED_LANGUAGES } from '../../../lib/deck-service';
 import { cleanAndFormatMeanings } from '../../../lib/japanese-search';
-import { romajiToHiragana, formatJapaneseReading } from '../../../lib/japanese-utils';
+import { romajiToHiragana, formatJapaneseReading, toNormalizedHiragana, getEffectiveCardLanguage } from '../../../lib/japanese-utils';
+import { db } from '../../../db';
+import { decks, words } from '../../../db/schema';
+import { eq } from 'drizzle-orm';
 import { calculateChineseAccuracyScore, PinyinBreakdownItem } from '../../../lib/pinyin-utils';
 import { speechService } from '../../../lib/speech-recognition-service';
 import {
@@ -36,6 +39,7 @@ import {
   formatSpokenTranscript,
   getAllCardsForPractice,
   getDueCards,
+  healCorruptedSrsIntervals,
   JA_NUMBERS,
   processCardReview,
   removeCardFromReview,
@@ -367,36 +371,38 @@ export default function ReviewScreen() {
   const flipCountdownStartTimeRef = useRef<number>(0);
   const flipCountdownRemainingRef = useRef<number>(10000);
   const isCountdownPausedRef = useRef<boolean>(false);
+  const restartAttemptsRef = useRef<number>(0);
 
-  // Estabilizar los estilos de animación con useMemo para evitar recreaciones en cada render
-  // que causaban el parpadeo visible justo antes de que comenzara la animación de flip
+  // Estilos de animación 3D optimizados para 60 FPS continuos con backfaceVisibility
   const frontAnimatedStyle = useMemo(() => ({
+    backfaceVisibility: 'hidden' as const,
     opacity: cardFlipAnim.interpolate({
-      inputRange: [0, 0.48, 0.5, 1],
+      inputRange: [0, 0.49, 0.5, 1],
       outputRange: [1, 1, 0, 0],
     }),
     transform: [
       { perspective: 1000 },
       {
         rotateY: cardFlipAnim.interpolate({
-          inputRange: [0, 0.5, 1],
-          outputRange: ['0deg', '90deg', '90deg'],
+          inputRange: [0, 1],
+          outputRange: ['0deg', '180deg'],
         }),
       },
     ],
   }), [cardFlipAnim]);
 
   const backAnimatedStyle = useMemo(() => ({
+    backfaceVisibility: 'hidden' as const,
     opacity: cardFlipAnim.interpolate({
-      inputRange: [0, 0.5, 0.52, 1],
+      inputRange: [0, 0.5, 0.51, 1],
       outputRange: [0, 0, 1, 1],
     }),
     transform: [
       { perspective: 1000 },
       {
         rotateY: cardFlipAnim.interpolate({
-          inputRange: [0, 0.5, 1],
-          outputRange: ['-90deg', '-90deg', '0deg'],
+          inputRange: [0, 1],
+          outputRange: ['180deg', '360deg'],
         }),
       },
     ],
@@ -526,6 +532,10 @@ export default function ReviewScreen() {
     currentIndexRef.current = currentIndex;
   }, [currentIndex]);
 
+  // Rastreo de tarjetas falladas y procesadas en la sesión activa para evitar inflar repasos o dar 'Good' por repetición inmediata
+  const sessionFailedCardIdsRef = useRef<Set<string>>(new Set());
+  const sessionProcessedCardIdsRef = useRef<Set<string>>(new Set());
+
   // Estados del cuestionario interactivo
   const [inputReading, setInputReading] = useState('');
   const [inputMeaning, setInputMeaning] = useState('');
@@ -539,11 +549,30 @@ export default function ReviewScreen() {
 
   const [currentCompoundWords, setCurrentCompoundWords] = useState<CompoundWord[]>([]);
 
-  // Cargar lista de mazos con sus métricas pendientes
+  // Cargar lista de mazos con sus métricas pendientes y reparar decks japoneses legacy
   const fetchDecksData = async () => {
     setLoading(true);
     try {
+      // Auto-reparar tarjetas del SRS que quedaron programadas erróneamente a 3+ días por bugs previos
+      await healCorruptedSrsIntervals().catch(() => {});
+
       const d = await getDecksWithStats();
+      // Auto-reparar mazos japoneses creados con 'zh-CN' por defecto en versiones anteriores
+      for (const deck of d) {
+        if (deck.languageCode === 'zh-CN') {
+          const sampleWords = await db.select().from(words).where(eq(words.deckId, deck.id)).limit(5);
+          const isJapanese = sampleWords.some(
+            (w) =>
+              /[\u3040-\u30ff]/.test(w.pinyinDisplay || '') ||
+              /[\u3040-\u30ff]/.test(w.simplified || '') ||
+              /[\u3040-\u30ff]/.test(w.auxiliaryInfo || '')
+          );
+          if (isJapanese) {
+            await db.update(decks).set({ languageCode: 'ja-JP' }).where(eq(decks.id, deck.id));
+            deck.languageCode = 'ja-JP';
+          }
+        }
+      }
       setDecksList(d.filter((deck) => deck.activeCardsCount > 0));
     } catch (e) {
       console.warn('Error al cargar mazos con stats:', e);
@@ -589,6 +618,8 @@ export default function ReviewScreen() {
     setSessionCount(0);
     setCurrentIndex(0);
     currentIndexRef.current = 0;
+    sessionFailedCardIdsRef.current = new Set();
+    sessionProcessedCardIdsRef.current = new Set();
     resetForm();
 
     if (autoTimerRef.current) {
@@ -615,7 +646,7 @@ export default function ReviewScreen() {
       // Si es modo voz y hay tarjetas, iniciamos el reconocimiento continuo en la primera tarjeta
       if (method === 'voice' && cards.length > 0) {
         const firstCard = cards[0];
-        const lang = firstCard.languageCode || 'zh-CN';
+        const lang = getEffectiveCardLanguage(firstCard);
         setTimeout(() => {
           startVoiceListeningForCard(firstCard, lang);
         }, 500);
@@ -629,7 +660,78 @@ export default function ReviewScreen() {
     }
   };
 
-  // Ciclo continuo de escucha con el micrófono con temporizador de 15 segundos
+  // Extrae strings contextuales para sesgar el reconocedor de voz nativo hacia la tarjeta actual
+  const getCardContextualStrings = (card: DueCardWithContext, lang: string): string[] => {
+    const strings: string[] = [];
+    if (card.displayText) strings.push(card.displayText.trim());
+    if (card.displayReading) {
+      strings.push(card.displayReading.trim());
+      card.displayReading.split(/[\/\n,、;•|]/).forEach((p) => {
+        const clean = p.replace(/^(on|kun|音|訓)[:：\s]*/i, '').trim();
+        if (clean) strings.push(clean);
+      });
+    }
+    if (card.auxiliaryInfo) {
+      try {
+        const aux = JSON.parse(card.auxiliaryInfo);
+        if (aux.kanjiReadings) {
+          aux.kanjiReadings.split(/[\/\n,、;•|]/).forEach((p: string) => {
+            const clean = p.replace(/^(on|kun|音|訓)[:：\s]*/i, '').trim();
+            if (clean) strings.push(clean);
+          });
+        }
+        if (aux.onReading) {
+          aux.onReading.split(/[,、\s]+/).forEach((p: string) => {
+            const clean = p.trim();
+            if (clean) strings.push(clean);
+          });
+        }
+        if (aux.kunReading) {
+          aux.kunReading.split(/[,、\s]+/).forEach((p: string) => {
+            const clean = p.trim();
+            if (clean) strings.push(clean);
+          });
+        }
+      } catch {}
+    }
+
+    const effectiveLang = getEffectiveCardLanguage(card);
+    const isJapanese = effectiveLang.toLowerCase().startsWith('ja');
+    if (isJapanese) {
+      const extraVariants: string[] = [];
+      strings.forEach((str) => {
+        const hira = toNormalizedHiragana(str);
+        if (hira && !strings.includes(hira)) extraVariants.push(hira);
+        // Generar Katakana para ampliar reconocimiento fonético
+        const kata = hira.replace(/[\u3041-\u3096]/g, (ch) =>
+          String.fromCharCode(ch.charCodeAt(0) + 0x60)
+        );
+        if (kata && !strings.includes(kata)) extraVariants.push(kata);
+      });
+
+      // Si es un kanji o palabra común, agregar variantes fonéticas directas (romaji y números)
+      if (card.displayText === '上' || card.displayReading?.includes('うえ')) {
+        extraVariants.push('うえ', '上', 'ue');
+      }
+      if (card.displayText === '千' || card.displayReading?.includes('せん')) {
+        extraVariants.push('せん', '1000', 'sen');
+      }
+      if (card.displayText === '週' || card.displayReading?.includes('しゅう')) {
+        extraVariants.push('しゅう', 'シュー', 'shuu');
+      }
+      if (card.displayText === '多' || card.displayText === '多い' || card.displayReading?.includes('おおい')) {
+        extraVariants.push('おおい', 'オーイ', 'ooi', 'o-i');
+      }
+      if (card.displayText === 'う' || card.displayReading === 'う') {
+        extraVariants.push('う', 'ウ', 'u');
+      }
+
+      strings.push(...extraVariants);
+    }
+    return Array.from(new Set(strings.filter(Boolean)));
+  };
+
+  // Ciclo continuo de escucha con el micrófono con temporizador de 15 segundos sincronizado al inicio real
   const startVoiceListeningForCard = async (card: DueCardWithContext, lang: string) => {
     if (autoTimerRef.current) {
       clearTimeout(autoTimerRef.current);
@@ -640,38 +742,52 @@ export default function ReviewScreen() {
     cardFlipAnim.setValue(0);
 
     isCardEvaluatedRef.current = false;
+    restartAttemptsRef.current = 0;
     accumulatedSpeechRef.current = '';
     setSpeechTranscript('');
     setSpeechStatus('listening');
     setIsListening(true);
 
-    const startTime = Date.now();
+    let isTimerStarted = false;
+    let startTime = 0;
 
-    // Animación 100% fluida a 60 FPS de 15 segundos sin saltos de setInterval
-    voiceProgressAnim.stopAnimation();
-    voiceProgressAnim.setValue(0);
-    Animated.timing(voiceProgressAnim, {
-      toValue: 1,
-      duration: VOICE_TIMEOUT_SECONDS * 1000,
-      easing: Easing.linear,
-      useNativeDriver: false,
-    }).start(({ finished }) => {
-      if (finished && !isCardEvaluatedRef.current) {
-        handleVoiceEvaluation(card, false);
-      }
-    });
+    const startTimerCountdown = () => {
+      if (isTimerStarted || isCardEvaluatedRef.current) return;
+      isTimerStarted = true;
+      startTime = Date.now();
+
+      voiceProgressAnim.stopAnimation();
+      voiceProgressAnim.setValue(0);
+      Animated.timing(voiceProgressAnim, {
+        toValue: 1,
+        duration: VOICE_TIMEOUT_SECONDS * 1000,
+        easing: Easing.linear,
+        useNativeDriver: false,
+      }).start(({ finished }) => {
+        if (finished && !isCardEvaluatedRef.current) {
+          handleVoiceEvaluation(card, false);
+        }
+      });
+    };
+
+    // Fallback de seguridad: si el evento onStart del micrófono tarda más de 1200ms, arrancar el temporizador
+    const fallbackTimer = setTimeout(() => {
+      startTimerCountdown();
+    }, 1200);
 
     let restartTimer: NodeJS.Timeout | null = null;
     const scheduleRestart = () => {
       if (isCardEvaluatedRef.current) return;
-      const currentElapsed = (Date.now() - startTime) / 1000;
-      if (currentElapsed < VOICE_TIMEOUT_SECONDS - 1) {
+      const currentElapsed = startTime > 0 ? (Date.now() - startTime) / 1000 : 0;
+      if (currentElapsed < VOICE_TIMEOUT_SECONDS - 1.0 && restartAttemptsRef.current < 3) {
         if (restartTimer) clearTimeout(restartTimer);
         restartTimer = setTimeout(async () => {
           if (!isCardEvaluatedRef.current) {
+            restartAttemptsRef.current += 1;
+            await speechService.abort();
             await initRecognizer();
           }
-        }, 300);
+        }, 250);
       } else {
         setIsListening(false);
       }
@@ -684,50 +800,69 @@ export default function ReviewScreen() {
         restartTimer = null;
       }
 
-      await speechService.start(lang, {
-        onStart: () => {
-          if (!isCardEvaluatedRef.current) {
-            setIsListening(true);
-            setSpeechStatus('listening');
-          }
-        },
-        onResult: (transcript, isFinal) => {
-          if (isCardEvaluatedRef.current) return;
-          const currentTrimmed = transcript.trim();
-          if (!currentTrimmed) return;
+      const contextualStrings = getCardContextualStrings(card, lang);
 
-          // Combinar lo acumulado previamente con lo que se está pronunciando en este segmento
-          const combined = accumulatedSpeechRef.current
-            ? `${accumulatedSpeechRef.current} ${currentTrimmed}`
-            : currentTrimmed;
+      await speechService.start(
+        lang,
+        {
+          onStart: () => {
+            if (!isCardEvaluatedRef.current) {
+              clearTimeout(fallbackTimer);
+              startTimerCountdown();
+              setIsListening(true);
+              setSpeechStatus('listening');
+            }
+          },
+          onResult: (transcript, isFinal, alternatives) => {
+            if (isCardEvaluatedRef.current) return;
+            const currentTrimmed = transcript.trim();
+            if (!currentTrimmed && (!alternatives || alternatives.length === 0)) return;
 
-          if (isFinal) {
-            // Guardar en el acumulador para que pausas de 2s no borren lo dicho
-            accumulatedSpeechRef.current = combined;
-          }
+            // Formatear y mostrar de inmediato exactamente lo que se está diciendo en este intento
+            const formatted = formatSpokenTranscript(currentTrimmed, lang);
+            if (formatted) {
+              setSpeechTranscript(formatted);
+            }
 
-          const formatted = formatSpokenTranscript(combined, lang);
-          setSpeechTranscript(formatted);
+            // Recolectar todas las hipótesis candidatas para evaluación en tiempo real
+            const candidateHypotheses = [
+              currentTrimmed,
+              ...(alternatives || []),
+            ].filter(Boolean);
 
-          // Evaluar tanto la combinación total acumulada como la parte actual
-          const isMatch = checkVoiceMatch(card, combined, lang) || checkVoiceMatch(card, currentTrimmed, lang);
-          if (isMatch) {
-            setSpeechStatus('evaluating');
-            // Dar tiempo mínimo a que el usuario vea reflejado lo que dijo antes de evaluar
-            setTimeout(() => {
-              if (!isCardEvaluatedRef.current) {
-                handleVoiceEvaluation(card, true, combined);
+            let matchedHypo = '';
+            const isMatch = candidateHypotheses.some((hypo) => {
+              if (checkVoiceMatch(card, hypo, lang)) {
+                matchedHypo = hypo;
+                return true;
               }
-            }, 350);
-          }
+              return false;
+            });
+
+            if (isMatch) {
+              setSpeechStatus('evaluating');
+              const matchedFormatted = formatSpokenTranscript(matchedHypo || currentTrimmed, lang);
+              setSpeechTranscript(matchedFormatted);
+              // Dar tiempo mínimo a que el usuario vea reflejado lo que dijo antes de evaluar
+              setTimeout(() => {
+                if (!isCardEvaluatedRef.current) {
+                  handleVoiceEvaluation(card, true, matchedHypo || currentTrimmed);
+                }
+              }, 250);
+            }
+          },
+          onError: (err) => {
+            scheduleRestart();
+          },
+          onEnd: () => {
+            scheduleRestart();
+          },
         },
-        onError: (err) => {
-          scheduleRestart();
-        },
-        onEnd: () => {
-          scheduleRestart();
-        },
-      });
+        {
+          contextualStrings,
+          maxAlternatives: 10,
+        }
+      );
     };
 
     await initRecognizer();
@@ -766,12 +901,13 @@ export default function ReviewScreen() {
     isCardEvaluatedRef.current = true;
     voiceProgressAnim.stopAnimation();
 
-    await speechService.stop();
+    // Abortar el micrófono inmediatamente en segundo plano para liberar el hilo de render y empezar el giro sin lag
+    speechService.abort().catch(() => {});
     setIsListening(false);
     setSpeechStatus(isSuccess ? 'correct' : 'incorrect');
     setIsChecked(true);
 
-    const lang = card.languageCode || 'zh-CN';
+    const lang = getEffectiveCardLanguage(card);
     let voiceScore: { score: number; label: string; breakdown?: PinyinBreakdownItem[] } | undefined;
 
     // La precisión fonética con desglose de tonos se calcula exclusivamente para Chino (Pinyin)
@@ -790,35 +926,48 @@ export default function ReviewScreen() {
       voiceScore,
     });
 
-    // Si falló (tiempo agotado o pronunciación errónea), reinsertar en la cola entre 5 y 10 posiciones adelante
+    // Si falló (tiempo agotado o pronunciación errónea), registrar fallo de sesión y reinsertar en la cola
     if (!isSuccess) {
+      sessionFailedCardIdsRef.current.add(card.id);
       reinsertFailedCardIntoQueue(card, currentIndexRef.current);
     }
 
-    // La tarjeta SIEMPRE se da vuelta con animación 3D (tanto acierto como fallo)
+    // La tarjeta SIEMPRE se da vuelta con animación 3D nativa fluida a 60 FPS
     Animated.timing(cardFlipAnim, {
       toValue: 1,
-      duration: 280,
+      duration: 300,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
-    }).start();
+    }).start(({ finished }) => {
+      if (finished) {
+        // Reproducir audio TTS y arrancar temporizador de 10s recién cuando la tarjeta completó el giro
+        speakText(card.displayText, lang, card.displayReading);
+        startCountdownTimer(10000);
+      }
+    });
 
-    speakText(card.displayText, lang, card.displayReading);
-
-    // Solo actualizar FSRS si NO es modo de práctica libre
-    // Se usa la ref en lugar del state para evitar stale closure (el estado puede no estar actualizado
-    // dentro del setTimeout que lanzó esta función)
+    // Desacoplar la escritura SQLite FSRS para no bloquear el hilo de render durante la rotación 3D
     if (!isPracticeModeRef.current) {
-      try {
-        await processCardReview(card.id, rating);
-      } catch (err) {
-        console.warn('Error al procesar FSRS:', err);
+      const wasFailedInSession = sessionFailedCardIdsRef.current.has(card.id);
+
+      if (!isSuccess) {
+        // Fallo: suma a reps, incrementa lapsos y fija el repaso para mañana
+        setTimeout(() => {
+          processCardReview(card.id, Rating.Again).catch((err) => {
+            console.warn('Error al procesar FSRS:', err);
+          });
+        }, 350);
+      } else {
+        // Acierto: suma a reps por la intervención del usuario.
+        // Si ya había fallado en esta sesión, wasFailedInSession asegura que no salte a 3 días y quede para mañana.
+        setTimeout(() => {
+          processCardReview(card.id, Rating.Good, { wasFailedInSession }).catch((err) => {
+            console.warn('Error al procesar FSRS:', err);
+          });
+        }, 350);
       }
     }
     setSessionCount((prev) => prev + 1);
-
-    // Arrancar barra de progreso de 10s con soporte de pausa/reanudación táctil
-    startCountdownTimer(10000);
   };
 
   const startCountdownTimer = (durationMs: number) => {
@@ -889,16 +1038,18 @@ export default function ReviewScreen() {
     isCountdownPausedRef.current = false;
     flipCountdownAnim.stopAnimation();
     flipCountdownAnim.setValue(0);
+    // Asegurar que la sesión de micrófono previa quede completamente liberada de inmediato
+    speechService.abort().catch(() => {});
 
-    // Rotar la tarjeta suavemente de regreso al frente
+    // Rotar la tarjeta suavemente de regreso al frente a 60 FPS
     Animated.timing(cardFlipAnim, {
       toValue: 0,
-      duration: 320,
+      duration: 300,
       easing: Easing.inOut(Easing.ease),
       useNativeDriver: true,
     }).start();
 
-    // En el punto medio de la rotación (160ms, cuando está de perfil e invisible), actualizar el contenido
+    // En el punto medio de la rotación (150ms, cuando está de perfil e invisible), actualizar el contenido
     setTimeout(() => {
       const cards = dueCardsRef.current;
       const nextIndex = currentIndexRef.current + 1;
@@ -912,17 +1063,17 @@ export default function ReviewScreen() {
         setEvaluation(null);
         setSpeechTranscript('');
         setSpeechStatus('listening');
-        const lang = nextCard.languageCode || 'zh-CN';
+        const lang = getEffectiveCardLanguage(nextCard);
         setTimeout(() => {
           startVoiceListeningForCard(nextCard, lang);
-        }, 200);
+        }, 150);
       } else {
         setSessionCompleted(true);
-        speechService.stop();
+        speechService.abort().catch(() => {});
         setIsListening(false);
         setSpeechStatus('idle');
       }
-    }, 160);
+    }, 150);
   };
 
   // Salir de la sesión actual y volver al selector de mazos
@@ -938,7 +1089,7 @@ export default function ReviewScreen() {
     voiceProgressAnim.setValue(0);
     flipCountdownAnim.stopAnimation();
     flipCountdownAnim.setValue(0);
-    speechService.stop();
+    speechService.abort().catch(() => {});
     setIsListening(false);
     setSpeechStatus('idle');
     setSpeechTranscript('');
@@ -1040,7 +1191,7 @@ export default function ReviewScreen() {
   useEffect(() => {
     let isMounted = true;
     if (currentCard) {
-      const lang = currentCard.languageCode || 'zh-CN';
+      const lang = getEffectiveCardLanguage(currentCard);
       const isIdeographic = lang.startsWith('zh') || lang.startsWith('ja');
       if (isIdeographic) {
         getCompoundWordsForChar(currentCard.displayText, 2).then((res) => {
@@ -1073,7 +1224,7 @@ export default function ReviewScreen() {
 
   const handleSpeak = () => {
     if (!currentCard) return;
-    const lang = currentCard.languageCode || 'zh-CN';
+    const lang = getEffectiveCardLanguage(currentCard);
     speakText(currentCard.displayText, lang, currentCard.displayReading);
   };
 
@@ -1081,7 +1232,7 @@ export default function ReviewScreen() {
   const handleCheck = () => {
     if (!currentCard) return;
 
-    const lang = currentCard.languageCode || 'zh-CN';
+    const lang = getEffectiveCardLanguage(currentCard);
     const isIdeographic = lang.startsWith('zh') || lang.startsWith('ja');
 
     let activeTargetMeanings = currentCard.displayMeaning;
@@ -1125,11 +1276,14 @@ export default function ReviewScreen() {
     setIsChecked(true);
     Animated.timing(cardFlipAnim, {
       toValue: 1,
-      duration: 280,
+      duration: 320,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
-    }).start();
-    handleSpeak();
+    }).start(({ finished }) => {
+      if (finished) {
+        handleSpeak();
+      }
+    });
   };
 
   // 2. No me acuerdo (fallo manual)
@@ -1143,11 +1297,14 @@ export default function ReviewScreen() {
     setIsChecked(true);
     Animated.timing(cardFlipAnim, {
       toValue: 1,
-      duration: 280,
+      duration: 320,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
-    }).start();
-    handleSpeak();
+    }).start(({ finished }) => {
+      if (finished) {
+        handleSpeak();
+      }
+    });
   };
 
   // 3. Avanzar a la siguiente tarjeta (modo clásico por teclado)
@@ -1156,13 +1313,24 @@ export default function ReviewScreen() {
     setIsProcessing(true);
 
     try {
+      const isAgain = evaluation.computedRating === Rating.Again;
+      const wasFailedInSession = sessionFailedCardIdsRef.current.has(currentCard.id);
+
+      if (isAgain) {
+        sessionFailedCardIdsRef.current.add(currentCard.id);
+      }
+
       if (!isPracticeModeRef.current) {
-        await processCardReview(currentCard.id, evaluation.computedRating);
+        if (isAgain) {
+          await processCardReview(currentCard.id, Rating.Again);
+        } else {
+          await processCardReview(currentCard.id, evaluation.computedRating, { wasFailedInSession });
+        }
       }
       setSessionCount((prev) => prev + 1);
 
       // Si la tarjeta fue fallada o se presionó "No me acuerdo", reinsertar entre 5 y 10 posiciones adelante
-      if (evaluation.computedRating === Rating.Again) {
+      if (isAgain) {
         reinsertFailedCardIntoQueue(currentCard, currentIndexRef.current);
       }
 
@@ -1592,7 +1760,7 @@ export default function ReviewScreen() {
     currentCard?.deckType === 'custom' ||
     currentCard?.languageCode === 'custom' ||
     currentCard?.languageCode === 'es-ES';
-  const lang = isCustomCard ? 'es-ES' : (currentCard?.languageCode || 'zh-CN');
+  const lang = isCustomCard ? 'es-ES' : getEffectiveCardLanguage(currentCard);
   const isIdeographic = !isCustomCard && (lang.startsWith('zh') || lang.startsWith('ja'));
   const isJapanese = !isCustomCard && lang.startsWith('ja');
 
@@ -1658,7 +1826,7 @@ export default function ReviewScreen() {
                   const spokenRuby = getSpokenRubyDisplay(
                     speechTranscript,
                     currentCard,
-                    currentCard?.languageCode || 'zh-CN'
+                    getEffectiveCardLanguage(currentCard)
                   );
                   return (
                     <View style={styles.rubySpokenContainer}>
@@ -1685,7 +1853,6 @@ export default function ReviewScreen() {
           <View style={styles.flipContainer}>
             {/* CARA FRONTAL: Pregunta */}
             <Animated.View
-              renderToHardwareTextureAndroid={true}
               style={[
                 styles.quizCard,
                 { backgroundColor: colors.surface, borderColor: colors.border },
@@ -1766,7 +1933,6 @@ export default function ReviewScreen() {
 
             {/* CARA TRASERA (REVERSO 3D) */}
             <Animated.View
-              renderToHardwareTextureAndroid={true}
               style={[
                 styles.quizCard,
                 styles.quizCardBack,
@@ -2243,6 +2409,7 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
+    backfaceVisibility: 'hidden',
   },
   quizCardBack: {
     position: 'absolute',
@@ -2256,6 +2423,7 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
+    backfaceVisibility: 'hidden',
   },
   charIdeographic: {
     ...Typography.chineseLarge,

@@ -1,4 +1,7 @@
-import { ExpoSpeechRecognitionModule } from 'expo-speech-recognition';
+import {
+  ExpoSpeechRecognitionModule,
+  type ExpoSpeechRecognitionOptions,
+} from 'expo-speech-recognition';
 
 /**
  * Mapeo de códigos de idioma de Yomi a tags de idioma BCP-47 para reconocimiento de voz.
@@ -15,10 +18,19 @@ const LANGUAGE_RECOGNITION_MAP: Record<string, string> = {
 };
 
 export interface SpeechRecognitionCallbacks {
-  onResult: (transcript: string, isFinal: boolean) => void;
+  onResult: (transcript: string, isFinal: boolean, alternatives?: string[]) => void;
   onError?: (errorMessage: string) => void;
   onEnd?: () => void;
   onStart?: () => void;
+}
+
+export interface SpeechRecognitionOptions {
+  /** Términos esperados para sesgar el reconocedor (ej. la palabra actual y sus lecturas) */
+  contextualStrings?: string[];
+  /** Cantidad máxima de alternativas fonéticas a devolver */
+  maxAlternatives?: number;
+  /** Modo continuo */
+  continuous?: boolean;
 }
 
 class SpeechRecognitionService {
@@ -59,7 +71,8 @@ class SpeechRecognitionService {
    */
   async start(
     languageCode: string,
-    callbacks: SpeechRecognitionCallbacks
+    callbacks: SpeechRecognitionCallbacks,
+    options?: SpeechRecognitionOptions
   ): Promise<boolean> {
     if (!this.hasCheckedPermissions) {
       const hasPermission = await this.requestPermissions();
@@ -70,17 +83,22 @@ class SpeechRecognitionService {
       this.hasCheckedPermissions = true;
     }
 
-    // Detener cualquier escucha previa y limpiar suscripciones viejas
-    await this.stop();
+    // Cancelar y limpiar cualquier sesión previa de inmediato
+    await this.abort();
+    // Breve pausa para permitir que el hardware de audio nativo de Android libere el canal
+    await new Promise((r) => setTimeout(r, 60));
 
     const targetLang = LANGUAGE_RECOGNITION_MAP[languageCode] || 'ja-JP';
 
     try {
       // Suscribirse a eventos de la librería nativa
       const resultSub = ExpoSpeechRecognitionModule.addListener('result', (event) => {
-        const firstResult = event.results?.[0];
-        if (firstResult) {
-          callbacks.onResult(firstResult.transcript, event.isFinal ?? false);
+        const allTranscripts = (event.results || [])
+          .map((r) => r.transcript)
+          .filter(Boolean);
+        const firstResult = allTranscripts[0] || '';
+        if (firstResult || allTranscripts.length > 0) {
+          callbacks.onResult(firstResult, event.isFinal ?? false, allTranscripts);
         }
       });
 
@@ -101,15 +119,37 @@ class SpeechRecognitionService {
 
       this.activeSubscriptions = [resultSub, errorSub, startSub, endSub];
 
-      // Iniciar el módulo nativo de reconocimiento con streaming en tiempo real y escucha continua
-      ExpoSpeechRecognitionModule.start({
+      const recognitionOptions: ExpoSpeechRecognitionOptions = {
         lang: targetLang,
         interimResults: true,
-        continuous: true,
-      });
+        continuous: options?.continuous ?? true,
+        maxAlternatives: options?.maxAlternatives ?? 10,
+        androidIntentOptions: {
+          EXTRA_LANGUAGE_MODEL: 'web_search', // Optimizado para términos y palabras sueltas
+        },
+      };
 
-      this.isListeningActive = true;
-      return true;
+      if (options?.contextualStrings && options.contextualStrings.length > 0) {
+        // Filtrar duplicados y vacíos
+        recognitionOptions.contextualStrings = Array.from(new Set(options.contextualStrings.filter(Boolean)));
+      }
+
+      // Iniciar el módulo nativo de reconocimiento con streaming en tiempo real y opciones
+      try {
+        ExpoSpeechRecognitionModule.start(recognitionOptions);
+        this.isListeningActive = true;
+        return true;
+      } catch {
+        // Si el motor nativo aún estaba en transición, reintentar tras breve pausa
+        await new Promise((r) => setTimeout(r, 180));
+        try {
+          ExpoSpeechRecognitionModule.abort();
+        } catch {}
+        await new Promise((r) => setTimeout(r, 50));
+        ExpoSpeechRecognitionModule.start(recognitionOptions);
+        this.isListeningActive = true;
+        return true;
+      }
     } catch (err: unknown) {
       this.isListeningActive = false;
       const message = err instanceof Error ? err.message : 'No se pudo iniciar el micrófono';
@@ -120,22 +160,42 @@ class SpeechRecognitionService {
   }
 
   /**
+   * Cancela inmediatamente la sesión nativa de reconocimiento de voz y libera el micrófono.
+   */
+  async abort(): Promise<void> {
+    this.isListeningActive = false;
+    try {
+      ExpoSpeechRecognitionModule.abort();
+    } catch {
+      try {
+        ExpoSpeechRecognitionModule.stop();
+      } catch {}
+    }
+
+    this.cleanupSubscriptions();
+  }
+
+  /**
    * Detiene el reconocimiento de voz y limpia los listeners.
    */
   async stop(): Promise<void> {
     this.isListeningActive = false;
     try {
-      ExpoSpeechRecognitionModule.stop();
+      ExpoSpeechRecognitionModule.abort();
     } catch {
-      // Ignorar si ya estaba detenido
+      try {
+        ExpoSpeechRecognitionModule.stop();
+      } catch {}
     }
 
+    this.cleanupSubscriptions();
+  }
+
+  private cleanupSubscriptions(): void {
     this.activeSubscriptions.forEach((sub) => {
       try {
         sub.remove();
-      } catch {
-        // Ignorar si ya fue removido
-      }
+      } catch {}
     });
     this.activeSubscriptions = [];
   }

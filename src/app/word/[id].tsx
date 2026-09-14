@@ -32,6 +32,7 @@ import {
   updateWordMeaningText,
   updateWordReading,
 } from '../../../lib/word-service';
+import { formatNextReviewTime, healCorruptedSrsIntervals } from '../../../lib/srs-engine';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { Shadows, Spacing, Typography } from '../../constants/theme';
 
@@ -513,6 +514,7 @@ export default function WordDetailScreen() {
   const fetchDetail = async () => {
     if (typeof id === 'string') {
       setLoading(true);
+      await healCorruptedSrsIntervals().catch(() => {});
       const res = await getWordDetailWithRelations(id);
       setData(res);
 
@@ -1245,7 +1247,7 @@ export default function WordDetailScreen() {
               <View style={[styles.srsStat, { backgroundColor: colors.surfaceHighlight }]}>
                 <Text style={[styles.srsStatLabel, { color: colors.textMuted }]}>Próximo repaso</Text>
                 <Text style={[styles.srsStatValue, { color: colors.text }]}>
-                  {new Date(srsItem.due).toLocaleDateString()}
+                  {formatNextReviewTime(srsItem.due)}
                 </Text>
               </View>
             </View>
