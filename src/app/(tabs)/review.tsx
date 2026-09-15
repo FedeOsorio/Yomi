@@ -507,13 +507,11 @@ export default function ReviewScreen() {
     await startSession(deckId, deckName, method, practiceMode);
     const cards = useReviewStore.getState().dueCards;
 
-    // Si es modo voz y hay tarjetas, iniciamos el reconocimiento continuo en la primera tarjeta
+    // Si es modo voz y hay tarjetas, iniciamos el reconocimiento continuo en la primera tarjeta de inmediato
     if (method === 'voice' && cards.length > 0) {
       const firstCard = cards[0];
       const lang = getEffectiveCardLanguage(firstCard);
-      setTimeout(() => {
-        startVoiceListeningForCard(firstCard, lang);
-      }, 500);
+      startVoiceListeningForCard(firstCard, lang);
     }
   };
 
@@ -658,6 +656,9 @@ export default function ReviewScreen() {
         useNativeDriver: false,
       }).start(({ finished }) => {
         if (finished && !isCardEvaluatedRef.current) {
+          isCardEvaluatedRef.current = true;
+          speechService.abort().catch(() => { });
+          setIsListening(false);
           handleVoiceEvaluation(card, false);
         }
       });
@@ -733,15 +734,17 @@ export default function ReviewScreen() {
             });
 
             if (isMatch) {
+              // Cortar el micrófono inmediatamente en cuanto se detecta la coincidencia
+              isCardEvaluatedRef.current = true;
+              speechService.abort().catch(() => { });
+              setIsListening(false);
               setSpeechStatus('evaluating');
               const matchedFormatted = formatSpokenTranscript(matchedHypo || currentTrimmed, lang);
               setSpeechTranscript(matchedFormatted);
-              // Dar tiempo adecuado para que el usuario vea claramente reflejada su pronunciación antes de evaluar y girar la tarjeta
+              // Breve pausa para apreciar en verde la pronunciación antes de la rotación 3D
               setTimeout(() => {
-                if (!isCardEvaluatedRef.current) {
-                  handleVoiceEvaluation(card, true, matchedHypo || currentTrimmed);
-                }
-              }, 500);
+                handleVoiceEvaluation(card, true, matchedHypo || currentTrimmed);
+              }, 400);
             }
           },
           onError: (err) => {
@@ -900,7 +903,7 @@ export default function ReviewScreen() {
   };
 
   // Pase automático o manual a la siguiente tarjeta en modo voz con transición fluida 3D
-  const advanceToNextVoiceCard = async () => {
+  const advanceToNextVoiceCard = () => {
     if (autoTimerRef.current) {
       clearTimeout(autoTimerRef.current);
       autoTimerRef.current = null;
@@ -908,11 +911,10 @@ export default function ReviewScreen() {
     isCountdownPausedRef.current = false;
     flipCountdownAnim.stopAnimation();
     flipCountdownAnim.setValue(0);
-    // Detener cualquier reproducción TTS activa, limpiar transcripciones y asegurar que el micrófono quede 100% liberado
+    // Detener cualquier reproducción TTS activa y limpiar transcripciones
     stopSpeech();
     setSpeechTranscript('');
     accumulatedSpeechRef.current = '';
-    await speechService.abort();
 
     // Rotar la tarjeta suavemente de regreso al frente a 60 FPS
     Animated.timing(cardFlipAnim, {
@@ -920,25 +922,25 @@ export default function ReviewScreen() {
       duration: 300,
       easing: Easing.inOut(Easing.ease),
       useNativeDriver: true,
-    }).start();
-
-    // En el punto medio de la rotación (150ms, cuando está de perfil e invisible), actualizar el contenido
-    setTimeout(() => {
-      const hasNext = advanceCard();
-      if (hasNext) {
+    }).start(({ finished }) => {
+      if (finished) {
+        // En cuanto la animación 3D termina y la nueva tarjeta está 100% visible de frente,
+        // la nueva palabra activa el micrófono directamente sin pausas estimativas
         const nextCard = useReviewStore.getState().getCurrentCard();
         if (nextCard) {
           const lang = getEffectiveCardLanguage(nextCard);
-          // Esperar 200ms adicionales para que termine el giro 3D y el canal de audio nativo esté completamente disponible
-          setTimeout(() => {
-            startVoiceListeningForCard(nextCard, lang);
-          }, 200);
+          startVoiceListeningForCard(nextCard, lang);
+        } else {
+          speechService.abort().catch(() => { });
+          setIsListening(false);
+          setSpeechStatus('idle');
         }
-      } else {
-        speechService.abort().catch(() => { });
-        setIsListening(false);
-        setSpeechStatus('idle');
       }
+    });
+
+    // En el punto medio de la rotación (150ms, cuando está de perfil e invisible), actualizar el contenido
+    setTimeout(() => {
+      advanceCard();
     }, 150);
   };
 
