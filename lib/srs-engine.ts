@@ -172,11 +172,11 @@ export function checkVoiceMatch(
 
   if (!cleanTranscript) return false;
 
-  // 1. Coincidencia directa con el carácter/palabra (muy común cuando Google Speech transcribe Kanji o Hanzi)
-  if (cleanText.length > 0 && (cleanTranscript === cleanText || cleanTranscript.includes(cleanText))) return true;
+  // 1. Coincidencia directa exacta con el carácter/palabra (muy común cuando Google Speech transcribe Kanji o Hanzi)
+  if (cleanText.length > 0 && cleanTranscript === cleanText) return true;
 
-  // 2. Coincidencia directa con la lectura
-  if (cleanReading.length > 0 && (cleanTranscript === cleanReading || cleanTranscript.includes(cleanReading))) return true;
+  // 2. Coincidencia directa exacta con la lectura
+  if (cleanReading.length > 0 && cleanTranscript === cleanReading) return true;
 
   const targetLang = getEffectiveCardLanguage({
     displayText: card.displayText,
@@ -234,34 +234,27 @@ export function checkVoiceMatch(
     const textKana = toNormalizedHiragana(cleanText);
 
     if (effectiveTranscriptKana.length > 0) {
-      // Crear variantes fonéticas para vocales alargadas y equivalencias acústicas habituales en hablantes hispanos
-      // (ej. "おう" <-> "おお", "こうち" <-> "くち", "5chi" <-> "くち")
-      const transcriptVariants = [
-        effectiveTranscriptKana,
-        effectiveTranscriptKana.replace(/おう/g, 'おお'),
-        effectiveTranscriptKana.replace(/おお/g, 'おう'),
-        effectiveTranscriptKana.replace(/こう/g, 'く'),
-        effectiveTranscriptKana.replace(/く/g, 'こう'),
-      ];
+      // Caso específico acústico de 口 (kuchi <-> kouchi / 高知)
+      const isKuchiCard = cleanText === '口' || cleanReading === 'くち' || validReadings.includes('くち');
+      if (isKuchiCard && (effectiveTranscriptKana === 'こうち' || effectiveTranscriptKana === 'くち')) {
+        return true;
+      }
 
-      const matchesTarget = (target: string): boolean => {
-        if (!target) return false;
-        const targetVariants = [
-          target,
-          target.replace(/おう/g, 'おお'),
-          target.replace(/おお/g, 'おう'),
-          target.replace(/こう/g, 'く'),
-          target.replace(/く/g, 'こう'),
-        ];
-        return transcriptVariants.some((tv) =>
-          targetVariants.some((tg) => tv === tg || tv.includes(tg) || tg.includes(tv))
-        );
+      // Normalizar vocales alargadas de la fila O (ej. こお <-> こう, とお <-> とう)
+      const normalizeLongVowels = (k: string): string => {
+        if (!k) return '';
+        return k.replace(/([おこそとのほもよろごぞどぼぽ])お/g, '$1う');
       };
 
-      // Coincidencia con cualquiera de las lecturas válidas del kanji (on'yomi o kun'yomi)
-      if (validReadings.some((r) => matchesTarget(r))) return true;
-      if (readingKana.length > 0 && matchesTarget(readingKana)) return true;
-      if (textKana.length > 0 && matchesTarget(textKana)) return true;
+      const normTranscript = normalizeLongVowels(effectiveTranscriptKana);
+      const targetList = Array.from(
+        new Set([cleanReading, readingKana, textKana, ...validReadings].filter(Boolean))
+      );
+
+      for (const t of targetList) {
+        if (effectiveTranscriptKana === t) return true;
+        if (normTranscript === normalizeLongVowels(t)) return true;
+      }
     }
     return false;
   }
