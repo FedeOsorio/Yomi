@@ -68,6 +68,8 @@ class SpeechRecognitionService {
     }
   }
 
+  private isAborting = false;
+
   /**
    * Inicia el reconocimiento de voz en el idioma especificado.
    */
@@ -85,10 +87,9 @@ class SpeechRecognitionService {
       this.hasCheckedPermissions = true;
     }
 
-    // Cancelar y limpiar cualquier sesión previa de inmediato
+    // Cancelar y limpiar cualquier sesión previa de inmediato, esperando a que el hardware libere el canal
     await this.abort();
-    // Breve pausa para permitir que el hardware de audio nativo de Android libere el canal
-    await new Promise((r) => setTimeout(r, 60));
+    await new Promise((r) => setTimeout(r, 100));
 
     const targetLang = LANGUAGE_RECOGNITION_MAP[languageCode] || 'ja-JP';
 
@@ -105,8 +106,10 @@ class SpeechRecognitionService {
       });
 
       const errorSub = ExpoSpeechRecognitionModule.addListener('error', (event) => {
+        // Ignorar eventos 'aborted' provocados deliberadamente al cambiar de tarjeta
+        if (event.error === 'aborted') return;
         this.isListeningActive = false;
-        callbacks.onError?.(event.message || 'Error de reconocimiento');
+        callbacks.onError?.(event.message || event.error || 'Error de reconocimiento');
       });
 
       const startSub = ExpoSpeechRecognitionModule.addListener('start', () => {
@@ -126,13 +129,8 @@ class SpeechRecognitionService {
         interimResults: true,
         continuous: options?.continuous ?? true,
         maxAlternatives: options?.maxAlternatives ?? 10,
-        iosTaskHint: 'dictation',
-        iosVoiceProcessingEnabled: true,
         androidIntentOptions: {
           EXTRA_LANGUAGE_MODEL: options?.androidLanguageModel ?? 'free_form',
-          EXTRA_MASK_OFFENSIVE_WORDS: false,
-          EXTRA_ENABLE_BIASING_DEVICE_CONTEXT: true,
-          EXTRA_ENABLE_FORMATTING: 'latency',
         },
       };
 
@@ -148,11 +146,11 @@ class SpeechRecognitionService {
         return true;
       } catch {
         // Si el motor nativo aún estaba en transición, reintentar tras breve pausa
-        await new Promise((r) => setTimeout(r, 180));
+        await new Promise((r) => setTimeout(r, 200));
         try {
           ExpoSpeechRecognitionModule.abort();
         } catch {}
-        await new Promise((r) => setTimeout(r, 50));
+        await new Promise((r) => setTimeout(r, 100));
         ExpoSpeechRecognitionModule.start(recognitionOptions);
         this.isListeningActive = true;
         return true;
@@ -170,7 +168,11 @@ class SpeechRecognitionService {
    * Cancela inmediatamente la sesión nativa de reconocimiento de voz y libera el micrófono.
    */
   async abort(): Promise<void> {
+    if (this.isAborting) return;
+    this.isAborting = true;
     this.isListeningActive = false;
+    this.cleanupSubscriptions();
+
     try {
       ExpoSpeechRecognitionModule.abort();
     } catch {
@@ -179,23 +181,25 @@ class SpeechRecognitionService {
       } catch {}
     }
 
-    this.cleanupSubscriptions();
+    // Esperar activamente a que el motor nativo confirme estado inactivo antes de desbloquear
+    try {
+      let state = await ExpoSpeechRecognitionModule.getStateAsync();
+      let waited = 0;
+      while (state !== 'inactive' && waited < 350) {
+        await new Promise((r) => setTimeout(r, 50));
+        waited += 50;
+        state = await ExpoSpeechRecognitionModule.getStateAsync();
+      }
+    } catch {}
+
+    this.isAborting = false;
   }
 
   /**
    * Detiene el reconocimiento de voz y limpia los listeners.
    */
   async stop(): Promise<void> {
-    this.isListeningActive = false;
-    try {
-      ExpoSpeechRecognitionModule.abort();
-    } catch {
-      try {
-        ExpoSpeechRecognitionModule.stop();
-      } catch {}
-    }
-
-    this.cleanupSubscriptions();
+    await this.abort();
   }
 
   private cleanupSubscriptions(): void {

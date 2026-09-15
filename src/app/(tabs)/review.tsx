@@ -672,7 +672,7 @@ export default function ReviewScreen() {
     const scheduleRestart = () => {
       if (isCardEvaluatedRef.current) return;
       const currentElapsed = startTime > 0 ? (Date.now() - startTime) / 1000 : 0;
-      if (currentElapsed < VOICE_TIMEOUT_SECONDS - 1.0 && restartAttemptsRef.current < 3) {
+      if (currentElapsed < VOICE_TIMEOUT_SECONDS - 1.0 && restartAttemptsRef.current < 5) {
         if (restartTimer) clearTimeout(restartTimer);
         restartTimer = setTimeout(async () => {
           if (!isCardEvaluatedRef.current) {
@@ -680,7 +680,7 @@ export default function ReviewScreen() {
             await speechService.abort();
             await initRecognizer();
           }
-        }, 250);
+        }, 300);
       } else {
         setIsListening(false);
       }
@@ -745,9 +745,11 @@ export default function ReviewScreen() {
             }
           },
           onError: (err) => {
+            if (err === 'aborted' || isCardEvaluatedRef.current) return;
             scheduleRestart();
           },
           onEnd: () => {
+            if (isCardEvaluatedRef.current) return;
             scheduleRestart();
           },
         },
@@ -898,7 +900,7 @@ export default function ReviewScreen() {
   };
 
   // Pase automático o manual a la siguiente tarjeta en modo voz con transición fluida 3D
-  const advanceToNextVoiceCard = () => {
+  const advanceToNextVoiceCard = async () => {
     if (autoTimerRef.current) {
       clearTimeout(autoTimerRef.current);
       autoTimerRef.current = null;
@@ -906,9 +908,11 @@ export default function ReviewScreen() {
     isCountdownPausedRef.current = false;
     flipCountdownAnim.stopAnimation();
     flipCountdownAnim.setValue(0);
-    // Detener cualquier reproducción TTS activa y asegurar que el micrófono previo quede liberado
+    // Detener cualquier reproducción TTS activa, limpiar transcripciones y asegurar que el micrófono quede 100% liberado
     stopSpeech();
-    speechService.abort().catch(() => { });
+    setSpeechTranscript('');
+    accumulatedSpeechRef.current = '';
+    await speechService.abort();
 
     // Rotar la tarjeta suavemente de regreso al frente a 60 FPS
     Animated.timing(cardFlipAnim, {
@@ -925,9 +929,10 @@ export default function ReviewScreen() {
         const nextCard = useReviewStore.getState().getCurrentCard();
         if (nextCard) {
           const lang = getEffectiveCardLanguage(nextCard);
+          // Esperar 200ms adicionales para que termine el giro 3D y el canal de audio nativo esté completamente disponible
           setTimeout(() => {
             startVoiceListeningForCard(nextCard, lang);
-          }, 150);
+          }, 200);
         }
       } else {
         speechService.abort().catch(() => { });
