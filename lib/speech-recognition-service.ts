@@ -79,12 +79,17 @@ class SpeechRecognitionService {
     options?: SpeechRecognitionOptions
   ): Promise<boolean> {
     if (!this.hasCheckedPermissions) {
-      const hasPermission = await this.requestPermissions();
-      if (!hasPermission) {
-        callbacks.onError?.('Permiso de micrófono denegado');
-        return false;
+      const alreadyGranted = await this.checkPermissions();
+      if (alreadyGranted) {
+        this.hasCheckedPermissions = true;
+      } else {
+        const hasPermission = await this.requestPermissions();
+        if (!hasPermission) {
+          callbacks.onError?.('Permiso de micrófono denegado');
+          return false;
+        }
+        this.hasCheckedPermissions = true;
       }
-      this.hasCheckedPermissions = true;
     }
 
     // Cancelar y limpiar cualquier sesión previa de inmediato, esperando a que el hardware libere el canal

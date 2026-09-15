@@ -165,6 +165,7 @@ export const JLPT_KANJI_READINGS: Record<string, KanjiReadingDetail> = {
   '本': { essential: 'ほん', on: 'ホン', kun: 'もと', meaning: 'libro, base', level: 'N5' },
   '何': { essential: 'なに', on: 'カ', kun: 'なに, なん', meaning: 'qué', level: 'N5' },
   '車': { essential: 'くるま', on: 'シャ', kun: 'くるま', meaning: 'coche, vehículo', level: 'N5' },
+  '電': { essential: 'でん', on: 'デン', kun: '', meaning: 'electricidad', level: 'N5' },
   '門': { essential: 'もん', on: 'モン', kun: 'かど', meaning: 'puerta, portón', level: 'N5' },
   '道': { essential: 'みち', on: 'ドウ', kun: 'みち', meaning: 'camino, calle', level: 'N5' },
   '駅': { essential: 'えき', on: 'エキ', meaning: 'estación', level: 'N5' },

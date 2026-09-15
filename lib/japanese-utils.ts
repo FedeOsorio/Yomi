@@ -275,9 +275,6 @@ export function getEffectiveCardLanguage(card?: {
   deckType?: string | null;
 } | null): string {
   if (!card) return 'ja-JP';
-  if (card.deckType === 'custom' || card.languageCode === 'custom' || card.languageCode === 'es-ES') {
-    return 'es-ES';
-  }
 
   const reading = (card.displayReading || '').trim();
   const text = (card.displayText || '').trim();
@@ -288,12 +285,17 @@ export function getEffectiveCardLanguage(card?: {
     return 'ja-JP';
   }
 
-  // 2. Si el texto contiene caracteres Kanji registrados en nuestro mapa de lecturas japonés (ej. 上, 週, 多, 千, etc.)
+  // 2. Si el texto contiene caracteres Kanji registrados en nuestro mapa de lecturas japonés (ej. 上, 週, 多, 千, 電, etc.)
   for (let i = 0; i < text.length; i++) {
     if (KANJI_READINGS_MAP[text[i]]) return 'ja-JP';
   }
 
-  // 3. Evaluar languageCode si está presente
+  // 3. Si explícitamente se configuró como mazo personalizado o español y NO contiene caracteres japoneses
+  if (card.deckType === 'custom' || card.languageCode === 'custom' || card.languageCode === 'es-ES') {
+    return 'es-ES';
+  }
+
+  // 4. Evaluar languageCode si está presente
   if (card.languageCode) {
     if (card.languageCode.startsWith('ja')) return 'ja-JP';
     if (card.languageCode.startsWith('es')) return 'es-ES';
@@ -474,6 +476,8 @@ const KANJI_READINGS_MAP: Record<string, string> = {
   '高知': 'こうち', 'コーチ': 'こうち',
   // Homófonos habituales de "ji" (じ) generados por Google STT
   '字': 'じ', '事': 'じ', '自': 'じ', '地': 'じ', '次': 'じ', '寺': 'じ', '辞': 'じ', '児': 'じ',
+  // Homófonos habituales de "den" (でん) generados por Google STT
+  '電': 'でん', '伝': 'でん',
 };
 
 /**

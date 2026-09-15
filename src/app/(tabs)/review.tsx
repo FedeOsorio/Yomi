@@ -386,6 +386,7 @@ export default function ReviewScreen() {
 
   // Pausar y liberar el micrófono si la app pasa a segundo plano (llamada, minimizar, bloquear pantalla)
   useEffect(() => {
+    speechService.checkPermissions().catch(() => { });
     const handleAppStateChange = (nextState: AppStateStatus) => {
       if (nextState === 'background' || nextState === 'inactive') {
         stopSpeech();
@@ -488,7 +489,10 @@ export default function ReviewScreen() {
     if (!pendingSelection) return;
     const { deckId, deckName, hasDue } = pendingSelection;
     setShowMethodModal(false);
-    handleStartSession(deckId, deckName, method, !hasDue);
+    // Margen para que el modal nativo termine de desmontarse antes de arrancar la sesión
+    setTimeout(() => {
+      handleStartSession(deckId, deckName, method, !hasDue);
+    }, 200);
   };
 
   // Inicia la sesión para un mazo específico o para todos los mazos ('all')
@@ -507,11 +511,14 @@ export default function ReviewScreen() {
     await startSession(deckId, deckName, method, practiceMode);
     const cards = useReviewStore.getState().dueCards;
 
-    // Si es modo voz y hay tarjetas, iniciamos el reconocimiento continuo en la primera tarjeta de inmediato
+    // Si es modo voz y hay tarjetas, iniciamos el reconocimiento en la primera tarjeta
+    // asegurando que la pantalla de repaso y el foco de audio estén completamente activos
     if (method === 'voice' && cards.length > 0) {
       const firstCard = cards[0];
       const lang = getEffectiveCardLanguage(firstCard);
-      startVoiceListeningForCard(firstCard, lang);
+      setTimeout(() => {
+        startVoiceListeningForCard(firstCard, lang);
+      }, 150);
     }
   };
 
@@ -673,6 +680,19 @@ export default function ReviewScreen() {
     const scheduleRestart = () => {
       if (isCardEvaluatedRef.current) return;
       const currentElapsed = startTime > 0 ? (Date.now() - startTime) / 1000 : 0;
+      // Si el micrófono aún no ha arrancado (fase de inicio inicial), reintentar progresivamente
+      if (startTime === 0 && restartAttemptsRef.current < 4) {
+        if (restartTimer) clearTimeout(restartTimer);
+        restartAttemptsRef.current += 1;
+        restartTimer = setTimeout(async () => {
+          if (!isCardEvaluatedRef.current) {
+            await speechService.abort();
+            await initRecognizer();
+          }
+        }, 350 * restartAttemptsRef.current);
+        return;
+      }
+
       if (currentElapsed < VOICE_TIMEOUT_SECONDS - 1.0 && restartAttemptsRef.current < 5) {
         if (restartTimer) clearTimeout(restartTimer);
         restartTimer = setTimeout(async () => {

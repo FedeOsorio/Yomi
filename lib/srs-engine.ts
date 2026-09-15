@@ -178,6 +178,15 @@ export function checkVoiceMatch(
   // 2. Coincidencia directa exacta con la lectura
   if (cleanReading.length > 0 && cleanTranscript === cleanReading) return true;
 
+  // 2b. Coincidencia fonética Kana directa (Katakana <-> Hiragana, ej. lectura "デン" y transcripción "でん")
+  if (cleanReading.length > 0 && cleanTranscript.length > 0) {
+    const hiraReading = toNormalizedHiragana(cleanReading);
+    const hiraTranscript = toNormalizedHiragana(cleanTranscript);
+    if (hiraReading.length > 0 && hiraTranscript.length > 0 && hiraReading === hiraTranscript) {
+      return true;
+    }
+  }
+
   const targetLang = getEffectiveCardLanguage({
     displayText: card.displayText,
     displayReading: card.displayReading,

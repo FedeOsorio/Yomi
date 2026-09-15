@@ -22,18 +22,22 @@ async function optimizeAppAssets() {
   let totalOptimized = 0;
   let count = 0;
 
-  // 1. Optimizar iconos y splash en assets/images
-  if (fs.existsSync(IMAGES_DIR)) {
-    const rootFiles = fs.readdirSync(IMAGES_DIR).filter(f => {
+  // Función auxiliar para procesar un directorio de imágenes
+  async function processDirectory(dirPath, dirLabel) {
+    if (!fs.existsSync(dirPath)) return;
+    const entries = fs.readdirSync(dirPath);
+
+    const files = entries.filter(f => {
       const ext = path.extname(f).toLowerCase();
-      const isFile = fs.statSync(path.join(IMAGES_DIR, f)).isFile();
+      const isFile = fs.statSync(path.join(dirPath, f)).isFile();
       return isFile && (ext === '.png' || ext === '.jpg' || ext === '.jpeg' || ext === '.webp');
     });
 
-    console.log(`📁 Procesando ${rootFiles.length} imágenes principales en assets/images/...`);
+    if (files.length === 0) return;
+    console.log(`📁 Procesando ${files.length} imágenes en ${dirLabel}...`);
 
-    for (const file of rootFiles) {
-      const filePath = path.join(IMAGES_DIR, file);
+    for (const file of files) {
+      const filePath = path.join(dirPath, file);
       const originalBuffer = fs.readFileSync(filePath);
       const originalSize = originalBuffer.length;
       totalOriginal += originalSize;
@@ -50,16 +54,16 @@ async function optimizeAppAssets() {
           let targetWidth = null;
           let targetHeight = null;
 
-          if (baseName === 'favicon') {
+          if (baseName.includes('favicon')) {
             targetWidth = 48;
             targetHeight = 48;
-          } else if (baseName === 'android-icon-foreground' || baseName === 'splash-icon') {
+          } else if (baseName.includes('splash-icon') || baseName.includes('android-icon-foreground')) {
             targetWidth = 512;
             targetHeight = 512;
-          } else if (baseName === 'icon' || baseName === 'adaptive-icon') {
+          } else if (baseName.includes('icon') || baseName.includes('adaptive-icon')) {
             targetWidth = 1024;
             targetHeight = 1024;
-          } else if (baseName === 'splash') {
+          } else if (baseName.includes('splash')) {
             targetWidth = 1080;
             targetHeight = 2400;
           }
@@ -77,7 +81,7 @@ async function optimizeAppAssets() {
                 compressionLevel: 9,
                 adaptiveFiltering: true,
                 palette: true,
-                quality: 90,
+                quality: 85,
                 effort: 10,
               })
               .toBuffer();
@@ -111,6 +115,19 @@ async function optimizeAppAssets() {
         totalOptimized += originalSize;
       }
     }
+
+    // Procesar subdirectorios como backup si existen
+    const subDirs = entries.filter(f => fs.statSync(path.join(dirPath, f)).isDirectory());
+    for (const subDir of subDirs) {
+      if (subDir !== 'words') {
+        await processDirectory(path.join(dirPath, subDir), `${dirLabel}/${subDir}`);
+      }
+    }
+  }
+
+  // 1. Optimizar iconos, splash y subcarpetas en assets/images
+  if (fs.existsSync(IMAGES_DIR)) {
+    await processDirectory(IMAGES_DIR, 'assets/images');
   }
 
   // 2. Si existe carpeta words (vocabulario), convertir y optimizar a WebP
