@@ -57,6 +57,7 @@ export interface GoogleDriveState {
     success: boolean;
     user?: GoogleUserProfile;
     missingDriveScope?: boolean;
+    backupMeta?: GoogleDriveBackupMetadata | null;
     error?: string;
   }>;
   disconnect: () => Promise<void>;
@@ -133,15 +134,20 @@ export const useGoogleDriveStore = create<GoogleDriveState>()(
           const scopeCheck = await checkTokenDriveScope(result.token);
           const missingDriveScope = scopeCheck.valid && !scopeCheck.hasDriveScope;
 
-          // Si no vino metadata en el login, consultar de inmediato a Drive
-          if (!result.metadata) {
-            get().refreshMeta(true).catch(() => {});
+          // Si no vino metadata en el login y tiene permiso, consultar de inmediato a Drive
+          let meta = result.metadata;
+          if (!meta && !missingDriveScope) {
+            const refreshed = await get().refreshMeta(true).catch(() => ({ success: false, meta: null }));
+            if (refreshed.success && refreshed.meta) {
+              meta = refreshed.meta;
+            }
           }
 
           return {
             success: true,
             user: result.profile,
             missingDriveScope,
+            backupMeta: meta ?? get().driveBackupMeta,
           };
         } catch (e: any) {
           if (e.message === 'USER_CANCELLED') {

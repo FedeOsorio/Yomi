@@ -126,6 +126,28 @@ export default function ProfileScreen() {
           'Permiso de Google Drive pendiente',
           `Se vinculó la cuenta ${res.user.email}, pero no se otorgó permiso a Google Drive.\n\nAl iniciar sesión en Google, asegurate de marcar la casilla de verificación de Google Drive para permitir respaldar en la nube.`
         );
+      } else if (res.backupMeta && res.backupMeta.modifiedTime) {
+        const formattedDate = new Date(res.backupMeta.modifiedTime).toLocaleString(undefined, {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        });
+
+        Alert.alert(
+          'Copia de seguridad encontrada',
+          `Vinculado con ${res.user.email}.\n\nSe encontró una copia de seguridad en Google Drive del ${formattedDate}.\n\n¿Deseás restaurarla ahora en este dispositivo?`,
+          [
+            {
+              text: 'Ahora no',
+              style: 'cancel',
+            },
+            {
+              text: 'Restaurar',
+              onPress: () => {
+                handleRestoreFromGoogleDrive();
+              },
+            },
+          ]
+        );
       } else {
         Alert.alert('Google Drive Conectado', `Vinculado exitosamente con ${res.user.email}.`);
       }
@@ -169,7 +191,8 @@ export default function ProfileScreen() {
   };
 
   const handleRestoreFromGoogleDrive = async () => {
-    if (!googleUser) {
+    const user = googleUser || useGoogleDriveStore.getState().googleUser;
+    if (!user) {
       Alert.alert('Cuenta no conectada', 'Por favor conecta tu cuenta de Google primero.');
       return;
     }

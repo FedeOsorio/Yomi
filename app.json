@@ -2,18 +2,19 @@
   "expo": {
     "name": "Yomi",
     "slug": "Yomi",
-    "version": "0.2.2",
+    "version": "0.2.3",
     "orientation": "default",
     "scheme": [
       "yomi",
       "com.kuyi.yomi"
     ],
+    "icon": "./assets/images/icon.png",
     "userInterfaceStyle": "automatic",
     "android": {
       "package": "com.kuyi.yomi",
       "adaptiveIcon": {
-        "backgroundColor": "#fafaf0",
-        "foregroundImage": "./assets/images/icon.png"
+        "backgroundColor": "#0060c0",
+        "foregroundImage": "./assets/images/adaptive-icon.png"
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
@@ -104,7 +105,9 @@
       "infoPlist": {
         "NSSpeechRecognitionUsageDescription": "Allow $(PRODUCT_NAME) to use speech recognition.",
         "NSMicrophoneUsageDescription": "Permite a Yomi acceder al micrófono para practicar tu pronunciación en voz alta.",
-        "LSApplicationQueriesSchemes": ["itms-apps"]
+        "LSApplicationQueriesSchemes": [
+          "itms-apps"
+        ]
       }
     }
   }
