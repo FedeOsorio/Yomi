@@ -103,7 +103,8 @@
     "ios": {
       "infoPlist": {
         "NSSpeechRecognitionUsageDescription": "Allow $(PRODUCT_NAME) to use speech recognition.",
-        "NSMicrophoneUsageDescription": "Permite a Yomi acceder al micrófono para practicar tu pronunciación en voz alta."
+        "NSMicrophoneUsageDescription": "Permite a Yomi acceder al micrófono para practicar tu pronunciación en voz alta.",
+        "LSApplicationQueriesSchemes": ["itms-apps"]
       }
     }
   }

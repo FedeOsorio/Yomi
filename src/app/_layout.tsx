@@ -6,12 +6,14 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { enableFreeze } from 'react-native-screens';
 import { OTAUpdateOverlay } from '../components/OTAUpdateOverlay';
 import { useIncomingFileHandler } from '../../lib/incoming-file-service';
+import { useInAppUpdates } from '../hooks/useInAppUpdates';
 
 WebBrowser.maybeCompleteAuthSession();
 enableFreeze(true);
 
 export default function RootLayout() {
   useIncomingFileHandler();
+  useInAppUpdates();
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
