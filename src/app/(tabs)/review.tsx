@@ -1613,6 +1613,16 @@ export default function ReviewScreen() {
             />
           )}
 
+          {/* Indicador pedagógico fuera de la tarjeta para guiar al usuario en modo clásico */}
+          {studyMethod === 'text' && !isChecked && isIdeographic && (
+            <View style={[styles.optionsGuidanceBadge, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}>
+              <Ionicons name="information-circle-outline" size={15} color={colors.primary} />
+              <Text style={[styles.optionsGuidanceText, { color: colors.textMuted }]}>
+                Responde cualquiera de las opciones
+              </Text>
+            </View>
+          )}
+
           {/* Contenedor Flip Card 3D */}
           <View style={styles.flipContainer}>
             {/* CARA FRONTAL: Pregunta */}
@@ -2003,25 +2013,27 @@ export default function ReviewScreen() {
               </TouchableOpacity>
             </View>
           ) : (
-            <TouchableOpacity
-              style={[styles.nextBtn, { backgroundColor: colors.primary }, isProcessing && { opacity: 0.7 }]}
-              disabled={isProcessing}
-              onPress={handleNextCard}
-            >
-              {isProcessing ? (
-                <ActivityIndicator color="#FFF" />
-              ) : (
-                <>
-                  <Text style={styles.nextBtnText}>Siguiente tarjeta</Text>
-                  <Ionicons
-                    name="arrow-forward"
-                    size={20}
-                    color="#FFF"
-                    style={{ marginLeft: 6 }}
-                  />
-                </>
-              )}
-            </TouchableOpacity>
+            <View style={styles.actionButtonsRow}>
+              <TouchableOpacity
+                style={[styles.nextBtn, { backgroundColor: colors.primary }, isProcessing && { opacity: 0.7 }]}
+                disabled={isProcessing}
+                onPress={handleNextCard}
+              >
+                {isProcessing ? (
+                  <ActivityIndicator color="#FFF" />
+                ) : (
+                  <>
+                    <Text style={styles.nextBtnText}>Siguiente tarjeta</Text>
+                    <Ionicons
+                      name="arrow-forward"
+                      size={18}
+                      color="#FFF"
+                      style={{ marginLeft: 6 }}
+                    />
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
           )
         )}
       </View>
@@ -2438,6 +2450,7 @@ const styles = StyleSheet.create({
   nextBtn: {
     flex: 1,
     width: '100%',
+    minHeight: 50,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
@@ -2448,6 +2461,22 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontWeight: 'bold',
     fontSize: 16,
+  },
+  optionsGuidanceBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+    gap: 6,
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    borderWidth: 1,
+    marginBottom: Spacing.sm,
+  },
+  optionsGuidanceText: {
+    fontSize: 13,
+    fontWeight: '500',
   },
   completedBox: {
     flex: 1,

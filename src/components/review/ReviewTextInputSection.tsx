@@ -47,16 +47,6 @@ export const ReviewTextInputSection = memo(function ReviewTextInputSection({
 
   return (
     <View style={styles.inputsSection}>
-      {/* Indicador pedagógico para aclarar que cualquiera de las 2 respuestas (o ambas) es válida */}
-      {isIdeographic && (
-        <View style={[styles.guidanceBadge, { backgroundColor: colors.surfaceHighlight }]}>
-          <Ionicons name="information-circle-outline" size={14} color={colors.primary} />
-          <Text style={[styles.guidanceText, { color: colors.textMuted }]}>
-            Podés responder pronunciación, significado o ambos
-          </Text>
-        </View>
-      )}
-
       {isIdeographic && (
         <View style={styles.inputGroup}>
           <View style={styles.labelRow}>
@@ -123,21 +113,6 @@ const styles = StyleSheet.create({
   inputsSection: {
     width: '100%',
     marginTop: Spacing.sm,
-  },
-  guidanceBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 7,
-    paddingHorizontal: 12,
-    borderRadius: 20,
-    marginBottom: Spacing.md,
-    alignSelf: 'center',
-  },
-  guidanceText: {
-    fontSize: 12,
-    fontWeight: '500',
   },
   inputGroup: {
     marginBottom: Spacing.md,
