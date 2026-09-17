@@ -1613,18 +1613,14 @@ export default function ReviewScreen() {
             />
           )}
 
-          {/* Indicador pedagógico fuera de la tarjeta para guiar al usuario en modo clásico */}
-          {studyMethod === 'text' && !isChecked && isIdeographic && (
-            <View style={[styles.optionsGuidanceBadge, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}>
-              <Ionicons name="information-circle-outline" size={15} color={colors.primary} />
+          {/* Contenedor Flip Card 3D */}
+          <View style={styles.flipContainer}>
+            {/* Texto sutil de guía sobre la tarjeta sin badge ni ícono, sin alterar la posición vertical de la tarjeta */}
+            {studyMethod === 'text' && !isChecked && isIdeographic && (
               <Text style={[styles.optionsGuidanceText, { color: colors.textMuted }]}>
                 Responde cualquiera de las opciones
               </Text>
-            </View>
-          )}
-
-          {/* Contenedor Flip Card 3D */}
-          <View style={styles.flipContainer}>
+            )}
             {/* CARA FRONTAL: Pregunta */}
             <Animated.View
               style={[
@@ -2462,19 +2458,12 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: 16,
   },
-  optionsGuidanceBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    alignSelf: 'center',
-    gap: 6,
-    paddingVertical: 7,
-    paddingHorizontal: 14,
-    borderRadius: 20,
-    borderWidth: 1,
-    marginBottom: Spacing.sm,
-  },
   optionsGuidanceText: {
+    position: 'absolute',
+    top: -26,
+    left: 0,
+    right: 0,
+    textAlign: 'center',
     fontSize: 13,
     fontWeight: '500',
   },
