@@ -197,12 +197,16 @@ export default function WordDetailScreen() {
 
   const handleStartEditReading = () => {
     if (!data) return;
+    const isJap = data.deck?.type !== 'custom' && (data.deck?.languageCode || '').startsWith('ja');
+    if (!isJap) return;
     setEditReadingText(data.word.pinyinDisplay || '');
     setIsEditingReading(true);
   };
 
   const handleSaveEditedReading = async () => {
     if (!data) return;
+    const isJap = data.deck?.type !== 'custom' && (data.deck?.languageCode || '').startsWith('ja');
+    if (!isJap) return;
     const trimmed = editReadingText.trim();
     if (!trimmed) {
       Alert.alert('Aviso', 'La lectura no puede estar vacía.');
@@ -524,7 +528,7 @@ export default function WordDetailScreen() {
                       {cleanReading}
                     </Text>
                   ) : null}
-                  {!isCustomDeck && (
+                  {isJapanese && (
                     <TouchableOpacity
                       style={styles.editReadingBtn}
                       onPress={handleStartEditReading}
@@ -891,7 +895,7 @@ export default function WordDetailScreen() {
 
       {/* Modal para Editar Lectura */}
       <Modal
-        visible={isEditingReading}
+        visible={isEditingReading && isJapanese}
         transparent
         animationType="fade"
         onRequestClose={() => setIsEditingReading(false)}

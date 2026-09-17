@@ -1195,18 +1195,19 @@ export default function ReviewScreen() {
 
   // 3. Avanzar a la siguiente tarjeta (modo clásico por teclado)
   const handleNextCard = async () => {
-    if (!currentCard || !evaluation || isProcessing) return;
+    if (!currentCard || isProcessing) return;
     setIsProcessing(true);
+    stopSpeech();
 
     try {
-      const isAgain = evaluation.computedRating === Rating.Again;
+      const isAgain = evaluation?.computedRating === Rating.Again;
       const wasFailedInSession = useReviewStore.getState().sessionFailedCardIds.has(currentCard.id);
 
       if (isAgain) {
         recordFailedCard(currentCard.id);
       }
 
-      if (!isPracticeMode) {
+      if (!isPracticeMode && evaluation) {
         if (isAgain) {
           await processCardReview(currentCard.id, Rating.Again);
         } else {
@@ -1214,16 +1215,38 @@ export default function ReviewScreen() {
         }
       }
 
-      // Si la tarjeta fue fallada o se presionó "No me acuerdo", reinsertar entre 5 y 10 posiciones adelante
+      // Si la tarjeta fue fallada o se presionó "No lo sé", reinsertar entre 5 y 10 posiciones adelante
       if (isAgain) {
         reinsertCurrentCardAhead(5, 10);
       }
 
-      advanceCard();
-      cardFlipAnim.setValue(0);
+      // Rotar suavemente la tarjeta de regreso al frente a 60 FPS
+      Animated.timing(cardFlipAnim, {
+        toValue: 0,
+        duration: 260,
+        easing: Easing.inOut(Easing.ease),
+        useNativeDriver: true,
+      }).start(() => {
+        setIsProcessing(false);
+      });
+
+      // En el punto medio de la rotación (130ms), avanzar el estado
+      setTimeout(() => {
+        advanceCard();
+      }, 130);
     } catch (e) {
       console.error('Error al guardar repaso FSRS:', e);
-      setIsProcessing(false);
+      Animated.timing(cardFlipAnim, {
+        toValue: 0,
+        duration: 260,
+        easing: Easing.inOut(Easing.ease),
+        useNativeDriver: true,
+      }).start(() => {
+        setIsProcessing(false);
+      });
+      setTimeout(() => {
+        advanceCard();
+      }, 130);
     }
   };
 
@@ -1639,6 +1662,8 @@ export default function ReviewScreen() {
                   {studyMethod === 'text' && !isChecked && (
                     <ReviewTextInputSection
                       isIdeographic={isIdeographic}
+                      languageCode={lang}
+                      onSubmit={handleCheck}
                       colors={colors}
                     />
                   )}
@@ -1970,7 +1995,7 @@ export default function ReviewScreen() {
           !isChecked ? (
             <View style={styles.actionButtonsRow}>
               <TouchableOpacity style={[styles.giveUpBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]} onPress={handleGiveUp}>
-                <Text style={[styles.giveUpBtnText, { color: colors.textMuted }]}>No me acuerdo</Text>
+                <Text style={[styles.giveUpBtnText, { color: colors.textMuted }]}>No lo sé</Text>
               </TouchableOpacity>
 
               <TouchableOpacity style={[styles.checkBtn, { backgroundColor: colors.primary }]} onPress={handleCheck}>
@@ -2400,7 +2425,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   checkBtn: {
-    flex: 2,
+    flex: 1,
     paddingVertical: 14,
     borderRadius: 14,
     alignItems: 'center',

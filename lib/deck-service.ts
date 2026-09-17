@@ -17,7 +17,7 @@ export interface DeckWithStats {
 // Catálogo completo de idiomas soportados para resolución de metadata
 export const ALL_LANGUAGES = [
   { code: 'ja-JP', label: 'Japonés', flag: '🇯🇵', placeholder: 'ej. hon, arigato, 本' },
-  { code: 'zh-CN', label: 'Chino', flag: '🇨🇳', placeholder: 'ej. xihuan, ni hao' },
+  { code: 'zh-CN', label: 'Chino', flag: '🇨🇳', placeholder: 'Pinyin o Hanzi (ej. ni hao, xuexi, 你好)' },
   { code: 'en-US', label: 'Inglés', flag: '🇺🇸', placeholder: 'ej. serendipity, book' },
   { code: 'es-ES', label: 'Español', flag: '🇪🇸', placeholder: 'ej. efímero, biblioteca' },
   { code: 'fr-FR', label: 'Francés', flag: '🇫🇷', placeholder: 'ej. bonjour, livre' },

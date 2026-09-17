@@ -1,15 +1,19 @@
-import React, { memo } from 'react';
+import React, { memo, useRef, useState } from 'react';
 import { StyleSheet, Text, TextInput, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useReviewStore } from '../../stores/reviewStore';
 import { Spacing, Typography } from '../../constants/theme';
 
 export interface ReviewTextInputSectionProps {
   isIdeographic: boolean;
+  languageCode?: string;
+  onSubmit?: () => void;
   colors: {
     text: string;
     textMuted: string;
     surfaceHighlight: string;
     border: string;
+    primary: string;
   };
 }
 
@@ -20,6 +24,8 @@ export interface ReviewTextInputSectionProps {
  */
 export const ReviewTextInputSection = memo(function ReviewTextInputSection({
   isIdeographic,
+  languageCode,
+  onSubmit,
   colors,
 }: ReviewTextInputSectionProps) {
   const inputReading = useReviewStore((s) => s.inputReading);
@@ -27,50 +33,86 @@ export const ReviewTextInputSection = memo(function ReviewTextInputSection({
   const setInputReading = useReviewStore((s) => s.setInputReading);
   const setInputMeaning = useReviewStore((s) => s.setInputMeaning);
 
+  const meaningInputRef = useRef<TextInput>(null);
+  const [focusedField, setFocusedField] = useState<'reading' | 'meaning' | null>(null);
+
+  const isJapanese = (languageCode || '').startsWith('ja');
+  const isChinese = (languageCode || '').startsWith('zh');
+
+  const readingPlaceholder = isJapanese
+    ? 'Ej. にほんご / nihongo'
+    : isChinese
+      ? 'Ej. nǐ hǎo / ni3 hao3'
+      : 'Pronunciación o lectura...';
+
   return (
     <View style={styles.inputsSection}>
+      {/* Indicador pedagógico para aclarar que cualquiera de las 2 respuestas (o ambas) es válida */}
+      {isIdeographic && (
+        <View style={[styles.guidanceBadge, { backgroundColor: colors.surfaceHighlight }]}>
+          <Ionicons name="information-circle-outline" size={14} color={colors.primary} />
+          <Text style={[styles.guidanceText, { color: colors.textMuted }]}>
+            Podés responder pronunciación, significado o ambos
+          </Text>
+        </View>
+      )}
+
       {isIdeographic && (
         <View style={styles.inputGroup}>
-          <Text style={[styles.inputLabel, { color: colors.textMuted }]}>
-            1. ¿Cómo se pronuncia? (Pinyin / Lectura):
-          </Text>
+          <View style={styles.labelRow}>
+            <Text style={[styles.inputLabel, { color: colors.text }]}>
+              1. ¿Cómo se pronuncia?
+            </Text>
+          </View>
           <TextInput
             style={[
               styles.textInput,
               {
                 backgroundColor: colors.surfaceHighlight,
                 color: colors.text,
-                borderColor: colors.border,
+                borderColor: focusedField === 'reading' ? colors.primary : colors.border,
               },
             ]}
-            placeholder="Ej. xue, ni3 hao3"
+            placeholder={readingPlaceholder}
             placeholderTextColor={colors.textMuted}
             value={inputReading}
             onChangeText={setInputReading}
+            onFocus={() => setFocusedField('reading')}
+            onBlur={() => setFocusedField(null)}
             autoCapitalize="none"
             autoCorrect={false}
+            returnKeyType="next"
+            onSubmitEditing={() => meaningInputRef.current?.focus()}
+            blurOnSubmit={false}
           />
         </View>
       )}
 
       <View style={styles.inputGroup}>
-        <Text style={[styles.inputLabel, { color: colors.textMuted }]}>
-          {isIdeographic ? '2. ¿Qué significa?' : '¿Qué significa esta palabra?'}
-        </Text>
+        <View style={styles.labelRow}>
+          <Text style={[styles.inputLabel, { color: colors.text }]}>
+            {isIdeographic ? '2. ¿Qué significa?' : '¿Qué significa esta palabra?'}
+          </Text>
+        </View>
         <TextInput
+          ref={meaningInputRef}
           style={[
             styles.textInput,
             {
               backgroundColor: colors.surfaceHighlight,
               color: colors.text,
-              borderColor: colors.border,
+              borderColor: focusedField === 'meaning' ? colors.primary : colors.border,
             },
           ]}
-          placeholder="Ej. aprender, estudiar"
+          placeholder="Significado en español..."
           placeholderTextColor={colors.textMuted}
           value={inputMeaning}
           onChangeText={setInputMeaning}
+          onFocus={() => setFocusedField('meaning')}
+          onBlur={() => setFocusedField(null)}
           autoCapitalize="none"
+          returnKeyType="done"
+          onSubmitEditing={onSubmit}
         />
       </View>
     </View>
@@ -82,19 +124,39 @@ const styles = StyleSheet.create({
     width: '100%',
     marginTop: Spacing.sm,
   },
+  guidanceBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    marginBottom: Spacing.md,
+    alignSelf: 'center',
+  },
+  guidanceText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
   inputGroup: {
     marginBottom: Spacing.md,
   },
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
   inputLabel: {
     ...Typography.bodySmall,
-    marginBottom: 6,
-    fontWeight: '600',
+    fontWeight: '700',
+    fontSize: 13,
   },
   textInput: {
-    borderRadius: 12,
+    borderRadius: 14,
     paddingHorizontal: Spacing.md,
-    paddingVertical: 12,
-    fontSize: 16,
-    borderWidth: 1,
+    paddingVertical: 13,
+    fontSize: 15,
+    borderWidth: 1.5,
   },
 });

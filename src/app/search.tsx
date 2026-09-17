@@ -521,7 +521,7 @@ export default function SearchScreen() {
                   );
                 }}
               />
-            ) : (
+            ) : chineseResults.syllableGroups.length > 0 ? (
               /* Constructor por sílabas si no hubo exacta */
               <ScrollView style={styles.builderContainer} contentContainerStyle={{ paddingBottom: 60 }}>
                 <View style={[styles.builderHeaderBox, { backgroundColor: colors.surfaceHighlight }]}>
@@ -601,6 +601,25 @@ export default function SearchScreen() {
                   <Text style={styles.createBtnText}>Guardar en {currentDeck?.name}</Text>
                 </TouchableOpacity>
               </ScrollView>
+            ) : (
+              /* Estado vacío informativo cuando no hay coincidencias */
+              <View style={[styles.chineseEmptyContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <View style={[styles.chineseEmptyIconBox, { backgroundColor: colors.surfaceHighlight }]}>
+                  <Ionicons name="search-outline" size={32} color={colors.primary} />
+                </View>
+                <Text style={[styles.chineseEmptyTitle, { color: colors.text }]}>
+                  No se encontraron palabras en chino
+                </Text>
+                <Text style={[styles.chineseEmptyDescription, { color: colors.textMuted }]}>
+                  Para buscar en chino, ingresá el término en <Text style={{ fontWeight: '700', color: colors.text }}>Pinyin</Text> (ej. <Text style={{ color: colors.primary, fontWeight: '600' }}>ni hao</Text>, <Text style={{ color: colors.primary, fontWeight: '600' }}>xuexi</Text>) o directamente en caracteres <Text style={{ fontWeight: '700', color: colors.text }}>Hanzi</Text> (ej. <Text style={{ color: colors.primary, fontWeight: '600' }}>你好</Text>).
+                </Text>
+                <View style={[styles.chineseEmptyNotice, { backgroundColor: colors.surfaceHighlight }]}>
+                  <Ionicons name="information-circle-outline" size={18} color={colors.primary} style={{ marginTop: 2 }} />
+                  <Text style={[styles.chineseEmptyNoticeText, { color: colors.textMuted }]}>
+                    Yomi busca palabras en el diccionario oficial y autocompleta sus significados, pero no traduce oraciones o texto libre del español al chino.
+                  </Text>
+                </View>
+              </View>
             )}
           </>
         )}
@@ -980,6 +999,47 @@ const styles = StyleSheet.create({
   },
   builderLoader: {
     marginLeft: Spacing.xs,
+  },
+  chineseEmptyContainer: {
+    padding: Spacing.xl,
+    borderRadius: 20,
+    borderWidth: 1,
+    alignItems: 'center',
+    marginTop: Spacing.md,
+  },
+  chineseEmptyIconBox: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: Spacing.md,
+  },
+  chineseEmptyTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: Spacing.sm,
+  },
+  chineseEmptyDescription: {
+    ...Typography.body,
+    fontSize: 14,
+    lineHeight: 21,
+    textAlign: 'center',
+    marginBottom: Spacing.md,
+  },
+  chineseEmptyNotice: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    padding: Spacing.md,
+    borderRadius: 14,
+    width: '100%',
+  },
+  chineseEmptyNoticeText: {
+    ...Typography.bodySmall,
+    flex: 1,
+    lineHeight: 18,
   },
 });
 
