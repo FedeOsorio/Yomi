@@ -288,11 +288,20 @@ function persistTranslationCacheDebounced(): void {
 }
 
 /**
- * Traduce un conjunto de textos al español en 1 sola solicitud HTTP por lotes,
+ * Traduce un conjunto de textos al idioma destino en 1 sola solicitud HTTP por lotes,
  * utilizando caché persistente en disco para funcionar 100% offline y evitar rate limits (HTTP 429).
+ * Si el idioma de origen y destino coinciden (ej. en -> en), devuelve las definiciones directas sin overhead de red.
  */
-export async function translateBatchToSpanish(texts: string[], fromLang: 'en' | 'ja' = 'en'): Promise<string[]> {
+export async function translateBatchToLanguage(
+  texts: string[],
+  toLang: string = 'es',
+  fromLang: 'en' | 'ja' = 'en'
+): Promise<string[]> {
   if (!texts || texts.length === 0) return [];
+
+  if (toLang === fromLang) {
+    return texts.map((t) => capitalizeFirst((t || '').trim()));
+  }
 
   await ensureTranslationCacheLoaded();
 
@@ -306,7 +315,7 @@ export async function translateBatchToSpanish(texts: string[], fromLang: 'en' | 
       results[i] = '';
       continue;
     }
-    const cacheKey = `${fromLang}::${raw.toLowerCase()}`;
+    const cacheKey = `${fromLang}->${toLang}::${raw.toLowerCase()}`;
     if (translationCache.has(cacheKey)) {
       results[i] = translationCache.get(cacheKey)!;
     } else {
@@ -333,7 +342,7 @@ export async function translateBatchToSpanish(texts: string[], fromLang: 'en' | 
       const timeoutId = setTimeout(() => controller.abort(), 3500); // 3.5s timeout defensivo
 
       const res = await fetch(
-        `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${fromLang}&tl=es&dt=t&q=${encodeURIComponent(joinedQuery)}`,
+        `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${fromLang}&tl=${toLang}&dt=t&q=${encodeURIComponent(joinedQuery)}`,
         { signal: controller.signal }
       );
       clearTimeout(timeoutId);
@@ -348,7 +357,7 @@ export async function translateBatchToSpanish(texts: string[], fromLang: 'en' | 
             const originalText = chunkTexts[j];
             const translatedPart = (parts[j] || '').trim() || originalText;
             const capitalized = capitalizeFirst(translatedPart);
-            translationCache.set(`${fromLang}::${originalText.toLowerCase()}`, capitalized);
+            translationCache.set(`${fromLang}->${toLang}::${originalText.toLowerCase()}`, capitalized);
             results[originalIndex] = capitalized;
             hasNewTranslations = true;
           }
@@ -368,7 +377,7 @@ export async function translateBatchToSpanish(texts: string[], fromLang: 'en' | 
         const timeoutId = setTimeout(() => controller.abort(), 2000);
 
         const singleRes = await fetch(
-          `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${fromLang}&tl=es&dt=t&q=${encodeURIComponent(originalText)}`,
+          `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${fromLang}&tl=${toLang}&dt=t&q=${encodeURIComponent(originalText)}`,
           { signal: controller.signal }
         );
         clearTimeout(timeoutId);
@@ -377,7 +386,7 @@ export async function translateBatchToSpanish(texts: string[], fromLang: 'en' | 
           const singleData = await singleRes.json();
           if (singleData && singleData[0] && singleData[0][0] && singleData[0][0][0]) {
             const translated = capitalizeFirst(singleData[0][0][0].trim());
-            translationCache.set(`${fromLang}::${originalText.toLowerCase()}`, translated);
+            translationCache.set(`${fromLang}->${toLang}::${originalText.toLowerCase()}`, translated);
             results[originalIndex] = translated;
             hasNewTranslations = true;
             continue;
@@ -395,14 +404,17 @@ export async function translateBatchToSpanish(texts: string[], fromLang: 'en' | 
   return results;
 }
 
-/**
- * Traduce un texto al español (desde inglés por defecto o japonés si se especifica).
- */
-export async function translateToSpanish(text: string, fromLang: 'en' | 'ja' = 'en'): Promise<string> {
+export async function translateToLanguage(text: string, toLang: string = 'es', fromLang: 'en' | 'ja' = 'en'): Promise<string> {
   if (!text) return text;
-  const [translated] = await translateBatchToSpanish([text], fromLang);
+  const [translated] = await translateBatchToLanguage([text], toLang, fromLang);
   return translated || capitalizeFirst(text);
 }
+
+export const translateBatchToSpanish = (texts: string[], fromLang: 'en' | 'ja' = 'en') =>
+  translateBatchToLanguage(texts, 'es', fromLang);
+
+export const translateToSpanish = (text: string, fromLang: 'en' | 'ja' = 'en') =>
+  translateToLanguage(text, 'es', fromLang);
 
 /**
  * Mapea las partes de la oración (parts_of_speech) devueltas por JMdict/Jisho
@@ -446,7 +458,7 @@ export function mapJishoPartsOfSpeech(partsOfSpeech: string[], word: string, rea
 /**
  * Busca palabras en japonés (usando JMdict/Jisho) con ordenamiento inteligente por relevancia y uso común.
  */
-export async function searchJapanese(rawInput: string): Promise<JapaneseEntry[]> {
+export async function searchJapanese(rawInput: string, toLang: string = 'es'): Promise<JapaneseEntry[]> {
   if (!rawInput || !rawInput.trim()) return [];
 
   const input = rawInput.trim();
@@ -468,7 +480,7 @@ export async function searchJapanese(rawInput: string): Promise<JapaneseEntry[]>
     // Si es una frase u oración, traducir inmediatamente la frase completa para asegurar que sea la tarjeta principal
     let phraseEntry: JapaneseEntry | null = null;
     if (isMultiWordPhrase) {
-      const phraseTranslation = await translateToSpanish(hiragana || input, 'ja');
+      const phraseTranslation = await translateToLanguage(hiragana || input, toLang, 'ja');
       phraseEntry = {
         id: `ja_phrase_${Date.now()}`,
         kanji: hiragana || input,
@@ -762,14 +774,14 @@ export async function searchJapanese(rawInput: string): Promise<JapaneseEntry[]>
     }
 
     // Traducir todas las definiciones en una única llamada por lotes (con caché inteligente)
-    await translateBatchToSpanish(allDefinitionsToTranslate, 'en');
+    await translateBatchToLanguage(allDefinitionsToTranslate, toLang, 'en');
 
-    // Construir las entradas con sus traducciones garantizadas al español
+    // Construir las entradas con sus traducciones garantizadas
     const entries: JapaneseEntry[] = [];
 
     for (let i = 0; i < preparedItems.length; i++) {
       const p = preparedItems[i];
-      const translatedMeanings = await translateBatchToSpanish(p.rawDefinitions, 'en');
+      const translatedMeanings = await translateBatchToLanguage(p.rawDefinitions, toLang, 'en');
 
       // Limpiar, desduplicar y capitalizar cada significado preservando paréntesis
       let finalMeanings = cleanAndFormatMeanings(translatedMeanings);

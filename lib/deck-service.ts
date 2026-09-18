@@ -28,9 +28,9 @@ export const ALL_LANGUAGES = [
   { code: 'ru-RU', label: 'Ruso', flag: '🇷🇺', placeholder: 'ej. privet, kniga' },
 ];
 
-// Idiomas habilitados para creación de mazos (exclusivamente Japonés y Chino)
+// Idiomas habilitados para creación de mazos (Japonés, Chino, Inglés, Español)
 export const SUPPORTED_LANGUAGES = ALL_LANGUAGES.filter(
-  (lang) => lang.code === 'ja-JP' || lang.code === 'zh-CN'
+  (lang) => lang.code === 'ja-JP' || lang.code === 'zh-CN' || lang.code === 'en-US' || lang.code === 'es-ES'
 );
 
 export function getLanguageMeta(code?: string) {
@@ -42,7 +42,7 @@ export async function createDeck(
   languageCode: string = 'ja-JP',
   type: 'language' | 'custom' = 'language'
 ): Promise<string> {
-  const allowed = ['ja-JP', 'zh-CN', 'es-ES'];
+  const allowed = ['ja-JP', 'zh-CN', 'en-US', 'es-ES'];
   const finalLang = type === 'custom' ? (languageCode || 'es-ES') : (allowed.includes(languageCode) ? languageCode : 'ja-JP');
   const id = crypto.randomUUID();
   await db.insert(decks).values({

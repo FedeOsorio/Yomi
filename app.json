@@ -2,7 +2,7 @@
   "expo": {
     "name": "Yomi",
     "slug": "Yomi",
-    "version": "0.2.3",
+    "version": "0.2.5",
     "orientation": "default",
     "scheme": [
       "yomi",
@@ -85,7 +85,9 @@
         }
       ],
       "expo-sharing",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-localization",
+      "expo-video"
     ],
     "experiments": {
       "typedRoutes": true,

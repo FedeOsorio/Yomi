@@ -4,9 +4,11 @@ import { useTheme } from '../../../providers/ThemeProvider';
 import { View, Text, StyleSheet, Platform, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getFloatingTabBarStyle } from '../../constants/theme';
+import { useTranslation } from '../../i18n';
 
 export default function TabLayout() {
   const { colors, isDark } = useTheme();
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
 
   const renderYomiHeaderTitle = (subtitle: string) => (
@@ -67,8 +69,8 @@ export default function TabLayout() {
       <Tabs.Screen 
         name="index" 
         options={{ 
-          headerTitle: () => renderYomiHeaderTitle('Mis Colecciones'), 
-          tabBarLabel: 'Mazos',
+          headerTitle: () => renderYomiHeaderTitle(t('tabs.myCollections')), 
+          tabBarLabel: t('tabs.decks'),
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="albums-outline" size={size} color={color} />
           ),
@@ -77,8 +79,8 @@ export default function TabLayout() {
       <Tabs.Screen 
         name="review" 
         options={{ 
-          headerTitle: () => renderYomiHeaderTitle('Repaso SRS'), 
-          tabBarLabel: 'Repaso',
+          headerTitle: () => renderYomiHeaderTitle(t('tabs.srsReview')), 
+          tabBarLabel: t('tabs.review'),
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="sparkles-outline" size={size} color={color} />
           ),
@@ -87,8 +89,8 @@ export default function TabLayout() {
       <Tabs.Screen 
         name="profile" 
         options={{ 
-          headerTitle: () => renderYomiHeaderTitle('Perfil y Ajustes'), 
-          tabBarLabel: 'Perfil',
+          headerTitle: () => renderYomiHeaderTitle(t('tabs.profileAndSettings')), 
+          tabBarLabel: t('tabs.profile'),
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="person-outline" size={size} color={color} />
           ),

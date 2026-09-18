@@ -3,6 +3,7 @@ import { StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useReviewStore } from '../../stores/reviewStore';
 import { Spacing, Typography } from '../../constants/theme';
+import { useTranslation } from '../../i18n';
 
 export interface ReviewTextInputSectionProps {
   isIdeographic: boolean;
@@ -36,14 +37,15 @@ export const ReviewTextInputSection = memo(function ReviewTextInputSection({
   const meaningInputRef = useRef<TextInput>(null);
   const [focusedField, setFocusedField] = useState<'reading' | 'meaning' | null>(null);
 
+  const { t } = useTranslation();
   const isJapanese = (languageCode || '').startsWith('ja');
   const isChinese = (languageCode || '').startsWith('zh');
 
   const readingPlaceholder = isJapanese
-    ? 'Ej. にほんご / nihongo'
+    ? t('review.placeholderReadingJa')
     : isChinese
-      ? 'Ej. nǐ hǎo / ni3 hao3'
-      : 'Pronunciación o lectura...';
+      ? t('review.placeholderReadingZh')
+      : t('review.pronunciation');
 
   return (
     <View style={styles.inputsSection}>
@@ -51,7 +53,7 @@ export const ReviewTextInputSection = memo(function ReviewTextInputSection({
         <View style={styles.inputGroup}>
           <View style={styles.labelRow}>
             <Text style={[styles.inputLabel, { color: colors.text }]}>
-              1. ¿Cómo se pronuncia?
+              {t('review.howPronounced')}
             </Text>
           </View>
           <TextInput
@@ -81,7 +83,7 @@ export const ReviewTextInputSection = memo(function ReviewTextInputSection({
       <View style={styles.inputGroup}>
         <View style={styles.labelRow}>
           <Text style={[styles.inputLabel, { color: colors.text }]}>
-            {isIdeographic ? '2. ¿Qué significa?' : '¿Qué significa esta palabra?'}
+            {isIdeographic ? t('review.whatMeans') : t('review.whatWordMeans')}
           </Text>
         </View>
         <TextInput
@@ -94,7 +96,7 @@ export const ReviewTextInputSection = memo(function ReviewTextInputSection({
               borderColor: focusedField === 'meaning' ? colors.primary : colors.border,
             },
           ]}
-          placeholder="Significado en español..."
+          placeholder={t('review.placeholderMeaning')}
           placeholderTextColor={colors.textMuted}
           value={inputMeaning}
           onChangeText={setInputMeaning}

@@ -30,6 +30,7 @@ import { getStudyStats } from '../../../lib/srs-engine';
 import { InfoModal } from '../../components/InfoModal';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { Shadows, Spacing } from '../../constants/theme';
+import { useTranslation, useLanguageStore } from '../../i18n';
 function formatBytes(bytes?: number): string {
   if (!bytes) return '';
   if (bytes < 1024) return `${bytes} B`;
@@ -39,6 +40,8 @@ function formatBytes(bytes?: number): string {
 
 export default function ProfileScreen() {
   const { isDark, toggleTheme, colors } = useTheme();
+  const { t } = useTranslation();
+  const { currentLanguage, preference, setLanguagePreference } = useLanguageStore();
   const [stats, setStats] = useState({
     totalCards: 0,
     dueCards: 0,
@@ -380,18 +383,18 @@ export default function ProfileScreen() {
         </View>
       </View>
 
-      {/* Sección de Preferencias Visuales */}
+      {/* Sección de Preferencias Visuales e Idioma */}
       <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         <View style={styles.sectionHeader}>
           <Ionicons name="color-palette-outline" size={20} color={colors.primary} />
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>Apariencia e Interfaz</Text>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('profile.theme')}</Text>
         </View>
 
         <View style={styles.settingRow}>
           <View style={styles.settingTextGroup}>
-            <Text style={[styles.settingLabel, { color: colors.text }]}>Modo Oscuro</Text>
+            <Text style={[styles.settingLabel, { color: colors.text }]}>{t('profile.darkMode')}</Text>
             <Text style={[styles.settingSub, { color: colors.textMuted }]}>
-              {isDark ? 'Tema Oscuro' : 'Tema Claro'}
+              {isDark ? 'Dark Mode' : 'Light Mode'}
             </Text>
           </View>
           <Switch
@@ -400,6 +403,51 @@ export default function ProfileScreen() {
             trackColor={{ false: colors.border, true: colors.primary }}
             thumbColor="#FFF"
           />
+        </View>
+
+        {/* Selector de Idioma de la Aplicación */}
+        <View style={[styles.settingRow, { flexDirection: 'column', alignItems: 'flex-start', marginTop: Spacing.md, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: Spacing.sm }]}>
+          <View style={styles.settingTextGroup}>
+            <Text style={[styles.settingLabel, { color: colors.text }]}>{t('profile.appLanguage')}</Text>
+            <Text style={[styles.settingSub, { color: colors.textMuted }]}>
+              {preference === 'system' ? `${t('profile.systemLanguage')} (${currentLanguage.toUpperCase()})` : currentLanguage.toUpperCase()}
+            </Text>
+          </View>
+
+          <View style={styles.langChipsRow}>
+            {[
+              { code: 'system', label: t('profile.systemLanguage'), flag: '🌐' },
+              { code: 'es', label: 'Español', flag: '🇪🇸' },
+              { code: 'en', label: 'English', flag: '🇺🇸' },
+              { code: 'pt', label: 'Português', flag: '🇧🇷' },
+              { code: 'ja', label: '日本語', flag: '🇯🇵' },
+            ].map((lang) => {
+              const isSelected = preference === lang.code;
+              return (
+                <TouchableOpacity
+                  key={lang.code}
+                  style={[
+                    styles.langChip,
+                    { backgroundColor: colors.surfaceHighlight, borderColor: colors.border },
+                    isSelected && { backgroundColor: colors.primary, borderColor: colors.primary },
+                  ]}
+                  onPress={() => setLanguagePreference(lang.code as any)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.langChipFlag}>{lang.flag}</Text>
+                  <Text
+                    style={[
+                      styles.langChipText,
+                      { color: colors.text },
+                      isSelected && { color: '#FFF', fontWeight: 'bold' },
+                    ]}
+                  >
+                    {lang.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
         </View>
       </View>
 
@@ -958,6 +1006,29 @@ const styles = StyleSheet.create({
   infoText: {
     fontSize: 13,
     lineHeight: 22,
+  },
+  langChipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: Spacing.xs,
+    width: '100%',
+  },
+  langChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 18,
+    borderWidth: 1,
+  },
+  langChipFlag: {
+    fontSize: 14,
+    marginRight: 6,
+  },
+  langChipText: {
+    fontSize: 13,
+    fontWeight: '500',
   },
 });
 

@@ -22,9 +22,11 @@ import { DictionaryEntry, getChineseSpanishMeaning, searchByPinyin, SearchResult
 import { saveCustomWord, saveGenericWord, saveWords } from '../../lib/word-service';
 import { useTheme } from '../../providers/ThemeProvider';
 import { Shadows, Spacing, Typography } from '../constants/theme';
+import { getCurrentUserLanguage, useTranslation } from '../i18n';
 
 export default function SearchScreen() {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ deckId?: string }>();
   const router = useRouter();
@@ -125,18 +127,20 @@ export default function SearchScreen() {
       }
     } else if (isJapanese) {
       // 2. Japonés: Romaji / Kana / Kanji -> Diccionario estructurado con JLPT
-      const jaEntries = await searchJapanese(trimmed);
+      const userLang = getCurrentUserLanguage();
+      const jaEntries = await searchJapanese(trimmed, userLang);
       if (latestQueryRef.current === text) {
         setJapaneseResults(jaEntries);
         setIsSearching(false);
       }
     } else {
-      // 3. Otros idiomas: Auto-traducción
+      // 3. Otros idiomas: Auto-traducción al idioma del usuario
       setIsGenericTranslating(true);
       try {
         const sourceLang = langCode.split('-')[0];
+        const userLang = getCurrentUserLanguage();
         const response = await fetch(
-          `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceLang}&tl=es&dt=t&q=${encodeURIComponent(trimmed)}`
+          `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceLang}&tl=${userLang}&dt=t&q=${encodeURIComponent(trimmed)}`
         );
         const data = await response.json();
         if (latestQueryRef.current === text && data && data[0] && data[0][0] && data[0][0][0]) {
@@ -608,15 +612,15 @@ export default function SearchScreen() {
                   <Ionicons name="search-outline" size={32} color={colors.primary} />
                 </View>
                 <Text style={[styles.chineseEmptyTitle, { color: colors.text }]}>
-                  No se encontraron palabras en chino
+                  {t('search.chineseEmptyTitle')}
                 </Text>
                 <Text style={[styles.chineseEmptyDescription, { color: colors.textMuted }]}>
-                  Para buscar en chino, ingresá el término en <Text style={{ fontWeight: '700', color: colors.text }}>Pinyin</Text> (ej. <Text style={{ color: colors.primary, fontWeight: '600' }}>ni hao</Text>, <Text style={{ color: colors.primary, fontWeight: '600' }}>xuexi</Text>) o directamente en caracteres <Text style={{ fontWeight: '700', color: colors.text }}>Hanzi</Text> (ej. <Text style={{ color: colors.primary, fontWeight: '600' }}>你好</Text>).
+                  {t('search.chineseEmptyDescription')}
                 </Text>
                 <View style={[styles.chineseEmptyNotice, { backgroundColor: colors.surfaceHighlight }]}>
                   <Ionicons name="information-circle-outline" size={18} color={colors.primary} style={{ marginTop: 2 }} />
                   <Text style={[styles.chineseEmptyNoticeText, { color: colors.textMuted }]}>
-                    Yomi busca palabras en el diccionario oficial y autocompleta sus significados, pero no traduce oraciones o texto libre del español al chino.
+                    {t('search.chineseEmptyNotice')}
                   </Text>
                 </View>
               </View>

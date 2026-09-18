@@ -43,6 +43,7 @@ import { getCompoundWordsForChar } from '../../../lib/word-service';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { ReviewMethodModal } from '../../components/review/ReviewMethodModal';
 import { ReviewTextInputSection } from '../../components/review/ReviewTextInputSection';
+import { useTranslation } from '../../i18n';
 import { SessionSummaryView } from '../../components/review/SessionSummaryView';
 import { VoiceMicControl } from '../../components/review/VoiceMicControl';
 import { VoiceTranscriptArea } from '../../components/review/VoiceTranscriptArea';
@@ -256,6 +257,7 @@ const SyllableBreakdownView = memo(function SyllableBreakdownView({
 
 export default function ReviewScreen() {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const navigation = useNavigation();
@@ -1545,7 +1547,7 @@ export default function ReviewScreen() {
   const isCustomCard =
     currentCard?.deckType === 'custom' ||
     currentCard?.languageCode === 'custom' ||
-    currentCard?.languageCode === 'es-ES';
+    (currentCard?.deckType !== 'language' && currentCard?.languageCode === 'es-ES');
   const lang = isCustomCard ? 'es-ES' : getEffectiveCardLanguage(currentCard);
   const isIdeographic = !isCustomCard && (lang.startsWith('zh') || lang.startsWith('ja'));
   const isJapanese = !isCustomCard && lang.startsWith('ja');
@@ -1618,7 +1620,7 @@ export default function ReviewScreen() {
             {/* Texto sutil de guía sobre la tarjeta sin badge ni ícono, sin alterar la posición vertical de la tarjeta */}
             {studyMethod === 'text' && !isChecked && isIdeographic && (
               <Text style={[styles.optionsGuidanceText, { color: colors.textMuted }]}>
-                Responde cualquiera de las opciones
+                {t('review.answerAnyOption')}
               </Text>
             )}
             {/* CARA FRONTAL: Pregunta */}
@@ -1985,7 +1987,7 @@ export default function ReviewScreen() {
                 style={[styles.nextBtn, { backgroundColor: colors.primary }]}
                 onPress={advanceToNextVoiceCard}
               >
-                <Text style={styles.nextBtnText}>Siguiente tarjeta ya</Text>
+                <Text style={styles.nextBtnText}>{t('review.nextCardNow')}</Text>
                 <Ionicons name="arrow-forward" size={18} color="#FFF" style={{ marginLeft: 6 }} />
               </TouchableOpacity>
             ) : (
@@ -1993,7 +1995,7 @@ export default function ReviewScreen() {
                 style={[styles.giveUpBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border, flex: 1 }]}
                 onPress={() => handleVoiceEvaluation(currentCard, false)}
               >
-                <Text style={[styles.giveUpBtnText, { color: colors.textMuted }]}>No lo sé</Text>
+                <Text style={[styles.giveUpBtnText, { color: colors.textMuted }]}>{t('review.iDontKnow')}</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -2001,11 +2003,11 @@ export default function ReviewScreen() {
           !isChecked ? (
             <View style={styles.actionButtonsRow}>
               <TouchableOpacity style={[styles.giveUpBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]} onPress={handleGiveUp}>
-                <Text style={[styles.giveUpBtnText, { color: colors.textMuted }]}>No lo sé</Text>
+                <Text style={[styles.giveUpBtnText, { color: colors.textMuted }]}>{t('review.iDontKnow')}</Text>
               </TouchableOpacity>
 
               <TouchableOpacity style={[styles.checkBtn, { backgroundColor: colors.primary }]} onPress={handleCheck}>
-                <Text style={styles.checkBtnText}>Comprobar</Text>
+                <Text style={styles.checkBtnText}>{t('review.check')}</Text>
               </TouchableOpacity>
             </View>
           ) : (
@@ -2019,7 +2021,7 @@ export default function ReviewScreen() {
                   <ActivityIndicator color="#FFF" />
                 ) : (
                   <>
-                    <Text style={styles.nextBtnText}>Siguiente tarjeta</Text>
+                    <Text style={styles.nextBtnText}>{t('review.nextCard')}</Text>
                     <Ionicons
                       name="arrow-forward"
                       size={18}
