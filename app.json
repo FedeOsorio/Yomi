@@ -13,8 +13,8 @@
     "android": {
       "package": "com.kuyi.yomi",
       "adaptiveIcon": {
-        "backgroundColor": "#0060c0",
-        "foregroundImage": "./assets/images/adaptive-icon.png"
+        "backgroundColor": "#2d74b2",
+        "foregroundImage": "./assets/images/icon.png"
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
@@ -71,7 +71,7 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#fdfaec",
+          "backgroundColor": "#2d74b2",
           "image": "./assets/images/splash-icon.png",
           "resizeMode": "contain"
         }
