@@ -52,6 +52,19 @@ export interface TranslationSchema {
     chineseEmptyNotice: string;
     saveWord: string;
     wordCreated: string;
+    instructionZh: string;
+    instructionJa: string;
+    instructionEn: string;
+    instructionEs: string;
+    instructionDefault: string;
+    placeholderZh: string;
+    placeholderJa: string;
+    placeholderEn: string;
+    placeholderEs: string;
+    tipZh: string;
+    tipJa: string;
+    tipEn: string;
+    tipEs: string;
   };
   profile: {
     appLanguage: string;

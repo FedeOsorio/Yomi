@@ -94,6 +94,30 @@ export default function SearchScreen() {
     placeholder: 'Escribí una palabra...',
   };
 
+  const getSearchInstruction = () => {
+    if (isChinese) return t('search.instructionZh');
+    if (isJapanese) return t('search.instructionJa');
+    if (langCode.startsWith('en')) return t('search.instructionEn');
+    if (langCode.startsWith('es')) return t('search.instructionEs');
+    return t('search.instructionDefault');
+  };
+
+  const getSearchPlaceholder = () => {
+    if (isChinese) return t('search.placeholderZh');
+    if (isJapanese) return t('search.placeholderJa');
+    if (langCode.startsWith('en')) return t('search.placeholderEn');
+    if (langCode.startsWith('es')) return t('search.placeholderEs');
+    return currentLangMeta.placeholder || t('search.searchPlaceholder');
+  };
+
+  const getSearchTip = () => {
+    if (isChinese) return t('search.tipZh');
+    if (isJapanese) return t('search.tipJa');
+    if (langCode.startsWith('en')) return t('search.tipEn');
+    if (langCode.startsWith('es')) return t('search.tipEs');
+    return '';
+  };
+
   // --- EJECUCIÓN REAL DE LA BÚSQUEDA ASÍNCRONA ---
   const performSearch = async (text: string) => {
     const trimmed = text.trim();
@@ -378,12 +402,20 @@ export default function SearchScreen() {
           </ScrollView>
         </View>
 
+        {/* Aclaratorio sutil del idioma del mazo (sin invadir espacio) */}
+        <View style={styles.searchInstructionRow}>
+          <Ionicons name="information-circle-outline" size={15} color={colors.primary} style={{ marginRight: 6 }} />
+          <Text style={[styles.searchInstructionText, { color: colors.textMuted }]}>
+            {getSearchInstruction()}
+          </Text>
+        </View>
+
         {/* Input Único de Reconocimiento */}
         <View style={[styles.inputContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <Ionicons name="search" size={20} color={colors.textMuted} style={styles.searchIcon} />
           <TextInput
             style={[styles.input, { color: colors.text }]}
-            placeholder={currentLangMeta.placeholder}
+            placeholder={getSearchPlaceholder()}
             placeholderTextColor={colors.textMuted}
             value={query}
             onChangeText={handleQueryChange}
@@ -393,6 +425,26 @@ export default function SearchScreen() {
           />
           {isSearching && <ActivityIndicator color={colors.primary} style={styles.loader} />}
         </View>
+
+        {/* Estado inicial orientativo cuando el input está vacío */}
+        {!query.trim() && !isSearching && (
+          <View style={[styles.initialStateBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View style={[styles.initialStateIcon, { backgroundColor: colors.primary + '15' }]}>
+              <Text style={{ fontSize: 28 }}>{currentLangMeta?.flag || '📚'}</Text>
+            </View>
+            <Text style={[styles.initialStateTitle, { color: colors.text }]}>
+              {currentDeck?.name}
+            </Text>
+            <Text style={[styles.initialStateInstruction, { color: colors.primary }]}>
+              {getSearchInstruction()}
+            </Text>
+            {getSearchTip() ? (
+              <Text style={[styles.initialStateTip, { color: colors.textMuted }]}>
+                {getSearchTip()}
+              </Text>
+            ) : null}
+          </View>
+        )}
 
         {/* CASO 1: IDIOMA JAPONÉS */}
         {isJapanese && (
@@ -1044,6 +1096,49 @@ const styles = StyleSheet.create({
     ...Typography.bodySmall,
     flex: 1,
     lineHeight: 18,
+  },
+  searchInstructionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+    paddingHorizontal: 2,
+  },
+  searchInstructionText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  initialStateBox: {
+    padding: Spacing.lg,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: 'center',
+    marginTop: Spacing.sm,
+  },
+  initialStateIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
+  initialStateTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  initialStateInstruction: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  initialStateTip: {
+    fontSize: 12,
+    textAlign: 'center',
+    lineHeight: 18,
+    paddingHorizontal: Spacing.md,
   },
 });
 

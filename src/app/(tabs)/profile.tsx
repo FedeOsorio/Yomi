@@ -53,6 +53,7 @@ export default function ProfileScreen() {
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [lastBackupTime, setLastBackupTime] = useState<string | null>(null);
+  const [isLangDropdownOpen, setIsLangDropdownOpen] = useState(false);
 
   // Estado reactivo centralizado con Zustand
   const {
@@ -405,8 +406,8 @@ export default function ProfileScreen() {
           />
         </View>
 
-        {/* Selector de Idioma de la Aplicación */}
-        <View style={[styles.settingRow, { flexDirection: 'column', alignItems: 'flex-start', marginTop: Spacing.md, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: Spacing.sm }]}>
+        {/* Selector de Idioma de la Aplicación (Dropdown) */}
+        <View style={[styles.settingRow, { flexDirection: 'column', alignItems: 'stretch', marginTop: Spacing.md, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: Spacing.md }]}>
           <View style={styles.settingTextGroup}>
             <Text style={[styles.settingLabel, { color: colors.text }]}>{t('profile.appLanguage')}</Text>
             <Text style={[styles.settingSub, { color: colors.textMuted }]}>
@@ -414,40 +415,93 @@ export default function ProfileScreen() {
             </Text>
           </View>
 
-          <View style={styles.langChipsRow}>
-            {[
+          {/* Trigger Dropdown Button */}
+          {(() => {
+            const languageOptions = [
               { code: 'system', label: t('profile.systemLanguage'), flag: '🌐' },
               { code: 'es', label: 'Español', flag: '🇪🇸' },
               { code: 'en', label: 'English', flag: '🇺🇸' },
               { code: 'pt', label: 'Português', flag: '🇧🇷' },
               { code: 'ja', label: '日本語', flag: '🇯🇵' },
-            ].map((lang) => {
-              const isSelected = preference === lang.code;
-              return (
+            ];
+            const currentOption = languageOptions.find((l) => l.code === preference) || languageOptions[0];
+
+            return (
+              <View style={{ width: '100%', marginTop: Spacing.xs }}>
                 <TouchableOpacity
-                  key={lang.code}
                   style={[
-                    styles.langChip,
-                    { backgroundColor: colors.surfaceHighlight, borderColor: colors.border },
-                    isSelected && { backgroundColor: colors.primary, borderColor: colors.primary },
+                    styles.dropdownTrigger,
+                    {
+                      backgroundColor: colors.surfaceHighlight,
+                      borderColor: isLangDropdownOpen ? colors.primary : colors.border,
+                    },
                   ]}
-                  onPress={() => setLanguagePreference(lang.code as any)}
+                  onPress={() => setIsLangDropdownOpen(!isLangDropdownOpen)}
                   activeOpacity={0.7}
                 >
-                  <Text style={styles.langChipFlag}>{lang.flag}</Text>
-                  <Text
+                  <View style={styles.dropdownTriggerContent}>
+                    <Text style={styles.dropdownFlag}>{currentOption.flag}</Text>
+                    <Text style={[styles.dropdownSelectedText, { color: colors.text }]}>
+                      {currentOption.label}
+                    </Text>
+                  </View>
+                  <Ionicons
+                    name={isLangDropdownOpen ? 'chevron-up' : 'chevron-down'}
+                    size={18}
+                    color={colors.primary}
+                  />
+                </TouchableOpacity>
+
+                {/* Dropdown Options List */}
+                {isLangDropdownOpen && (
+                  <View
                     style={[
-                      styles.langChipText,
-                      { color: colors.text },
-                      isSelected && { color: '#FFF', fontWeight: 'bold' },
+                      styles.dropdownMenu,
+                      { backgroundColor: colors.surface, borderColor: colors.border },
                     ]}
                   >
-                    {lang.label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+                    {languageOptions.map((lang, index) => {
+                      const isSelected = preference === lang.code;
+                      return (
+                        <TouchableOpacity
+                          key={lang.code}
+                          style={[
+                            styles.dropdownMenuItem,
+                            isSelected && { backgroundColor: colors.primary + '15' },
+                            index < languageOptions.length - 1 && {
+                              borderBottomWidth: 1,
+                              borderBottomColor: colors.border + '60',
+                            },
+                          ]}
+                          onPress={() => {
+                            setLanguagePreference(lang.code as any);
+                            setIsLangDropdownOpen(false);
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <View style={styles.dropdownMenuItemLeft}>
+                            <Text style={styles.dropdownFlag}>{lang.flag}</Text>
+                            <Text
+                              style={[
+                                styles.dropdownItemText,
+                                { color: colors.text },
+                                isSelected && { color: colors.primary, fontWeight: '700' },
+                              ]}
+                            >
+                              {lang.label}
+                            </Text>
+                          </View>
+                          {isSelected && (
+                            <Ionicons name="checkmark-circle" size={18} color={colors.primary} />
+                          )}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+            );
+          })()}
         </View>
       </View>
 
@@ -1007,27 +1061,49 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 22,
   },
-  langChipsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: Spacing.xs,
-    width: '100%',
-  },
-  langChip: {
+  dropdownTrigger: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 7,
-    paddingHorizontal: 12,
-    borderRadius: 18,
-    borderWidth: 1,
+    justifyContent: 'space-between',
+    width: '100%',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1.5,
   },
-  langChipFlag: {
+  dropdownTriggerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  dropdownFlag: {
+    fontSize: 18,
+    marginRight: 10,
+  },
+  dropdownSelectedText: {
     fontSize: 14,
-    marginRight: 6,
+    fontWeight: '600',
   },
-  langChipText: {
-    fontSize: 13,
+  dropdownMenu: {
+    width: '100%',
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 6,
+    overflow: 'hidden',
+    ...Shadows.card,
+  },
+  dropdownMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 12,
+  },
+  dropdownMenuItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  dropdownItemText: {
+    fontSize: 14,
     fontWeight: '500',
   },
 });
