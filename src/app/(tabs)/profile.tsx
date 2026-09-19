@@ -385,7 +385,17 @@ export default function ProfileScreen() {
       </View>
 
       {/* Sección de Preferencias Visuales e Idioma */}
-      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+      <View
+        style={[
+          styles.card,
+          {
+            backgroundColor: colors.surface,
+            borderColor: colors.border,
+            zIndex: isLangDropdownOpen ? 100 : 1,
+            elevation: isLangDropdownOpen ? 10 : undefined,
+          },
+        ]}
+      >
         <View style={styles.sectionHeader}>
           <Ionicons name="color-palette-outline" size={20} color={colors.primary} />
           <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('profile.theme')}</Text>
@@ -406,14 +416,24 @@ export default function ProfileScreen() {
           />
         </View>
 
-        {/* Selector de Idioma de la Aplicación (Dropdown) */}
-        <View style={[styles.settingRow, { flexDirection: 'column', alignItems: 'stretch', marginTop: Spacing.md, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: Spacing.md }]}>
-          <View style={styles.settingTextGroup}>
-            <Text style={[styles.settingLabel, { color: colors.text }]}>{t('profile.appLanguage')}</Text>
-            <Text style={[styles.settingSub, { color: colors.textMuted }]}>
-              {preference === 'system' ? `${t('profile.systemLanguage')} (${currentLanguage.toUpperCase()})` : currentLanguage.toUpperCase()}
-            </Text>
-          </View>
+        {/* Selector de Idioma de la Aplicación (Dropdown Flotante) */}
+        <View
+          style={[
+            styles.settingRow,
+            {
+              flexDirection: 'column',
+              alignItems: 'stretch',
+              marginTop: Spacing.md,
+              borderTopWidth: 1,
+              borderTopColor: colors.border,
+              paddingTop: Spacing.md,
+              zIndex: 1000,
+            },
+          ]}
+        >
+          <Text style={[styles.settingLabel, { color: colors.text, marginBottom: Spacing.xs }]}>
+            {t('profile.appLanguage')}
+          </Text>
 
           {/* Trigger Dropdown Button */}
           {(() => {
@@ -427,7 +447,7 @@ export default function ProfileScreen() {
             const currentOption = languageOptions.find((l) => l.code === preference) || languageOptions[0];
 
             return (
-              <View style={{ width: '100%', marginTop: Spacing.xs }}>
+              <View style={{ width: '100%', position: 'relative', zIndex: 1000 }}>
                 <TouchableOpacity
                   style={[
                     styles.dropdownTrigger,
@@ -1084,12 +1104,17 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   dropdownMenu: {
-    width: '100%',
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
+    marginTop: 6,
     borderRadius: 12,
     borderWidth: 1,
-    marginTop: 6,
     overflow: 'hidden',
+    zIndex: 9999,
     ...Shadows.card,
+    elevation: 10,
   },
   dropdownMenuItem: {
     flexDirection: 'row',

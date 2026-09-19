@@ -9,6 +9,7 @@ import {
   romajiToHiragana,
   getEffectiveCardLanguage,
   expandNumberArtifacts,
+  deconjugateJapanese,
   JA_NUMBERS,
   ZH_NUMBERS,
 } from './japanese-utils';
@@ -263,6 +264,40 @@ export function checkVoiceMatch(
       for (const t of targetList) {
         if (effectiveTranscriptKana === t) return true;
         if (normTranscript === normalizeLongVowels(t)) return true;
+      }
+
+      // Tolerancia por contención para lecturas cortas (≤3 moras):
+      // Si la lectura esperada es muy corta (ej. め, て, き, やすむ) y el transcript
+      // normalizado contiene esa lectura, aceptar. Esto cubre casos donde Google
+      // agrega vocales alargadas o partículas espurias (ej. "めー" para 目).
+      for (const t of targetList) {
+        if (t.length > 0 && t.length <= 3) {
+          if (effectiveTranscriptKana.includes(t)) return true;
+          if (normTranscript.includes(normalizeLongVowels(t))) return true;
+        }
+      }
+
+      // Deconjugación verbal: si el usuario dice una forma conjugada (ej. "やすみ" forma -masu
+      // sin el masu, o "やすんで" forma -te), deconjugar y verificar contra las lecturas válidas.
+      // Esto resuelve el caso de 休む donde Google transcribe "やすみ" en vez de "やすむ".
+      const deconjugated = deconjugateJapanese(effectiveTranscriptKana);
+      for (const candidate of deconjugated) {
+        const candidateKana = toNormalizedHiragana(candidate);
+        if (!candidateKana || candidateKana === effectiveTranscriptKana) continue;
+        for (const t of targetList) {
+          if (candidateKana === t) return true;
+          if (normalizeLongVowels(candidateKana) === normalizeLongVowels(t)) return true;
+        }
+      }
+
+      // Verificar displayText convertido a kana: Google a veces transcribe el kanji
+      // directamente (ej. "休む" en vez de "やすむ"). Convertimos y comparamos.
+      if (cleanText.length > 0) {
+        const displayAsKana = toNormalizedHiragana(cleanText);
+        if (displayAsKana.length > 0 && displayAsKana !== textKana) {
+          if (effectiveTranscriptKana === displayAsKana) return true;
+          if (normTranscript === normalizeLongVowels(displayAsKana)) return true;
+        }
       }
     }
     return false;

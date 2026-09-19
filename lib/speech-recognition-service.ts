@@ -41,6 +41,21 @@ class SpeechRecognitionService {
   private hasCheckedPermissions = false;
 
   /**
+   * Contador de generación: se incrementa en cada start() para invalidar
+   * automáticamente callbacks de sesiones anteriores que lleguen tarde.
+   * Los callbacks verifican su generación capturada contra la generación actual
+   * antes de ejecutarse; si no coinciden, se descartan silenciosamente.
+   */
+  private generation = 0;
+
+  /**
+   * Cola de operaciones: serializa todas las llamadas a start() y abort()
+   * para que nunca se ejecuten en paralelo. Elimina race conditions entre
+   * stop/start entre tarjetas que corrompían el motor nativo.
+   */
+  private operationQueue: Promise<void> = Promise.resolve();
+
+  /**
    * Solicita permisos de micrófono al usuario en tiempo de ejecución.
    */
   async requestPermissions(): Promise<boolean> {
@@ -68,12 +83,46 @@ class SpeechRecognitionService {
     }
   }
 
-  private isAborting = false;
+  /**
+   * Retorna la generación actual del servicio. Útil para que la capa superior
+   * verifique si una operación sigue siendo vigente.
+   */
+  getGeneration(): number {
+    return this.generation;
+  }
+
+  /**
+   * Invalida todos los callbacks de sesiones anteriores incrementando la generación.
+   * Llamar esto antes de iniciar una nueva sesión para una nueva tarjeta.
+   */
+  invalidate(): void {
+    this.generation++;
+  }
+
+  /**
+   * Encola una operación para ejecución secuencial. Garantiza que start() y abort()
+   * nunca se ejecuten en paralelo, eliminando corrupción del motor nativo.
+   */
+  private enqueue<T>(fn: () => Promise<T>): Promise<T> {
+    const result = this.operationQueue.then(fn, fn);
+    // Actualizar la cola para que la próxima operación espere a esta
+    this.operationQueue = result.then(() => { }, () => { });
+    return result;
+  }
 
   /**
    * Inicia el reconocimiento de voz en el idioma especificado.
+   * Serializado por la promise queue: espera a que cualquier abort() previo termine.
    */
   async start(
+    languageCode: string,
+    callbacks: SpeechRecognitionCallbacks,
+    options?: SpeechRecognitionOptions
+  ): Promise<boolean> {
+    return this.enqueue(() => this._startInternal(languageCode, callbacks, options));
+  }
+
+  private async _startInternal(
     languageCode: string,
     callbacks: SpeechRecognitionCallbacks,
     options?: SpeechRecognitionOptions
@@ -92,15 +141,19 @@ class SpeechRecognitionService {
       }
     }
 
-    // Cancelar y limpiar cualquier sesión previa de inmediato, esperando a que el hardware libere el canal
-    await this.abort();
-    await new Promise((r) => setTimeout(r, 100));
+    // Limpiar cualquier sesión previa (ya estamos en la queue, no hay race condition)
+    await this._abortInternal();
+
+    // Capturar la generación actual para guardar con los callbacks
+    const gen = this.generation;
 
     const targetLang = LANGUAGE_RECOGNITION_MAP[languageCode] || 'ja-JP';
 
     try {
-      // Suscribirse a eventos de la librería nativa
+      // Suscribirse a eventos con guard de generación: si la generación cambió
+      // desde que se crearon estos listeners, los callbacks se ignoran silenciosamente
       const resultSub = ExpoSpeechRecognitionModule.addListener('result', (event) => {
+        if (this.generation !== gen) return;
         const allTranscripts = (event.results || [])
           .map((r) => r.transcript)
           .filter(Boolean);
@@ -111,6 +164,7 @@ class SpeechRecognitionService {
       });
 
       const errorSub = ExpoSpeechRecognitionModule.addListener('error', (event) => {
+        if (this.generation !== gen) return;
         // Ignorar eventos 'aborted' provocados deliberadamente al cambiar de tarjeta
         if (event.error === 'aborted') return;
         this.isListeningActive = false;
@@ -118,24 +172,30 @@ class SpeechRecognitionService {
       });
 
       const startSub = ExpoSpeechRecognitionModule.addListener('start', () => {
+        if (this.generation !== gen) return;
         this.isListeningActive = true;
         callbacks.onStart?.();
       });
 
       const endSub = ExpoSpeechRecognitionModule.addListener('end', () => {
+        if (this.generation !== gen) return;
         this.isListeningActive = false;
         callbacks.onEnd?.();
       });
 
       this.activeSubscriptions = [resultSub, errorSub, startSub, endSub];
 
+      // Configuración optimizada:
+      // - web_search: Google lo recomienda para reconocimiento de palabras sueltas
+      // - iosTaskHint: 'confirmation' optimiza para utterances cortas (sí/no/una palabra)
       const recognitionOptions: ExpoSpeechRecognitionOptions = {
         lang: targetLang,
         interimResults: true,
         continuous: options?.continuous ?? true,
         maxAlternatives: options?.maxAlternatives ?? 10,
+        iosTaskHint: 'confirmation',
         androidIntentOptions: {
-          EXTRA_LANGUAGE_MODEL: options?.androidLanguageModel ?? 'free_form',
+          EXTRA_LANGUAGE_MODEL: options?.androidLanguageModel ?? 'web_search',
         },
       };
 
@@ -144,18 +204,18 @@ class SpeechRecognitionService {
         recognitionOptions.contextualStrings = Array.from(new Set(options.contextualStrings.filter(Boolean)));
       }
 
-      // Iniciar el módulo nativo de reconocimiento con streaming en tiempo real y opciones
+      // Iniciar el módulo nativo de reconocimiento
       try {
         ExpoSpeechRecognitionModule.start(recognitionOptions);
         this.isListeningActive = true;
         return true;
       } catch {
-        // Si el motor nativo aún estaba en transición, reintentar tras breve pausa
-        await new Promise((r) => setTimeout(r, 200));
+        // Si el motor nativo aún estaba en transición, reintentar tras confirmar estado inactivo
+        await this._waitForInactive();
         try {
           ExpoSpeechRecognitionModule.abort();
-        } catch {}
-        await new Promise((r) => setTimeout(r, 100));
+        } catch { }
+        await this._waitForInactive();
         ExpoSpeechRecognitionModule.start(recognitionOptions);
         this.isListeningActive = true;
         return true;
@@ -171,10 +231,13 @@ class SpeechRecognitionService {
 
   /**
    * Cancela inmediatamente la sesión nativa de reconocimiento de voz y libera el micrófono.
+   * Serializado por la promise queue.
    */
   async abort(): Promise<void> {
-    if (this.isAborting) return;
-    this.isAborting = true;
+    return this.enqueue(() => this._abortInternal());
+  }
+
+  private async _abortInternal(): Promise<void> {
     this.isListeningActive = false;
     this.cleanupSubscriptions();
 
@@ -183,37 +246,42 @@ class SpeechRecognitionService {
     } catch {
       try {
         ExpoSpeechRecognitionModule.stop();
-      } catch {}
+      } catch { }
     }
 
-    // Esperar activamente a que el motor nativo confirme estado inactivo antes de desbloquear
-    try {
-      let state = await ExpoSpeechRecognitionModule.getStateAsync();
-      let waited = 0;
-      while (state !== 'inactive' && waited < 350) {
-        await new Promise((r) => setTimeout(r, 50));
-        waited += 50;
-        state = await ExpoSpeechRecognitionModule.getStateAsync();
-      }
-    } catch {}
+    // Esperar determinísticamente a que el motor nativo confirme estado inactivo
+    await this._waitForInactive();
+  }
 
-    this.isAborting = false;
+  /**
+   * Espera activamente a que el motor nativo reporte estado 'inactive'.
+   * Polling con intervalos cortos, máximo 500ms total.
+   */
+  private async _waitForInactive(): Promise<void> {
+    try {
+      for (let i = 0; i < 10; i++) {
+        const state = await ExpoSpeechRecognitionModule.getStateAsync();
+        if (state === 'inactive') return;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    } catch { }
   }
 
   /**
    * Detiene el reconocimiento de voz y limpia los listeners.
    */
   async stop(): Promise<void> {
-    await this.abort();
+    return this.abort();
   }
 
   private cleanupSubscriptions(): void {
-    this.activeSubscriptions.forEach((sub) => {
+    const subs = this.activeSubscriptions;
+    this.activeSubscriptions = [];
+    subs.forEach((sub) => {
       try {
         sub.remove();
-      } catch {}
+      } catch { }
     });
-    this.activeSubscriptions = [];
   }
 
   /**

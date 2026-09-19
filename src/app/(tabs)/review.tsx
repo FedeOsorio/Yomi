@@ -513,14 +513,13 @@ export default function ReviewScreen() {
     await startSession(deckId, deckName, method, practiceMode);
     const cards = useReviewStore.getState().dueCards;
 
-    // Si es modo voz y hay tarjetas, iniciamos el reconocimiento en la primera tarjeta
-    // asegurando que la pantalla de repaso y el foco de audio estén completamente activos
+    // Si es modo voz y hay tarjetas, iniciamos el reconocimiento en la primera tarjeta.
+    // La promise queue del servicio garantiza que start() espere a que cualquier
+    // estado previo se resuelva — no necesitamos timeout arbitrario.
     if (method === 'voice' && cards.length > 0) {
       const firstCard = cards[0];
       const lang = getEffectiveCardLanguage(firstCard);
-      setTimeout(() => {
-        startVoiceListeningForCard(firstCard, lang);
-      }, 150);
+      await startVoiceListeningForCard(firstCard, lang);
     }
   };
 
@@ -630,7 +629,8 @@ export default function ReviewScreen() {
     return Array.from(new Set(strings.filter(Boolean)));
   };
 
-  // Ciclo continuo de escucha con el micrófono con temporizador de 15 segundos sincronizado al inicio real
+  // Ciclo continuo de escucha con el micrófono con temporizador de 15 segundos sincronizado al inicio real.
+  // Usa el contador de generación del servicio para invalidar callbacks de tarjetas anteriores.
   const startVoiceListeningForCard = async (card: DueCardWithContext, lang: string) => {
     stopSpeech();
     if (autoTimerRef.current) {
@@ -640,6 +640,11 @@ export default function ReviewScreen() {
     voiceProgressAnim.stopAnimation();
     voiceProgressAnim.setValue(0);
     cardFlipAnim.setValue(0);
+
+    // Invalidar todos los callbacks de la tarjeta/sesión anterior antes de continuar.
+    // Cualquier onResult/onEnd/onError tardío será descartado por el servicio.
+    speechService.invalidate();
+    const cardGeneration = speechService.getGeneration();
 
     isCardEvaluatedRef.current = false;
     restartAttemptsRef.current = 0;
@@ -651,8 +656,10 @@ export default function ReviewScreen() {
     let isTimerStarted = false;
     let startTime = 0;
 
+    const isStale = () => speechService.getGeneration() !== cardGeneration || isCardEvaluatedRef.current;
+
     const startTimerCountdown = () => {
-      if (isTimerStarted || isCardEvaluatedRef.current) return;
+      if (isTimerStarted || isStale()) return;
       isTimerStarted = true;
       startTime = Date.now();
 
@@ -664,7 +671,7 @@ export default function ReviewScreen() {
         easing: Easing.linear,
         useNativeDriver: false,
       }).start(({ finished }) => {
-        if (finished && !isCardEvaluatedRef.current) {
+        if (finished && !isStale()) {
           isCardEvaluatedRef.current = true;
           speechService.abort().catch(() => { });
           setIsListening(false);
@@ -675,42 +682,38 @@ export default function ReviewScreen() {
 
     // Fallback de seguridad: si el evento onStart del micrófono tarda más de 1200ms, arrancar el temporizador
     const fallbackTimer = setTimeout(() => {
-      startTimerCountdown();
+      if (!isStale()) startTimerCountdown();
     }, 1200);
 
     let restartTimer: NodeJS.Timeout | null = null;
     const scheduleRestart = () => {
-      if (isCardEvaluatedRef.current) return;
+      if (isStale()) return;
       const currentElapsed = startTime > 0 ? (Date.now() - startTime) / 1000 : 0;
-      // Si el micrófono aún no ha arrancado (fase de inicio inicial), reintentar progresivamente
-      if (startTime === 0 && restartAttemptsRef.current < 4) {
-        if (restartTimer) clearTimeout(restartTimer);
-        restartAttemptsRef.current += 1;
-        restartTimer = setTimeout(async () => {
-          if (!isCardEvaluatedRef.current) {
-            await speechService.abort();
-            await initRecognizer();
-          }
-        }, 350 * restartAttemptsRef.current);
+
+      // Máximo 3 reintentos. Si se agotan, el micrófono queda pausado
+      // y el usuario puede tocar para reiniciar manualmente.
+      if (restartAttemptsRef.current >= 3) {
+        setIsListening(false);
+        setSpeechStatus('idle');
         return;
       }
 
-      if (currentElapsed < VOICE_TIMEOUT_SECONDS - 1.0 && restartAttemptsRef.current < 5) {
+      if (currentElapsed < VOICE_TIMEOUT_SECONDS - 1.0) {
         if (restartTimer) clearTimeout(restartTimer);
         restartTimer = setTimeout(async () => {
-          if (!isCardEvaluatedRef.current) {
+          if (!isStale()) {
             restartAttemptsRef.current += 1;
-            await speechService.abort();
             await initRecognizer();
           }
-        }, 300);
+        }, 250);
       } else {
         setIsListening(false);
+        setSpeechStatus('idle');
       }
     };
 
     const initRecognizer = async () => {
-      if (isCardEvaluatedRef.current) return;
+      if (isStale()) return;
       if (restartTimer) {
         clearTimeout(restartTimer);
         restartTimer = null;
@@ -722,7 +725,7 @@ export default function ReviewScreen() {
         lang,
         {
           onStart: () => {
-            if (!isCardEvaluatedRef.current) {
+            if (!isStale()) {
               clearTimeout(fallbackTimer);
               startTimerCountdown();
               setIsListening(true);
@@ -730,7 +733,7 @@ export default function ReviewScreen() {
             }
           },
           onResult: (transcript, isFinal, alternatives) => {
-            if (isCardEvaluatedRef.current) return;
+            if (isStale()) return;
             const currentTrimmed = transcript.trim();
             if (!currentTrimmed && (!alternatives || alternatives.length === 0)) return;
 
@@ -770,11 +773,11 @@ export default function ReviewScreen() {
             }
           },
           onError: (err) => {
-            if (err === 'aborted' || isCardEvaluatedRef.current) return;
+            if (err === 'aborted' || isStale()) return;
             scheduleRestart();
           },
           onEnd: () => {
-            if (isCardEvaluatedRef.current) return;
+            if (isStale()) return;
             scheduleRestart();
           },
         },
@@ -938,6 +941,12 @@ export default function ReviewScreen() {
     setSpeechTranscript('');
     accumulatedSpeechRef.current = '';
 
+    // Invalidar la generación ANTES de la transición para que cualquier callback
+    // tardío de la tarjeta anterior se descarte automáticamente.
+    // isCardEvaluatedRef se mantiene como guard secundario dentro de la misma generación.
+    isCardEvaluatedRef.current = true;
+    speechService.invalidate();
+
     // Rotar la tarjeta suavemente de regreso al frente a 60 FPS
     Animated.timing(cardFlipAnim, {
       toValue: 0,
@@ -947,7 +956,8 @@ export default function ReviewScreen() {
     }).start(({ finished }) => {
       if (finished) {
         // En cuanto la animación 3D termina y la nueva tarjeta está 100% visible de frente,
-        // la nueva palabra activa el micrófono directamente sin pausas estimativas
+        // la nueva palabra activa el micrófono. La promise queue del servicio garantiza
+        // que el abort de la sesión anterior se complete antes del nuevo start.
         const nextCard = useReviewStore.getState().getCurrentCard();
         if (nextCard) {
           const lang = getEffectiveCardLanguage(nextCard);
@@ -974,6 +984,8 @@ export default function ReviewScreen() {
       autoTimerRef.current = null;
     }
     isCardEvaluatedRef.current = true;
+    // Invalidar generación para descartar cualquier callback pendiente
+    speechService.invalidate();
     voiceProgressAnim.stopAnimation();
     voiceProgressAnim.setValue(0);
     flipCountdownAnim.stopAnimation();
