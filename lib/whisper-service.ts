@@ -3,10 +3,16 @@ import { initWhisper, type WhisperContext } from 'whisper.rn/index';
 import { RealtimeTranscriber } from 'whisper.rn/realtime-transcription/index';
 import { AudioPcmStreamAdapter } from 'whisper.rn/realtime-transcription/adapters/AudioPcmStreamAdapter';
 
-const MODEL_DOWNLOAD_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin';
+const MODEL_DOWNLOAD_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny-q5_1.bin';
 const MODEL_DIR = `${FileSystem.documentDirectory}models/`;
-const MODEL_FILE_PATH = `${MODEL_DIR}ggml-tiny.bin`;
-const MIN_VALID_MODEL_SIZE = 70 * 1024 * 1024; // ~75MB para ggml-tiny.bin
+const MODEL_FILE_PATH = `${MODEL_DIR}ggml-tiny-q5_1.bin`;
+const MIN_VALID_MODEL_SIZE = 28 * 1024 * 1024; // ~31MB para ggml-tiny-q5_1.bin
+
+export type DownloadProgressCallback = (
+  progressPercent: number,
+  bytesWritten: number,
+  totalBytes: number
+) => void;
 
 export interface WhisperCallbacks {
   onResult: (transcript: string, isFinal: boolean) => void;
@@ -25,6 +31,7 @@ class WhisperVoiceService {
   private currentTranscriber: RealtimeTranscriber | null = null;
   private isListeningActive = false;
   private downloadInProgress: Promise<string> | null = null;
+  private currentResumable: FileSystem.DownloadResumable | null = null;
   private isNativeAvailable: boolean | null = null;
   private generation = 0;
 
@@ -73,9 +80,25 @@ class WhisperVoiceService {
   }
 
   /**
-   * Descarga el modelo GGML si no existe localmente.
+   * Cancela la descarga en curso si el usuario cierra el modal o se arrepiente.
    */
-  async ensureModel(onProgress?: (progressPercent: number) => void): Promise<string> {
+  async cancelDownload(): Promise<void> {
+    if (this.currentResumable) {
+      try {
+        await this.currentResumable.cancelAsync();
+      } catch { }
+      this.currentResumable = null;
+    }
+    this.downloadInProgress = null;
+    try {
+      await FileSystem.deleteAsync(MODEL_FILE_PATH, { idempotent: true });
+    } catch { }
+  }
+
+  /**
+   * Descarga el modelo GGML si no existe localmente reportando progreso continuo.
+   */
+  async ensureModel(onProgress?: DownloadProgressCallback): Promise<string> {
     const ready = await this.isModelReady();
     if (ready) return MODEL_FILE_PATH;
 
@@ -95,16 +118,27 @@ class WhisperVoiceService {
           MODEL_FILE_PATH,
           {},
           (downloadProgress) => {
-            if (downloadProgress.totalBytesExpectedToWrite > 0 && onProgress) {
+            const total =
+              downloadProgress.totalBytesExpectedToWrite > 0
+                ? downloadProgress.totalBytesExpectedToWrite
+                : 32152673;
+            if (onProgress) {
               const pct = Math.round(
-                (downloadProgress.totalBytesWritten / downloadProgress.totalBytesExpectedToWrite) * 100
+                (downloadProgress.totalBytesWritten / total) * 100
               );
-              onProgress(pct);
+              onProgress(
+                Math.min(pct, 100),
+                downloadProgress.totalBytesWritten,
+                total
+              );
             }
           }
         );
 
+        this.currentResumable = resumable;
         const result = await resumable.downloadAsync();
+        this.currentResumable = null;
+
         if (!result || !result.uri) {
           throw new Error('Fallo al descargar el modelo de Whisper');
         }
@@ -119,6 +153,9 @@ class WhisperVoiceService {
         }
 
         return MODEL_FILE_PATH;
+      } catch (err) {
+        this.currentResumable = null;
+        throw err;
       } finally {
         this.downloadInProgress = null;
       }

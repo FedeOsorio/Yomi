@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
-import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -47,8 +47,10 @@ import { useTranslation } from '../../i18n';
 import { SessionSummaryView } from '../../components/review/SessionSummaryView';
 import { VoiceMicControl } from '../../components/review/VoiceMicControl';
 import { VoiceTranscriptArea } from '../../components/review/VoiceTranscriptArea';
+import { WhisperDownloadModal } from '../../components/review/WhisperDownloadModal';
 import { getFloatingTabBarStyle, Shadows, Spacing, Typography } from '../../constants/theme';
 import { useReviewStore } from '../../stores/reviewStore';
+import { whisperVoiceService } from '../../../lib/whisper-service';
 
 const VOICE_TIMEOUT_SECONDS = 15;
 
@@ -318,6 +320,21 @@ export default function ReviewScreen() {
   const isCountdownPausedRef = useRef<boolean>(false);
   const restartAttemptsRef = useRef<number>(0);
 
+  // Estado para la descarga bajo demanda del modelo Whisper (~31 MB)
+  const [showWhisperDownloadModal, setShowWhisperDownloadModal] = useState(false);
+  const [whisperDownloadProgress, setWhisperDownloadProgress] = useState(0);
+  const [whisperBytesWritten, setWhisperBytesWritten] = useState(0);
+  const [whisperTotalBytes, setWhisperTotalBytes] = useState(31.5 * 1024 * 1024);
+  const [whisperDownloadStatus, setWhisperDownloadStatus] = useState<
+    'idle' | 'downloading' | 'verifying' | 'ready' | 'error'
+  >('idle');
+  const [whisperErrorMessage, setWhisperErrorMessage] = useState('');
+  const [pendingVoiceParams, setPendingVoiceParams] = useState<{
+    deckId: string | 'all';
+    deckName: string;
+    practiceMode: boolean;
+  } | null>(null);
+
   // Estilos de animación 3D optimizados para 60 FPS continuos con backfaceVisibility
   const frontAnimatedStyle = useMemo(() => ({
     backfaceVisibility: 'hidden' as const,
@@ -487,10 +504,85 @@ export default function ReviewScreen() {
     });
   }, [selectedDeckId, selectedDeckName, colors]);
 
-  const handleSelectMethod = (method: 'text' | 'voice') => {
+  const startWhisperModelDownload = async (params?: {
+    deckId: string | 'all';
+    deckName: string;
+    practiceMode: boolean;
+  }) => {
+    if (params) {
+      setPendingVoiceParams(params);
+    }
+    setShowWhisperDownloadModal(true);
+    setWhisperDownloadStatus('downloading');
+    setWhisperDownloadProgress(0);
+    setWhisperBytesWritten(0);
+    setWhisperErrorMessage('');
+
+    try {
+      await whisperVoiceService.ensureModel((pct, written, total) => {
+        setWhisperDownloadProgress(pct);
+        setWhisperBytesWritten(written);
+        if (total > 0) setWhisperTotalBytes(total);
+        if (pct >= 100) {
+          setWhisperDownloadStatus('verifying');
+        }
+      });
+
+      setWhisperDownloadStatus('ready');
+      setWhisperDownloadProgress(100);
+
+      // Breve pausa para mostrar el estado completado y arrancar la sesión
+      setTimeout(() => {
+        setShowWhisperDownloadModal(false);
+        setWhisperDownloadStatus('idle');
+        const activeParams = params || pendingVoiceParams;
+        if (activeParams) {
+          handleStartSession(
+            activeParams.deckId,
+            activeParams.deckName,
+            'voice',
+            activeParams.practiceMode
+          );
+          setPendingVoiceParams(null);
+        }
+      }, 700);
+    } catch (err: any) {
+      console.warn('Error descargando modelo Whisper:', err);
+      setWhisperDownloadStatus('error');
+      setWhisperErrorMessage(
+        err?.message || 'No se pudo descargar el modelo. Revisa tu conexión a internet.'
+      );
+    }
+  };
+
+  const handleCancelWhisperDownload = async () => {
+    await whisperVoiceService.cancelDownload();
+    setShowWhisperDownloadModal(false);
+    setWhisperDownloadStatus('idle');
+    setPendingVoiceParams(null);
+  };
+
+  const handleSelectMethod = async (method: 'text' | 'voice') => {
     if (!pendingSelection) return;
     const { deckId, deckName, hasDue } = pendingSelection;
     setShowMethodModal(false);
+
+    if (method === 'voice') {
+      const isReady = await whisperVoiceService.isModelReady();
+      if (!isReady) {
+        const params = {
+          deckId,
+          deckName,
+          practiceMode: !hasDue,
+        };
+        setPendingVoiceParams(params);
+        setTimeout(() => {
+          startWhisperModelDownload(params);
+        }, 200);
+        return;
+      }
+    }
+
     // Margen para que el modal nativo termine de desmontarse antes de arrancar la sesión
     setTimeout(() => {
       handleStartSession(deckId, deckName, method, !hasDue);
@@ -513,13 +605,13 @@ export default function ReviewScreen() {
     await startSession(deckId, deckName, method, practiceMode);
     const cards = useReviewStore.getState().dueCards;
 
-    // Si es modo voz y hay tarjetas, iniciamos el reconocimiento en la primera tarjeta.
-    // La promise queue del servicio garantiza que start() espere a que cualquier
-    // estado previo se resuelva — no necesitamos timeout arbitrario.
-    if (method === 'voice' && cards.length > 0) {
-      const firstCard = cards[0];
-      const lang = getEffectiveCardLanguage(firstCard);
-      await startVoiceListeningForCard(firstCard, lang);
+    // En modo voz: NO abrimos el micrófono automáticamente al iniciar la sesión.
+    // El micrófono queda en reposo ('idle') con el cartelito "Presiona para comenzar"
+    // para que el usuario lo active deliberadamente con su toque cuando esté listo.
+    if (method === 'voice') {
+      setIsListening(false);
+      setSpeechStatus('idle');
+      voiceProgressAnim.setValue(0);
     }
   };
 
@@ -774,6 +866,12 @@ export default function ReviewScreen() {
           },
           onError: (err) => {
             if (err === 'aborted' || isStale()) return;
+            if (err === 'MODEL_NOT_DOWNLOADED') {
+              setIsListening(false);
+              setSpeechStatus('idle');
+              startWhisperModelDownload();
+              return;
+            }
             scheduleRestart();
           },
           onEnd: () => {
@@ -785,7 +883,7 @@ export default function ReviewScreen() {
           contextualStrings,
           maxAlternatives: 10,
           initialPrompt: card.displayReading || card.displayText || contextualStrings[0],
-          preferredEngine: 'auto',
+          preferredEngine: 'whisper',
         }
       );
     };
@@ -1524,6 +1622,18 @@ export default function ReviewScreen() {
           onClose={() => setShowMethodModal(false)}
           onSelectMethod={handleSelectMethod}
         />
+
+        <WhisperDownloadModal
+          visible={showWhisperDownloadModal}
+          progressPercent={whisperDownloadProgress}
+          bytesWritten={whisperBytesWritten}
+          totalBytes={whisperTotalBytes}
+          status={whisperDownloadStatus}
+          errorMessage={whisperErrorMessage}
+          colors={colors}
+          onCancel={handleCancelWhisperDownload}
+          onRetry={() => startWhisperModelDownload()}
+        />
       </View>
     );
   }
@@ -1553,6 +1663,18 @@ export default function ReviewScreen() {
           colors={colors}
           onClose={() => setShowMethodModal(false)}
           onSelectMethod={handleSelectMethod}
+        />
+
+        <WhisperDownloadModal
+          visible={showWhisperDownloadModal}
+          progressPercent={whisperDownloadProgress}
+          bytesWritten={whisperBytesWritten}
+          totalBytes={whisperTotalBytes}
+          status={whisperDownloadStatus}
+          errorMessage={whisperErrorMessage}
+          colors={colors}
+          onCancel={handleCancelWhisperDownload}
+          onRetry={() => startWhisperModelDownload()}
         />
       </View>
     );
@@ -1834,6 +1956,7 @@ export default function ReviewScreen() {
                       setSpeechStatus('idle');
                       voiceProgressAnim.stopAnimation();
                     } else {
+                      restartAttemptsRef.current = 0;
                       startVoiceListeningForCard(currentCard, lang);
                     }
                   }}
@@ -2049,6 +2172,18 @@ export default function ReviewScreen() {
           )
         )}
       </View>
+
+      <WhisperDownloadModal
+        visible={showWhisperDownloadModal}
+        progressPercent={whisperDownloadProgress}
+        bytesWritten={whisperBytesWritten}
+        totalBytes={whisperTotalBytes}
+        status={whisperDownloadStatus}
+        errorMessage={whisperErrorMessage}
+        colors={colors}
+        onCancel={handleCancelWhisperDownload}
+        onRetry={() => startWhisperModelDownload()}
+      />
     </KeyboardAvoidingView>
   );
 }

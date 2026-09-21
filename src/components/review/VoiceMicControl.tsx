@@ -92,13 +92,24 @@ export const VoiceMicControl = memo(function VoiceMicControl({
         </Animated.View>
       </View>
 
-      <Text style={[styles.floatingMicHintText, { color: colors.textMuted }]}>
-        {speechStatus === 'listening'
-          ? 'Escuchando tu pronunciación...'
-          : speechStatus === 'evaluating'
-            ? 'Evaluando respuesta...'
-            : 'Toca el micrófono para comenzar'}
-      </Text>
+      {speechStatus === 'idle' ? (
+        <TouchableOpacity
+          style={[styles.startPromptPill, { backgroundColor: colors.primary }]}
+          activeOpacity={0.8}
+          onPress={onPress}
+        >
+          <Ionicons name="play" size={14} color="#FFF" style={{ marginRight: 6 }} />
+          <Text style={styles.startPromptPillText}>Presiona para comenzar</Text>
+        </TouchableOpacity>
+      ) : (
+        <Text style={[styles.floatingMicHintText, { color: colors.textMuted }]}>
+          {speechStatus === 'listening'
+            ? 'Escuchando tu pronunciación...'
+            : speechStatus === 'evaluating'
+              ? 'Evaluando respuesta...'
+              : ''}
+        </Text>
+      )}
     </>
   );
 });
@@ -137,5 +148,25 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     textAlign: 'center',
     marginTop: 4,
+  },
+  startPromptPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginTop: Spacing.xs,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+  },
+  startPromptPillText: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
 });

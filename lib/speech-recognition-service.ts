@@ -190,9 +190,9 @@ class SpeechRecognitionService {
           this.isListeningActive = true;
           return true;
         }
-      } else {
-        // Si el modelo aún no está descargado, iniciar descarga en segundo plano para futuros repasos
-        whisperVoiceService.ensureModel().catch(() => {});
+      } else if (options?.preferredEngine === 'whisper') {
+        callbacks.onError?.('MODEL_NOT_DOWNLOADED');
+        return false;
       }
     }
 
@@ -347,6 +347,13 @@ class SpeechRecognitionService {
    */
   isListening(): boolean {
     return this.isListeningActive;
+  }
+
+  /**
+   * Retorna el motor activo ('whisper' | 'native' | null).
+   */
+  getActiveEngine(): 'whisper' | 'native' | null {
+    return this.activeEngine;
   }
 }
 
