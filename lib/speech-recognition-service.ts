@@ -2,6 +2,7 @@ import {
   ExpoSpeechRecognitionModule,
   type ExpoSpeechRecognitionOptions,
 } from 'expo-speech-recognition';
+import { whisperVoiceService } from './whisper-service';
 
 /**
  * Mapeo de códigos de idioma de Yomi a tags de idioma BCP-47 para reconocimiento de voz.
@@ -9,8 +10,8 @@ import {
 const LANGUAGE_RECOGNITION_MAP: Record<string, string> = {
   'zh-CN': 'zh-CN',
   'zh': 'zh-CN',
-  'ja': 'ja-JP',
   'ja-JP': 'ja-JP',
+  'ja': 'ja-JP',
   'en': 'en-US',
   'en-US': 'en-US',
   'es': 'es-ES',
@@ -33,12 +34,17 @@ export interface SpeechRecognitionOptions {
   continuous?: boolean;
   /** Modelo de lenguaje en Android: 'free_form' (vocabulario general/fonético) o 'web_search' */
   androidLanguageModel?: 'free_form' | 'web_search';
+  /** Prompt inicial para Whisper (la lectura o kanji esperado) */
+  initialPrompt?: string;
+  /** Motor preferido: 'auto' (Whisper si está disponible, sino nativo) | 'whisper' | 'native' */
+  preferredEngine?: 'auto' | 'whisper' | 'native';
 }
 
 class SpeechRecognitionService {
   private activeSubscriptions: Array<{ remove: () => void }> = [];
   private isListeningActive = false;
   private hasCheckedPermissions = false;
+  private activeEngine: 'whisper' | 'native' | null = null;
 
   /**
    * Contador de generación: se incrementa en cada start() para invalidar
@@ -147,6 +153,51 @@ class SpeechRecognitionService {
     // Capturar la generación actual para guardar con los callbacks
     const gen = this.generation;
 
+    // Intentar reconocimiento con Whisper On-Device si está disponible y listo
+    const useWhisper = options?.preferredEngine !== 'native' && whisperVoiceService.checkNativeModule();
+    if (useWhisper) {
+      const isWhisperReady = await whisperVoiceService.isModelReady();
+      if (isWhisperReady) {
+        const started = await whisperVoiceService.start(
+          {
+            lang: languageCode,
+            initialPrompt: options?.initialPrompt ?? options?.contextualStrings?.[0],
+          },
+          {
+            onResult: (transcript, isFinal) => {
+              if (this.generation !== gen) return;
+              callbacks.onResult(transcript, isFinal, [transcript]);
+            },
+            onError: (errorMessage) => {
+              if (this.generation !== gen) return;
+              this.isListeningActive = false;
+              callbacks.onError?.(errorMessage);
+            },
+            onStart: () => {
+              if (this.generation !== gen) return;
+              this.isListeningActive = true;
+              callbacks.onStart?.();
+            },
+            onEnd: () => {
+              if (this.generation !== gen) return;
+              this.isListeningActive = false;
+              callbacks.onEnd?.();
+            },
+          }
+        );
+        if (started) {
+          this.activeEngine = 'whisper';
+          this.isListeningActive = true;
+          return true;
+        }
+      } else {
+        // Si el modelo aún no está descargado, iniciar descarga en segundo plano para futuros repasos
+        whisperVoiceService.ensureModel().catch(() => {});
+      }
+    }
+
+    this.activeEngine = 'native';
+
     const targetLang = LANGUAGE_RECOGNITION_MAP[languageCode] || 'ja-JP';
 
     try {
@@ -240,6 +291,13 @@ class SpeechRecognitionService {
   private async _abortInternal(): Promise<void> {
     this.isListeningActive = false;
     this.cleanupSubscriptions();
+
+    if (this.activeEngine === 'whisper') {
+      try {
+        await whisperVoiceService.stop();
+      } catch { }
+      this.activeEngine = null;
+    }
 
     try {
       ExpoSpeechRecognitionModule.abort();

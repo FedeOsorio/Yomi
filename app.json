@@ -2,7 +2,7 @@
   "expo": {
     "name": "Yomi",
     "slug": "Yomi",
-    "version": "0.2.5",
+    "version": "0.2.6",
     "orientation": "default",
     "scheme": [
       "yomi",
@@ -12,6 +12,7 @@
     "userInterfaceStyle": "automatic",
     "android": {
       "package": "com.kuyi.yomi",
+      "versionCode": 13,
       "adaptiveIcon": {
         "backgroundColor": "#2d74b2",
         "foregroundImage": "./assets/images/icon.png"

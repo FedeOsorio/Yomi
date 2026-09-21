@@ -784,6 +784,8 @@ export default function ReviewScreen() {
         {
           contextualStrings,
           maxAlternatives: 10,
+          initialPrompt: card.displayReading || card.displayText || contextualStrings[0],
+          preferredEngine: 'auto',
         }
       );
     };
