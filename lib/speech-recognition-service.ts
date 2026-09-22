@@ -2,7 +2,6 @@ import {
   ExpoSpeechRecognitionModule,
   type ExpoSpeechRecognitionOptions,
 } from 'expo-speech-recognition';
-import { whisperVoiceService } from './whisper-service';
 import { voskVoiceService } from './vosk-service';
 
 /**
@@ -39,15 +38,15 @@ export interface SpeechRecognitionOptions {
   initialPrompt?: string;
   /** Gramática cerrada para reconocimiento con Vosk */
   voskGrammar?: string[];
-  /** Motor preferido: 'auto' | 'vosk' | 'whisper' | 'native' */
-  preferredEngine?: 'auto' | 'vosk' | 'whisper' | 'native';
+  /** Motor preferido: 'auto' | 'vosk' | 'native' */
+  preferredEngine?: 'auto' | 'vosk' | 'native';
 }
 
 class SpeechRecognitionService {
   private activeSubscriptions: Array<{ remove: () => void }> = [];
   private isListeningActive = false;
   private hasCheckedPermissions = false;
-  private activeEngine: 'vosk' | 'whisper' | 'native' | null = null;
+  private activeEngine: 'vosk' | 'native' | null = null;
 
   /**
    * Contador de generación: se incrementa en cada start() para invalidar
@@ -160,7 +159,7 @@ class SpeechRecognitionService {
     const isJapanese = languageCode.toLowerCase().startsWith('ja');
     const wantsVosk =
       options?.preferredEngine === 'vosk' ||
-      (options?.preferredEngine !== 'native' && options?.preferredEngine !== 'whisper' && isJapanese && Boolean(options?.voskGrammar && options.voskGrammar.length > 0));
+      (options?.preferredEngine !== 'native' && isJapanese && Boolean(options?.voskGrammar && options.voskGrammar.length > 0));
 
     if (wantsVosk && voskVoiceService.checkNativeModule()) {
       if (!voskVoiceService.isReady()) {
@@ -213,49 +212,6 @@ class SpeechRecognitionService {
         }
       } else if (options?.preferredEngine === 'vosk') {
         callbacks.onError?.('VOSK_MODEL_NOT_READY');
-        return false;
-      }
-    }
-
-    // 2. Intentar reconocimiento con Whisper On-Device si está disponible y listo
-    const useWhisper = options?.preferredEngine !== 'native' && options?.preferredEngine !== 'vosk' && whisperVoiceService.checkNativeModule();
-    if (useWhisper) {
-      const isWhisperReady = await whisperVoiceService.isModelReady();
-      if (isWhisperReady) {
-        const started = await whisperVoiceService.start(
-          {
-            lang: languageCode,
-            initialPrompt: options?.initialPrompt ?? options?.contextualStrings?.[0],
-          },
-          {
-            onResult: (transcript, isFinal) => {
-              if (this.generation !== gen) return;
-              callbacks.onResult(transcript, isFinal, [transcript]);
-            },
-            onError: (errorMessage) => {
-              if (this.generation !== gen) return;
-              this.isListeningActive = false;
-              callbacks.onError?.(errorMessage);
-            },
-            onStart: () => {
-              if (this.generation !== gen) return;
-              this.isListeningActive = true;
-              callbacks.onStart?.();
-            },
-            onEnd: () => {
-              if (this.generation !== gen) return;
-              this.isListeningActive = false;
-              callbacks.onEnd?.();
-            },
-          }
-        );
-        if (started) {
-          this.activeEngine = 'whisper';
-          this.isListeningActive = true;
-          return true;
-        }
-      } else if (options?.preferredEngine === 'whisper') {
-        callbacks.onError?.('MODEL_NOT_DOWNLOADED');
         return false;
       }
     }
@@ -379,13 +335,6 @@ class SpeechRecognitionService {
       this.activeEngine = null;
     }
 
-    if (this.activeEngine === 'whisper') {
-      try {
-        await whisperVoiceService.stop();
-      } catch { }
-      this.activeEngine = null;
-    }
-
     try {
       ExpoSpeechRecognitionModule.abort();
     } catch {
@@ -438,9 +387,9 @@ class SpeechRecognitionService {
   }
 
   /**
-   * Retorna el motor activo ('vosk' | 'whisper' | 'native' | null).
+   * Retorna el motor activo ('vosk' | 'native' | null).
    */
-  getActiveEngine(): 'vosk' | 'whisper' | 'native' | null {
+  getActiveEngine(): 'vosk' | 'native' | null {
     return this.activeEngine;
   }
 }
