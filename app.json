@@ -2,7 +2,7 @@
   "expo": {
     "name": "Yomi",
     "slug": "Yomi",
-    "version": "0.2.6",
+    "version": "0.2.7",
     "orientation": "default",
     "scheme": [
       "yomi",
@@ -12,7 +12,7 @@
     "userInterfaceStyle": "automatic",
     "android": {
       "package": "com.kuyi.yomi",
-      "versionCode": 13,
+      "versionCode": 14,
       "adaptiveIcon": {
         "backgroundColor": "#2d74b2",
         "foregroundImage": "./assets/images/icon.png"
@@ -88,7 +88,15 @@
       "expo-sharing",
       "expo-web-browser",
       "expo-localization",
-      "expo-video"
+      "expo-video",
+      [
+        "react-native-vosk",
+        {
+          "models": [
+            "assets/model-ja-jp"
+          ]
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

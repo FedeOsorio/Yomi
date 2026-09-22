@@ -18,6 +18,7 @@ export interface CardEvaluation {
   isMeaningCorrect: boolean;
   computedRating: Rating;
   voiceScore?: { score: number; label: string; breakdown?: PinyinBreakdownItem[] };
+  matchedReading?: string;
 }
 
 export type SpeechStatus = 'idle' | 'listening' | 'evaluating' | 'correct' | 'incorrect';

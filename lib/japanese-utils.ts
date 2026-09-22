@@ -1,3 +1,6 @@
+import { JLPT_KANJI_READINGS } from './jlpt-data';
+import { KANJI_READINGS_MAP as UNIVERSAL_KANJI_READINGS_MAP } from './kanji-readings-db';
+
 /**
  * Utilidades para conversión de Romaji a Hiragana y Katakana.
  */
@@ -164,7 +167,21 @@ export function expandNumberArtifacts(str: string): string {
     .replace(/7つ/g, 'ななつ')
     .replace(/8つ/g, 'やっつ')
     .replace(/9つ/g, 'ここのつ')
-    .replace(/10つ/g, 'とお');
+    .replace(/10つ/g, 'とお')
+    // Artefactos de ASR generados por Google para "kai" (contador 回 / 階 / 何回 / 1何)
+    .replace(/^1何$/i, 'かい')
+    .replace(/^1nani$/i, 'かい')
+    .replace(/^1kai$/i, 'かい')
+    .replace(/^1回$/i, 'かい')
+    .replace(/^1階$/i, 'かい')
+    .replace(/1何/g, 'かい')
+    .replace(/1nani/gi, 'かい')
+    .replace(/1kai/gi, 'かい')
+    .replace(/1回/g, 'かい')
+    .replace(/1階/g, 'かい')
+    .replace(/一回/g, 'かい')
+    .replace(/一階/g, 'かい')
+    .replace(/何回/g, 'かい');
 }
 
 /**
@@ -285,9 +302,12 @@ export function getEffectiveCardLanguage(card?: {
     return 'ja-JP';
   }
 
-  // 2. Si el texto contiene caracteres Kanji registrados en nuestro mapa de lecturas japonés (ej. 上, 週, 多, 千, 電, etc.)
-  for (let i = 0; i < text.length; i++) {
-    if (KANJI_READINGS_MAP[text[i]]) return 'ja-JP';
+  // 2. Si la tarjeta o mazo tiene un languageCode explícito configurado
+  if (card.languageCode) {
+    if (card.languageCode.startsWith('zh')) return 'zh-CN';
+    if (card.languageCode.startsWith('ja')) return 'ja-JP';
+    if (card.languageCode.startsWith('es')) return 'es-ES';
+    if (card.languageCode.startsWith('en')) return 'en-US';
   }
 
   // 3. Si explícitamente se configuró como mazo personalizado o español y NO contiene caracteres japoneses
@@ -295,24 +315,22 @@ export function getEffectiveCardLanguage(card?: {
     return 'es-ES';
   }
 
-  // 4. Evaluar languageCode si está presente
-  if (card.languageCode) {
-    if (card.languageCode.startsWith('ja')) return 'ja-JP';
-    if (card.languageCode.startsWith('es')) return 'es-ES';
-    if (card.languageCode.startsWith('en')) return 'en-US';
-    // Si dice 'zh', verificar si realmente contiene marcas de tono Pinyin chinas (ā, á, ǎ, à, etc.) o números de tono
-    if (card.languageCode.startsWith('zh')) {
-      if (/[āáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜ]/.test(reading) || /[a-z]+[1-5]/i.test(reading)) {
-        return 'zh-CN';
-      }
-      // Si no tiene marcas pinyin chinas, por el legado de la base de datos donde zh-CN era el valor por defecto de Yomi, es japonés
-      return 'ja-JP';
-    }
-    return card.languageCode;
+  // 4. Si la lectura contiene marcas de tono Pinyin chinas (ā, á, ǎ, à, etc.) o números de tono
+  const hasChinesePinyin = /[āáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜ]/.test(reading) || /\b[a-z]+[1-5]\b/i.test(reading);
+  if (hasChinesePinyin) {
+    return 'zh-CN';
   }
 
+  // 5. Si el texto contiene caracteres Kanji registrados en nuestro mapa de lecturas japonés
+  for (let i = 0; i < text.length; i++) {
+    if (UNIVERSAL_KANJI_READINGS_MAP[text[i]]) return 'ja-JP';
+  }
+
+  // 6. Fallback por defecto seguro: si la tarjeta no tiene indicios de chino u otro idioma, asumir Japonés
   return 'ja-JP';
 }
+
+
 
 /**
  * Convierte caracteres Katakana a Hiragana.
@@ -324,161 +342,77 @@ export function katakanaToHiragana(text: string): string {
   );
 }
 
-const KANJI_READINGS_MAP: Record<string, string> = {
-  // Yomu / Yobu / Yonde
-  '呼': 'よ', '読': 'よ', '詠': 'よ', '四': 'よん', '４': 'よん', '4': 'よん',
-  // Kaku
-  '書': 'か', '描': 'か', '掻': 'か',
-  // Iku
-  '行': 'い', '逝': 'い',
-  // Miru
-  '見': 'み', '観': 'み', '診': 'み',
-  // Kiku
-  '聞': 'き', '訊': 'き', '聴': 'き',
-  // Au
-  '会': 'あ', '合': 'あ', '逢': 'あ',
-  // Iu
-  '言': 'い',
-  // Tatsu
-  '立': 'た', '発': 'た', '断': 'た',
-  // Naosu
-  '直': 'なお', '治': 'なお',
-  // Hanasu
-  '話': 'はな', '離': 'はな', '放': 'はな',
-  // Toru
-  '取': 'と', '撮': 'と', '採': 'と', '捕': 'と',
-  // Kuru / Kiru
-  '来': 'き', '着': 'き', '切': 'き',
-  // Uru / Utsu
-  '売': 'う', '打': 'う',
-  // Nomu
-  '飲': 'の', '呑': 'の',
-  // Asob
-  '遊': 'あそ',
-  // Shin
-  '死': 'し',
-  // Oyog
-  '泳': 'およ',
-  // Isog
-  '急': 'いそ',
-  // Hatarak
-  '働': 'はたら',
-  // Aruk
-  '歩': 'ある',
-  // Hashir
-  '走': 'はし',
-  // Suwar
-  '座': 'すわ',
-  // Tsukau
-  '使': 'つか',
-  // Tsukuru
-  '作': 'つく', '造': 'つく', '創': 'つく',
-  // Shiru
-  '知': 'し',
-  // Motsu
-  '持': 'も',
-  // Hajimaru
-  '始': 'はじ',
-  // Owaru
-  '終': 'おわ',
-  // Ochiru
-  '落': 'お',
-  // Okiru
-  '起': 'お',
-  // Akeru
-  '開': 'あ',
-  // Shimeru
-  '閉': 'し',
-  // Oshieru
-  '教': 'おし',
-  // Wasureru
-  '忘': 'わす',
-  // Oboeru
-  '覚': 'おぼ',
-  // Tsukare
-  '疲': 'つか',
-  // Neru
-  '寝': 'ね',
-  // Taberu
-  '食': 'た',
-  // Mochi
-  '待': 'ま',
-  // Daijoubu
-  '大丈夫': 'だいじょうぶ',
-  // Genki
-  '元気': 'げんき',
-  // Shizuka
-  '静': 'しず',
-  // Kirei
-  '綺麗': 'きれい', '奇麗': 'きれい',
-  // Oishii
-  '美味': 'おい',
-  // Takai
-  '高': 'たか',
-  // Yasui
-  '安': 'やす',
-  // Hayai
-  '早': 'はや', '速': 'はや',
-  // Yoi / Ii
-  '良': 'よ',
-  // Sumu / Sunde
-  '住': 'す',
-  // Ue
-  '上': 'うえ',
-  // Un
-  '運': 'うん',
-  // N5 kanji elementales
-  '山': 'やま',
-  '川': 'かわ',
-  '人': 'ひと',
-  '日': 'ひ',
-  '月': 'つき',
-  '木': 'き',
-  '水': 'みず',
-  '火': 'ひ',
-  '土': 'つち',
-  '金': 'かね',
-  '雨': 'あめ',
-  '車': 'くるま',
-  '目': 'め',
-  '手': 'て',
-  '千': 'せん',
-  '万': 'まん',
-  '百': 'ひゃく',
-  '十': 'じゅう',
-  '気': 'き',
-  '口': 'くち',
-  '耳': 'みみ',
-  '足': 'あし',
-  '子': 'こ',
-  '田': 'た',
-  '女': 'おんな',
-  '男': 'おとこ',
-  // Palabras comunes N5 y adjetivos que Google STT suele transcribir en kanji
-  '多い': 'おおい', '多': 'おお',
-  '週': 'しゅう', '周': 'しゅう',
-  '少ない': 'すくない', '少': 'すく',
-  '大きい': 'おおきい', '大': 'おお',
-  '小さい': 'ちいさい', '小': 'ちい',
-  '白い': 'しろい', '白': 'しろ',
-  '黒い': 'くろい', '黒': 'くろ',
-  '赤い': 'あかい', '赤': 'あか',
-  '青い': 'あおい', '青': 'あお',
-  '近い': 'ちかい', '近': 'ちか',
-  '遠い': 'とおい', '遠': 'とお',
-  '新しい': 'あたらしい', '新': 'あたら',
-  '古い': 'ふるい', '古': 'ふる',
-  '先生': 'せんせい', '学生': 'がくせい', '学校': 'がっこう',
-  '年': 'とし', '今': 'いま', '何': 'なに', '時': 'とき',
-  '間': 'あいだ', '分': 'ふん', '半': 'はん', '前': 'まえ',
-  '後': 'あと', '先': 'さき', '生': 'せい',
-  // Homófonos y nombres propios frecuentes en reconocimiento STT
-  '高知': 'こうち', 'コーチ': 'こうち',
-  // Homófonos habituales de "ji" (じ) generados por Google STT
-  '字': 'じ', '事': 'じ', '自': 'じ', '地': 'じ', '次': 'じ', '寺': 'じ', '辞': 'じ', '児': 'じ',
-  // Homófonos habituales de "den" (でん) generados por Google STT
-  '電': 'でん', '伝': 'でん',
+const HIRAGANA_TO_ROMAJI_MAP: Record<string, string> = {
+  'あ': 'a', 'い': 'i', 'う': 'u', 'え': 'e', 'お': 'o',
+  'か': 'ka', 'き': 'ki', 'く': 'ku', 'け': 'ke', 'こ': 'ko',
+  'さ': 'sa', 'し': 'shi', 'す': 'su', 'せ': 'se', 'そ': 'so',
+  'た': 'ta', 'ち': 'chi', 'つ': 'tsu', 'て': 'te', 'to': 'to',
+  'な': 'na', 'に': 'ni', 'ぬ': 'nu', 'ね': 'ne', 'no': 'no',
+  'は': 'ha', 'ひ': 'hi', 'ふ': 'fu', 'へ': 'he', 'ほ': 'ho',
+  'ま': 'ma', 'み': 'mi', 'む': 'mu', 'め': 'me', 'も': 'mo',
+  'や': 'ya', 'ゆ': 'yu', 'よ': 'yo',
+  'ら': 'ra', 'り': 'ri', 'る': 'ru', 'れ': 're', 'ろ': 'ro',
+  'わ': 'wa', 'を': 'wo', 'ん': 'n',
+  'が': 'ga', 'ぎ': 'gi', 'ぐ': 'gu', 'げ': 'ge', 'go': 'go',
+  'ざ': 'za', 'じ': 'ji', 'ず': 'zu', 'ぜ': 'ze', 'zo': 'zo',
+  'だ': 'da', 'ぢ': 'ji', 'づ': 'zu', 'で': 'de', 'do': 'do',
+  'ば': 'ba', 'び': 'bi', 'ぶ': 'bu', 'べ': 'be', 'bo': 'bo',
+  'ぱ': 'pa', 'pi': 'pi', 'ぷ': 'pu', 'ぺ': 'pe', 'po': 'po',
+  'きゃ': 'kya', 'きゅ': 'kyu', 'きょ': 'kyo',
+  'しゃ': 'sha', 'しゅ': 'shu', 'しょ': 'sho',
+  'ちゃ': 'cha', 'ちゅ': 'chu', 'ちょ': 'cho',
+  'にゃ': 'nya', 'にゅ': 'nyu', 'にょ': 'nyo',
+  'ひゃ': 'hya', 'ひゅ': 'hyu', 'ひょ': 'hyo',
+  'みゃ': 'mya', 'みゅ': 'myu', 'みょ': 'myo',
+  'りゃ': 'rya', 'りゅ': 'ryu', 'りょ': 'ryo',
+  'ぎゃ': 'gya', 'ぎゅ': 'gyu', 'ぎょ': 'gyo',
+  'じゃ': 'ja', 'じゅ': 'ju', 'じょ': 'jo',
+  'びゃ': 'bya', 'びゅ': 'byu', 'びょ': 'byo',
+  'ぴゃ': 'pya', 'ぴゅ': 'pyu', 'ぴょ': 'pyo',
 };
+
+/**
+ * Convierte Hiragana a Romaji de forma determinística para sesgo contextual (contextual biasing).
+ */
+export function hiraganaToRomaji(kana: string): string {
+  if (!kana) return '';
+  let result = '';
+  let i = 0;
+  while (i < kana.length) {
+    if (i + 1 < kana.length && HIRAGANA_TO_ROMAJI_MAP[kana.slice(i, i + 2)]) {
+      result += HIRAGANA_TO_ROMAJI_MAP[kana.slice(i, i + 2)];
+      i += 2;
+    } else if (HIRAGANA_TO_ROMAJI_MAP[kana[i]]) {
+      result += HIRAGANA_TO_ROMAJI_MAP[kana[i]];
+      i += 1;
+    } else {
+      result += kana[i];
+      i += 1;
+    }
+  }
+  return result;
+}
+
+// Exportados para compatibilidad de tipos (obsoletos: reemplazados por READING_TO_KANJI_INDEX y kanji-readings-db universal)
+export const ASR_MONOSYLLABLE_MAP: Record<string, string> = {};
+export const ASR_HOMOPHONE_KANJI_MAP: Record<string, string> = {};
+
+// Índice invertido universal: reading (kana) -> kanji[] para los 2.678 kanji
+const READING_TO_KANJI_INDEX = new Map<string, string[]>();
+for (const [kanji, readings] of Object.entries(UNIVERSAL_KANJI_READINGS_MAP)) {
+  for (const r of readings) {
+    const list = READING_TO_KANJI_INDEX.get(r);
+    if (list) {
+      list.push(kanji);
+    } else {
+      READING_TO_KANJI_INDEX.set(r, [kanji]);
+    }
+  }
+}
+
+export function getKanjiHomophonesForReading(kanaReading: string): string[] {
+  return READING_TO_KANJI_INDEX.get(kanaReading) || [];
+}
 
 /**
  * Expande marcas de sonido prolongado (ー / -) al sonido vocálico en Hiragana
@@ -523,23 +457,23 @@ export function expandChoonpu(text: string): string {
 
 /**
  * Convierte caracteres Kanji habituales en práctica y homófonos de reconocimiento por voz a su lectura Kana.
+ * Utiliza el catálogo canónico universal de 2.678 Kanjis (JLPT N5 a N1 y Jouyou).
  */
 export function kanjiToHiragana(text: string): string {
   if (!text) return '';
   let res = text.trim();
-  // Primero reemplazar palabras multi-kanji conocidas
-  for (const [k, r] of Object.entries(KANJI_READINGS_MAP)) {
-    if (k.length > 1 && res.includes(k)) {
-      res = res.split(k).join(r);
+  let out = '';
+  for (let i = 0; i < res.length; i++) {
+    const ch = res[i];
+    if (UNIVERSAL_KANJI_READINGS_MAP[ch] && UNIVERSAL_KANJI_READINGS_MAP[ch].length > 0) {
+      out += UNIVERSAL_KANJI_READINGS_MAP[ch][0];
+    } else if (JLPT_KANJI_READINGS[ch]?.essential) {
+      out += JLPT_KANJI_READINGS[ch].essential;
+    } else {
+      out += ch;
     }
   }
-  // Luego caracteres individuales
-  for (const [k, r] of Object.entries(KANJI_READINGS_MAP)) {
-    if (k.length === 1 && res.includes(k)) {
-      res = res.split(k).join(r);
-    }
-  }
-  return res;
+  return out;
 }
 
 /**
@@ -547,18 +481,25 @@ export function kanjiToHiragana(text: string): string {
  */
 export function toNormalizedHiragana(text: string): string {
   if (!text) return '';
-  let result = expandNumberArtifacts(text.toLowerCase().trim());
-  // Si contiene kanji conocidos o números de transcripción de voz, resolver fonéticamente
+  const cleanInput = text.toLowerCase().trim();
+
+  let result = expandNumberArtifacts(cleanInput);
+
+  // 2. Si contiene kanji conocidos o números de transcripción de voz, resolver fonéticamente
   result = kanjiToHiragana(result);
-  // Si contiene caracteres romaji (a-z) o dígitos, convertir a hiragana
+
+  // 3. Si contiene caracteres romaji (a-z) o dígitos, convertir a hiragana
   if (/[a-z0-9]/.test(result)) {
     result = romajiToHiragana(result);
   }
-  // Convertir katakana a hiragana
+
+  // 4. Convertir katakana a hiragana
   result = katakanaToHiragana(result);
-  // Expandir chōonpu (ー / -) a su sonido de vocal largo
+
+  // 5. Expandir chōonpu (ー / -) a su sonido de vocal largo
   result = expandChoonpu(result);
-  // Normalizar vocales pequeñas (ej. 'うぇ' de 'ウェ' -> 'うえ') para coincidencia fonética precisa
+
+  // 6. Normalizar vocales pequeñas (ej. 'うぇ' de 'ウェ' -> 'うえ') para coincidencia fonética precisa
   result = result.replace(/[ぁぃぅぇぉゎ]/g, (ch) => {
     switch (ch) {
       case 'ぁ': return 'あ';
@@ -570,8 +511,86 @@ export function toNormalizedHiragana(text: string): string {
       default: return ch;
     }
   });
-  // Eliminar signos de puntuación, puntos japoneses, guiones, espacios y cualquier letra latina residual
+
+  // 7. Eliminar dígitos iniciales si quedaron tras artefactos numéricos seguidos de kana (ej. '1かい' -> 'かい')
+  result = result.replace(/^[0-9]+([\u3040-\u309f])/, '$1');
+
+  // 8. Eliminar signos de puntuación, puntos japoneses, guiones, espacios y cualquier letra latina residual
   return result.replace(/[\s.,!?;:。、！？・\-_~～\u30fc]/g, '').replace(/[a-zA-Z]/g, '');
+}
+
+/**
+ * Normaliza dígrafos de 拗音 (Youon - sonidos contraídos como きゃ, ひゃ, しゅ, ちょ)
+ * a su forma fonética expandida (きや, ひや, しゆ, ちよ) para salvar la diferencia
+ * entre la pronunciación no nativa y el reconocimiento de voz acústico de Google STT.
+ */
+export function normalizeYouon(kana: string): string {
+  if (!kana) return '';
+  return kana
+    .replace(/きゃ/g, 'きや').replace(/きゅ/g, 'きゆ').replace(/きょ/g, 'きよ')
+    .replace(/しゃ/g, 'しや').replace(/しゅ/g, 'しゆ').replace(/しょ/g, 'しよ')
+    .replace(/ちゃ/g, 'ちや').replace(/ちゅ/g, 'ちゆ').replace(/ちょ/g, 'ちよ')
+    .replace(/にゃ/g, 'にや').replace(/にゅ/g, 'にゆ').replace(/にょ/g, 'によ')
+    .replace(/ひゃ/g, 'ひや').replace(/ひゅ/g, 'ひゆ').replace(/ひょ/g, 'ひよ')
+    .replace(/みゃ/g, 'みや').replace(/みゅ/g, 'みゆ').replace(/みょ/g, 'みよ')
+    .replace(/りゃ/g, 'りや').replace(/りゅ/g, 'りゆ').replace(/りょ/g, 'りよ')
+    .replace(/ぎゃ/g, 'ぎや').replace(/ぎゅ/g, 'ぎゆ').replace(/ぎょ/g, 'ぎよ')
+    .replace(/じゃ/g, 'じや').replace(/じゅ/g, 'じゆ').replace(/じょ/g, 'じよ')
+    .replace(/びゃ/g, 'びや').replace(/びゅ/g, 'びゆ').replace(/びょ/g, 'びよ')
+    .replace(/ぴゃ/g, 'ぴや').replace(/ぴゅ/g, 'ぴゆ').replace(/ぴょ/g, 'ぴよ');
+}
+
+/**
+ * Genera un conjunto rico de variantes fonéticas, kanji homófonos, alargamientos vocálicos y
+ * expresiones de cópula (ej. 〜です, 〜の) para sesgar el reconocedor de voz de Google STT
+ * en palabras cortas o monosílabos (≤ 2 moras) como 目 [め], 手 [て], 木 [き], 日 [ひ], 上 [うえ], etc.
+ */
+export function getMonosyllableVariants(reading: string, displayText?: string): string[] {
+  if (!reading) return [];
+  const hira = toNormalizedHiragana(reading);
+  if (!hira || hira.length > 2) return [];
+
+  const variants = new Set<string>();
+  const cleanDisplay = (displayText || '').trim();
+
+  // 1. Formas básicas kana
+  variants.add(hira);
+  const kata = hira.replace(/[\u3041-\u3096]/g, (ch) =>
+    String.fromCharCode(ch.charCodeAt(0) + 0x60)
+  );
+  if (kata) variants.add(kata);
+
+  // 2. Formas con sonido prolongado (Google STT casi siempre percibe monosílabos como prolongados)
+  variants.add(hira + 'ー');
+  if (kata) variants.add(kata + 'ー');
+  const expandedHira = expandChoonpu(hira + 'ー');
+  if (expandedHira) variants.add(expandedHira);
+
+  // 3. Cópula cortés y partículas (aumenta drásticamente el n-gram prior en Google SpeechRecognizer)
+  variants.add(hira + 'です');
+  variants.add(hira + 'の');
+  if (cleanDisplay) {
+    variants.add(cleanDisplay);
+    variants.add(cleanDisplay + 'です');
+    variants.add(cleanDisplay + 'の');
+  }
+
+  // 4. Homófonos de kanji de todo el catálogo universal de 2.678 Kanjis (N5 a N1)
+  const homophones = READING_TO_KANJI_INDEX.get(hira);
+  if (homophones) {
+    for (const k of homophones) {
+      variants.add(k);
+      variants.add(k + 'です');
+    }
+  }
+
+  // 5. Romaji sistemático para biasing fonético nativo
+  const rom = hiraganaToRomaji(hira);
+  if (rom) {
+    variants.add(rom);
+  }
+
+  return Array.from(variants);
 }
 
 /**

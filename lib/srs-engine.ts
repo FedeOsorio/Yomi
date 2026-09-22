@@ -10,10 +10,13 @@ import {
   getEffectiveCardLanguage,
   expandNumberArtifacts,
   deconjugateJapanese,
+  normalizeYouon,
+  hiraganaToRomaji,
   JA_NUMBERS,
   ZH_NUMBERS,
 } from './japanese-utils';
 import { JLPT_KANJI_READINGS } from './jlpt-data';
+import { KANJI_READINGS_MAP } from './kanji-readings-db';
 
 export { JA_NUMBERS, ZH_NUMBERS };
 
@@ -146,14 +149,42 @@ export function formatSpokenTranscript(transcript: string, lang: string): string
 }
 
 /**
+ * Desglosa un compuesto de kanjis en sus combinaciones de lecturas kana canónicas (On y Kun).
+ * Permite que homófonos transcritos por Google STT (ej. 飛躍 o 秘薬 para 'ひやく')
+ * se traduzcan a su representación fonética y coincidan con tarjetas como 百 (ひゃく).
+ */
+function kanjiCompoundToKana(kanjiStr: string): string[] {
+  const chars = [...kanjiStr];
+  if (!chars.every((c) => KANJI_READINGS_MAP[c])) return [];
+  let combs = [''];
+  for (const c of chars) {
+    const readings = KANJI_READINGS_MAP[c];
+    const next: string[] = [];
+    for (const prefix of combs) {
+      for (const r of readings) {
+        if (next.length < 50) next.push(prefix + r);
+      }
+    }
+    combs = next;
+  }
+  return combs;
+}
+
+export interface VoiceMatchResult {
+  isMatch: boolean;
+  matchedReading?: string;
+}
+
+/**
  * Valida de forma estricta si la pronunciación por voz reconocida coincide con la tarjeta.
+ * Incorpora normalización de 拗音 (Youon), resolución de homófonos kanji de ASR y números.
  */
 export function checkVoiceMatch(
   card: DueCardWithContext,
   transcript: string,
   lang: string
-): boolean {
-  if (!transcript || !transcript.trim()) return false;
+): VoiceMatchResult {
+  if (!transcript || !transcript.trim()) return { isMatch: false };
 
   // Limpiar signos de puntuación y espacios agregados por motores de voz
   const cleanTranscript = transcript
@@ -161,32 +192,17 @@ export function checkVoiceMatch(
     .trim()
     .toLowerCase();
 
-  const cleanText = card.displayText
+  const cleanText = (card.displayText || '')
     .replace(/[。、！？!?,.:;\s]/g, '')
     .trim()
     .toLowerCase();
 
-  const cleanReading = card.displayReading
+  const cleanReading = (card.displayReading || '')
     .replace(/[。、！？!?,.:;\s]/g, '')
     .trim()
     .toLowerCase();
 
-  if (!cleanTranscript) return false;
-
-  // 1. Coincidencia directa exacta con el carácter/palabra (muy común cuando Google Speech transcribe Kanji o Hanzi)
-  if (cleanText.length > 0 && cleanTranscript === cleanText) return true;
-
-  // 2. Coincidencia directa exacta con la lectura
-  if (cleanReading.length > 0 && cleanTranscript === cleanReading) return true;
-
-  // 2b. Coincidencia fonética Kana directa (Katakana <-> Hiragana, ej. lectura "デン" y transcripción "でん")
-  if (cleanReading.length > 0 && cleanTranscript.length > 0) {
-    const hiraReading = toNormalizedHiragana(cleanReading);
-    const hiraTranscript = toNormalizedHiragana(cleanTranscript);
-    if (hiraReading.length > 0 && hiraTranscript.length > 0 && hiraReading === hiraTranscript) {
-      return true;
-    }
-  }
+  if (!cleanTranscript) return { isMatch: false };
 
   const targetLang = getEffectiveCardLanguage({
     displayText: card.displayText,
@@ -196,27 +212,30 @@ export function checkVoiceMatch(
     deckType: card.deckType,
   }).toLowerCase();
 
-  // 3. Si es Japonés
+  // 1. Si es Japonés: resolución exhaustiva y canónica (N5 a N1)
   if (targetLang.startsWith('ja')) {
-    // Convertir número arábigo a kana equivalente (ej. "11" → "じゅういち", "1" → "いち")
+    // Convertir número arábigo a kana equivalente (ej. "11" → "じゅういち", "100" → "ひゃく")
     const jaNumEntry = JA_NUMBERS[cleanTranscript];
     const effectiveTranscriptKana = jaNumEntry
       ? toNormalizedHiragana(jaNumEntry.kana)
       : toNormalizedHiragana(cleanTranscript);
 
-    // Desglosar múltiples lecturas si displayReading o auxiliaryInfo contiene On'yomi y Kun'yomi (separados por /, ,, 、, ;, •, |, saltos de línea)
+    // Desglosar lecturas de displayReading y auxiliaryInfo
     let allReadingsStr = card.displayReading || '';
     if (card.auxiliaryInfo) {
       try {
         const aux = JSON.parse(card.auxiliaryInfo);
         if (aux.kanjiReadings) allReadingsStr += ` • ${aux.kanjiReadings}`;
+        if (aux.onReading) allReadingsStr += ` • ${aux.onReading}`;
+        if (aux.kunReading) allReadingsStr += ` • ${aux.kunReading}`;
       } catch {}
     }
 
-    // Si la tarjeta o displayText es un kanji de nuestro catálogo canónico (JLPT_KANJI_READINGS),
-    // incorporar automáticamente sus lecturas On'yomi, Kun'yomi y esencial (ej. 時 -> on: 'ジ' (じ), kun: 'とき')
+    // Catálogo universal de 2.600+ Kanjis (N5 a N1): incorporar todas las lecturas On y Kun canónicas
     const kanjiChar = (card.displayText || '').trim();
-    if (JLPT_KANJI_READINGS[kanjiChar]) {
+    if (KANJI_READINGS_MAP[kanjiChar]) {
+      allReadingsStr += ` • ${KANJI_READINGS_MAP[kanjiChar].join(' • ')}`;
+    } else if (JLPT_KANJI_READINGS[kanjiChar]) {
       const entry = JLPT_KANJI_READINGS[kanjiChar];
       if (entry.on) allReadingsStr += ` • ${entry.on}`;
       if (entry.kun) allReadingsStr += ` • ${entry.kun}`;
@@ -232,103 +251,166 @@ export function checkVoiceMatch(
       )
       .filter((r) => r.length > 0);
 
-    if (jaNumEntry) {
-      // Coincidencia exacta de kanji (ej. "11" → "十一" === "十一")
-      if (cleanText === jaNumEntry.kanji) return true;
-      const numKana = toNormalizedHiragana(jaNumEntry.kana);
-      // Coincidencia exacta de kana con la lectura esperada (ej. "いち" === "いち" o si figura entre las lecturas válidas)
-      if (toNormalizedHiragana(cleanReading) === numKana || validReadings.includes(numKana)) return true;
-    }
-
     const readingKana = toNormalizedHiragana(cleanReading);
     const textKana = toNormalizedHiragana(cleanText);
 
+    const targetList = Array.from(
+      new Set([cleanReading, readingKana, textKana, ...validReadings].filter(Boolean))
+    );
+
+    // Si Google transcribió el kanji exacto directamente (ej. "日" o "東" o "百")
+    if (cleanText.length > 0 && cleanTranscript === cleanText) {
+      const bestKana = validReadings[0] || readingKana || cleanReading || cleanText;
+      return { isMatch: true, matchedReading: bestKana };
+    }
+
+    if (jaNumEntry) {
+      if (cleanText === jaNumEntry.kanji) {
+        return { isMatch: true, matchedReading: toNormalizedHiragana(jaNumEntry.kana) };
+      }
+      const numKana = toNormalizedHiragana(jaNumEntry.kana);
+      if (readingKana === numKana || validReadings.includes(numKana)) {
+        return { isMatch: true, matchedReading: numKana };
+      }
+    }
+
+    // Recolectar transcripciones candidatas en kana
+    const transcriptKanaCandidates = new Set<string>();
     if (effectiveTranscriptKana.length > 0) {
-      // Caso específico acústico de 口 (kuchi <-> kouchi / 高知)
-      const isKuchiCard = cleanText === '口' || cleanReading === 'くち' || validReadings.includes('くち');
-      if (isKuchiCard && (effectiveTranscriptKana === 'こうち' || effectiveTranscriptKana === 'くち')) {
-        return true;
+      transcriptKanaCandidates.add(effectiveTranscriptKana);
+    }
+
+    // Variantes sin prolongación vocálica ASR (ej. 'てー' -> 'て', 'めー' -> 'め')
+    const withoutChoonpu = toNormalizedHiragana(cleanTranscript.replace(/[ー〜～\-]/g, ''));
+    if (withoutChoonpu.length > 0) {
+      transcriptKanaCandidates.add(withoutChoonpu);
+    }
+
+    // Deshacer duplicación vocálica en monosílabos ASR (ej. 'じい' -> 'じ', 'きい' -> 'き', 'めえ' -> 'め')
+    if (/^[\u3040-\u309f]{2}$/.test(withoutChoonpu)) {
+      const rom = hiraganaToRomaji(withoutChoonpu);
+      if (rom && /^([a-z]+?)([aeiou])\2$/.test(rom)) {
+        const shortened = romajiToHiragana(rom.slice(0, -1));
+        if (shortened) transcriptKanaCandidates.add(shortened);
       }
+    }
 
-      // Normalizar vocales alargadas de la fila O (ej. こお <-> こう, とお <-> とう)
-      const normalizeLongVowels = (k: string): string => {
-        if (!k) return '';
-        return k.replace(/([おこそとのほもよろごぞどぼぽ])お/g, '$1う');
-      };
+    // Si la transcripción fue un kanji individual pero NO coincide con el kanji de la tarjeta, rechazar de inmediato
+    if (/^[\u4e00-\u9faf]$/.test(cleanTranscript) && cleanTranscript !== cleanText) {
+      return { isMatch: false };
+    }
 
-      const normTranscript = normalizeLongVowels(effectiveTranscriptKana);
-      const targetList = Array.from(
-        new Set([cleanReading, readingKana, textKana, ...validReadings].filter(Boolean))
-      );
+    // Si la transcripción fue un compuesto Kanji de 2 o más caracteres (ej. 飛躍 o 秘薬 para ひやく)
+    if (/^[\u4e00-\u9faf]{2,}$/.test(cleanTranscript)) {
+      const compoundReadings = kanjiCompoundToKana(cleanTranscript);
+      for (const cr of compoundReadings) {
+        transcriptKanaCandidates.add(cr);
+      }
+    }
+
+    const normalizeLongVowels = (k: string): string => {
+      if (!k) return '';
+      return k.replace(/([おこそとのほもよろごぞどぼぽ])お/g, '$1う');
+    };
+
+    const normPhonetic = (k: string): string => {
+      return normalizeYouon(normalizeLongVowels(k));
+    };
+
+    for (const rawKana of transcriptKanaCandidates) {
+      const normTranscript = normalizeLongVowels(rawKana);
+      const phoneticTranscript = normPhonetic(rawKana);
+      const withoutCopula = rawKana.replace(/(です|だ|の|を|が)$/, '');
+      const normWithoutCopula = normalizeLongVowels(withoutCopula);
+      const phoneticWithoutCopula = normPhonetic(withoutCopula);
+      const withoutLeadingOne = rawKana.replace(/^(いち|いっ|[1一])/, '');
+      const withoutTrailingN = rawKana.replace(/ん$/, '');
 
       for (const t of targetList) {
-        if (effectiveTranscriptKana === t) return true;
-        if (normTranscript === normalizeLongVowels(t)) return true;
-      }
+        const phoneticT = normPhonetic(t);
+        if (rawKana === t) return { isMatch: true, matchedReading: t };
+        if (normTranscript === normalizeLongVowels(t)) return { isMatch: true, matchedReading: t };
+        if (phoneticTranscript === phoneticT) return { isMatch: true, matchedReading: t };
 
-      // Tolerancia por contención para lecturas cortas (≤3 moras):
-      // Si la lectura esperada es muy corta (ej. め, て, き, やすむ) y el transcript
-      // normalizado contiene esa lectura, aceptar. Esto cubre casos donde Google
-      // agrega vocales alargadas o partículas espurias (ej. "めー" para 目).
-      for (const t of targetList) {
-        if (t.length > 0 && t.length <= 3) {
-          if (effectiveTranscriptKana.includes(t)) return true;
-          if (normTranscript.includes(normalizeLongVowels(t))) return true;
+        if (withoutCopula.length > 0 && (withoutCopula === t || normWithoutCopula === normalizeLongVowels(t) || phoneticWithoutCopula === phoneticT)) {
+          return { isMatch: true, matchedReading: t };
+        }
+        if (withoutLeadingOne.length > 0 && (withoutLeadingOne === t || normalizeLongVowels(withoutLeadingOne) === normalizeLongVowels(t) || normPhonetic(withoutLeadingOne) === phoneticT)) {
+          return { isMatch: true, matchedReading: t };
+        }
+        if (withoutTrailingN.length > 0 && (withoutTrailingN === t || normPhonetic(withoutTrailingN) === phoneticT)) {
+          return { isMatch: true, matchedReading: t };
+        }
+
+        // Alargamiento vocálico de habla legítimo (ej. "めー" / "めえ" -> romaji "mee" -> "me")
+        const rRaw = hiraganaToRomaji(rawKana);
+        const rT = hiraganaToRomaji(t);
+        if (rRaw && rT && rRaw.replace(/([aeiou])\1+$/g, '$1') === rT) {
+          return { isMatch: true, matchedReading: t };
         }
       }
 
-      // Deconjugación verbal: si el usuario dice una forma conjugada (ej. "やすみ" forma -masu
-      // sin el masu, o "やすんで" forma -te), deconjugar y verificar contra las lecturas válidas.
-      // Esto resuelve el caso de 休む donde Google transcribe "やすみ" en vez de "やすむ".
-      const deconjugated = deconjugateJapanese(effectiveTranscriptKana);
+      // Deconjugación verbal: ej. 休む donde Google transcribe "やすみ" en vez de "やすむ"
+      const deconjugated = deconjugateJapanese(rawKana);
       for (const candidate of deconjugated) {
         const candidateKana = toNormalizedHiragana(candidate);
-        if (!candidateKana || candidateKana === effectiveTranscriptKana) continue;
+        if (!candidateKana || candidateKana === rawKana) continue;
         for (const t of targetList) {
-          if (candidateKana === t) return true;
-          if (normalizeLongVowels(candidateKana) === normalizeLongVowels(t)) return true;
+          if (candidateKana === t || normalizeLongVowels(candidateKana) === normalizeLongVowels(t) || normPhonetic(candidateKana) === normPhonetic(t)) {
+            return { isMatch: true, matchedReading: t };
+          }
         }
       }
 
-      // Verificar displayText convertido a kana: Google a veces transcribe el kanji
-      // directamente (ej. "休む" en vez de "やすむ"). Convertimos y comparamos.
+      // Verificar displayText convertido a kana si Google transcribió directamente
       if (cleanText.length > 0) {
         const displayAsKana = toNormalizedHiragana(cleanText);
         if (displayAsKana.length > 0 && displayAsKana !== textKana) {
-          if (effectiveTranscriptKana === displayAsKana) return true;
-          if (normTranscript === normalizeLongVowels(displayAsKana)) return true;
+          if (rawKana === displayAsKana || normTranscript === normalizeLongVowels(displayAsKana) || phoneticTranscript === normPhonetic(displayAsKana)) {
+            return { isMatch: true, matchedReading: displayAsKana };
+          }
         }
       }
     }
-    return false;
+    return { isMatch: false };
   }
+
+  // 3. Coincidencia directa exacta para otros idiomas
+  if (cleanText.length > 0 && cleanTranscript === cleanText) return { isMatch: true, matchedReading: cleanReading || cleanText };
+  if (cleanReading.length > 0 && cleanTranscript === cleanReading) return { isMatch: true, matchedReading: cleanReading };
 
   // 4. Si es Chino
   if (targetLang.startsWith('zh')) {
+    if (cleanText.length > 0 && (cleanTranscript === cleanText || cleanTranscript.includes(cleanText) || cleanText.includes(cleanTranscript))) {
+      return { isMatch: true, matchedReading: cleanReading || cleanText };
+    }
+
     if (ZH_NUMBERS[cleanTranscript]) {
       const zhNum = ZH_NUMBERS[cleanTranscript];
-      if (cleanText === zhNum.hanzi) return true;
-      if (normalizeReading(cleanReading) === normalizeReading(zhNum.pinyin)) return true;
+      if (cleanText === zhNum.hanzi) return { isMatch: true, matchedReading: zhNum.pinyin };
+      if (normalizeReading(cleanReading) === normalizeReading(zhNum.pinyin)) return { isMatch: true, matchedReading: zhNum.pinyin };
     }
 
     const pinyinTranscript = normalizeReading(cleanTranscript);
     const pinyinExpected = normalizeReading(cleanReading);
 
     if (pinyinTranscript.length > 0 && pinyinExpected.length > 0) {
-      if (pinyinTranscript === pinyinExpected) return true;
-      if (pinyinTranscript.replace(/[0-9]/g, '') === pinyinExpected.replace(/[0-9]/g, '')) return true;
+      if (pinyinTranscript === pinyinExpected) return { isMatch: true, matchedReading: cleanReading };
+      if (pinyinTranscript.replace(/[0-9]/g, '') === pinyinExpected.replace(/[0-9]/g, '')) {
+        return { isMatch: true, matchedReading: cleanReading };
+      }
     }
-    return false;
+    return { isMatch: false };
   }
 
   // 5. Idiomas alfabéticos (Inglés, Español, etc.)
   const normTranscript = normalizeText(cleanTranscript);
   const normText = normalizeText(cleanText);
   if (normTranscript.length > 0 && normText.length > 0 && normTranscript === normText) {
-    return true;
+    return { isMatch: true, matchedReading: cleanText };
   }
 
-  return false;
+  return { isMatch: false };
 }
 
 /**

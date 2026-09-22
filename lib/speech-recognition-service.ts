@@ -3,6 +3,7 @@ import {
   type ExpoSpeechRecognitionOptions,
 } from 'expo-speech-recognition';
 import { whisperVoiceService } from './whisper-service';
+import { voskVoiceService } from './vosk-service';
 
 /**
  * Mapeo de códigos de idioma de Yomi a tags de idioma BCP-47 para reconocimiento de voz.
@@ -36,15 +37,17 @@ export interface SpeechRecognitionOptions {
   androidLanguageModel?: 'free_form' | 'web_search';
   /** Prompt inicial para Whisper (la lectura o kanji esperado) */
   initialPrompt?: string;
-  /** Motor preferido: 'auto' (Whisper si está disponible, sino nativo) | 'whisper' | 'native' */
-  preferredEngine?: 'auto' | 'whisper' | 'native';
+  /** Gramática cerrada para reconocimiento con Vosk */
+  voskGrammar?: string[];
+  /** Motor preferido: 'auto' | 'vosk' | 'whisper' | 'native' */
+  preferredEngine?: 'auto' | 'vosk' | 'whisper' | 'native';
 }
 
 class SpeechRecognitionService {
   private activeSubscriptions: Array<{ remove: () => void }> = [];
   private isListeningActive = false;
   private hasCheckedPermissions = false;
-  private activeEngine: 'whisper' | 'native' | null = null;
+  private activeEngine: 'vosk' | 'whisper' | 'native' | null = null;
 
   /**
    * Contador de generación: se incrementa en cada start() para invalidar
@@ -153,8 +156,69 @@ class SpeechRecognitionService {
     // Capturar la generación actual para guardar con los callbacks
     const gen = this.generation;
 
-    // Intentar reconocimiento con Whisper On-Device si está disponible y listo
-    const useWhisper = options?.preferredEngine !== 'native' && whisperVoiceService.checkNativeModule();
+    // 1. Intentar reconocimiento con Vosk Offline con gramática cerrada de la tarjeta
+    const isJapanese = languageCode.toLowerCase().startsWith('ja');
+    const wantsVosk =
+      options?.preferredEngine === 'vosk' ||
+      (options?.preferredEngine !== 'native' && options?.preferredEngine !== 'whisper' && isJapanese && Boolean(options?.voskGrammar && options.voskGrammar.length > 0));
+
+    if (wantsVosk && voskVoiceService.checkNativeModule()) {
+      if (!voskVoiceService.isReady()) {
+        console.log('[SpeechRecognition] Vosk model not loaded yet, loading model-ja-jp...');
+        await voskVoiceService.loadModel('model-ja-jp');
+      }
+
+      if (voskVoiceService.isReady()) {
+        console.log('[SpeechRecognition] Starting Vosk recognition with grammar');
+        const started = await voskVoiceService.start(
+          {
+            onResult: (hypothesis, isFinal) => {
+              if (this.generation !== gen) return;
+              if (hypothesis === '[unk]') {
+                // Sonido no reconocido dentro de la gramática cerrada
+                return;
+              }
+              callbacks.onResult(hypothesis, isFinal, [hypothesis]);
+            },
+            onError: (errorMessage) => {
+              if (this.generation !== gen) return;
+              this.isListeningActive = false;
+              callbacks.onError?.(errorMessage);
+            },
+            onStart: () => {
+              if (this.generation !== gen) return;
+              this.isListeningActive = true;
+              callbacks.onStart?.();
+            },
+            onEnd: () => {
+              if (this.generation !== gen) return;
+              this.isListeningActive = false;
+              callbacks.onEnd?.();
+            },
+            onTimeout: () => {
+              if (this.generation !== gen) return;
+              this.isListeningActive = false;
+              callbacks.onEnd?.();
+            },
+          },
+          {
+            grammar: options?.voskGrammar,
+          }
+        );
+
+        if (started) {
+          this.activeEngine = 'vosk';
+          this.isListeningActive = true;
+          return true;
+        }
+      } else if (options?.preferredEngine === 'vosk') {
+        callbacks.onError?.('VOSK_MODEL_NOT_READY');
+        return false;
+      }
+    }
+
+    // 2. Intentar reconocimiento con Whisper On-Device si está disponible y listo
+    const useWhisper = options?.preferredEngine !== 'native' && options?.preferredEngine !== 'vosk' && whisperVoiceService.checkNativeModule();
     if (useWhisper) {
       const isWhisperReady = await whisperVoiceService.isModelReady();
       if (isWhisperReady) {
@@ -201,6 +265,8 @@ class SpeechRecognitionService {
     const targetLang = LANGUAGE_RECOGNITION_MAP[languageCode] || 'ja-JP';
 
     try {
+      console.log('[SpeechRecognition] Starting native recognition for lang:', targetLang);
+
       // Suscribirse a eventos con guard de generación: si la generación cambió
       // desde que se crearon estos listeners, los callbacks se ignoran silenciosamente
       const resultSub = ExpoSpeechRecognitionModule.addListener('result', (event) => {
@@ -209,6 +275,7 @@ class SpeechRecognitionService {
           .map((r) => r.transcript)
           .filter(Boolean);
         const firstResult = allTranscripts[0] || '';
+        console.log('[SpeechRecognition] Result:', firstResult, 'isFinal:', event.isFinal, 'alternatives:', allTranscripts);
         if (firstResult || allTranscripts.length > 0) {
           callbacks.onResult(firstResult, event.isFinal ?? false, allTranscripts);
         }
@@ -218,40 +285,53 @@ class SpeechRecognitionService {
         if (this.generation !== gen) return;
         // Ignorar eventos 'aborted' provocados deliberadamente al cambiar de tarjeta
         if (event.error === 'aborted') return;
+        // Los eventos 'no-speech' y 'speech-timeout' son silencios normales mientras el usuario piensa durante los 15s
+        if (event.error === 'no-speech' || event.error === 'speech-timeout') {
+          console.log('[SpeechRecognition] Silence detected while user is thinking, continuing listening...');
+          callbacks.onEnd?.();
+          return;
+        }
+        console.warn('[SpeechRecognition] Error event:', event.error, event.message);
         this.isListeningActive = false;
         callbacks.onError?.(event.message || event.error || 'Error de reconocimiento');
       });
 
       const startSub = ExpoSpeechRecognitionModule.addListener('start', () => {
         if (this.generation !== gen) return;
+        console.log('[SpeechRecognition] Native mic STARTED listening');
         this.isListeningActive = true;
         callbacks.onStart?.();
       });
 
       const endSub = ExpoSpeechRecognitionModule.addListener('end', () => {
         if (this.generation !== gen) return;
+        console.log('[SpeechRecognition] Native mic ENDED');
         this.isListeningActive = false;
         callbacks.onEnd?.();
       });
 
       this.activeSubscriptions = [resultSub, errorSub, startSub, endSub];
 
-      // Configuración optimizada:
-      // - web_search: Google lo recomienda para reconocimiento de palabras sueltas
-      // - iosTaskHint: 'confirmation' optimiza para utterances cortas (sí/no/una palabra)
+      // Configuración optimizada para reconocimiento acústico de pronunciación:
+      // - continuous: true (reconocimiento continuo sin cortes por silencio mientras el usuario piensa)
+      // - EXTRA_LANGUAGE_MODEL: 'free_form' (modelo fonético general, no búsquedas web de Google)
+      // - interimResults: true (resultados parciales en tiempo real mientras habla)
+      // - 15000ms de tolerancia a silencio para coincidir con la ventana de 15 segundos de la tarjeta
       const recognitionOptions: ExpoSpeechRecognitionOptions = {
         lang: targetLang,
         interimResults: true,
         continuous: options?.continuous ?? true,
-        maxAlternatives: options?.maxAlternatives ?? 10,
+        maxAlternatives: 10,
         iosTaskHint: 'confirmation',
         androidIntentOptions: {
-          EXTRA_LANGUAGE_MODEL: options?.androidLanguageModel ?? 'web_search',
+          EXTRA_LANGUAGE_MODEL: 'free_form',
+          EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS: 5000,
+          EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS: 15000,
+          EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS: 15000,
         },
       };
 
       if (options?.contextualStrings && options.contextualStrings.length > 0) {
-        // Filtrar duplicados y vacíos
         recognitionOptions.contextualStrings = Array.from(new Set(options.contextualStrings.filter(Boolean)));
       }
 
@@ -260,8 +340,8 @@ class SpeechRecognitionService {
         ExpoSpeechRecognitionModule.start(recognitionOptions);
         this.isListeningActive = true;
         return true;
-      } catch {
-        // Si el motor nativo aún estaba en transición, reintentar tras confirmar estado inactivo
+      } catch (startErr) {
+        console.warn('[SpeechRecognition] Error on first start attempt, retrying:', startErr);
         await this._waitForInactive();
         try {
           ExpoSpeechRecognitionModule.abort();
@@ -274,7 +354,7 @@ class SpeechRecognitionService {
     } catch (err: unknown) {
       this.isListeningActive = false;
       const message = err instanceof Error ? err.message : 'No se pudo iniciar el micrófono';
-      console.warn('Error iniciando SpeechRecognition:', message);
+      console.warn('[SpeechRecognition] Error iniciando SpeechRecognition:', message);
       callbacks.onError?.(message);
       return false;
     }
@@ -292,6 +372,13 @@ class SpeechRecognitionService {
     this.isListeningActive = false;
     this.cleanupSubscriptions();
 
+    if (this.activeEngine === 'vosk') {
+      try {
+        await voskVoiceService.stop();
+      } catch { }
+      this.activeEngine = null;
+    }
+
     if (this.activeEngine === 'whisper') {
       try {
         await whisperVoiceService.stop();
@@ -307,8 +394,9 @@ class SpeechRecognitionService {
       } catch { }
     }
 
-    // Esperar determinísticamente a que el motor nativo confirme estado inactivo
+    // Esperar determinísticamente a que el motor nativo confirme estado inactivo y liberar audio focus
     await this._waitForInactive();
+    await new Promise((r) => setTimeout(r, 120));
   }
 
   /**
@@ -350,9 +438,9 @@ class SpeechRecognitionService {
   }
 
   /**
-   * Retorna el motor activo ('whisper' | 'native' | null).
+   * Retorna el motor activo ('vosk' | 'whisper' | 'native' | null).
    */
-  getActiveEngine(): 'whisper' | 'native' | null {
+  getActiveEngine(): 'vosk' | 'whisper' | 'native' | null {
     return this.activeEngine;
   }
 }

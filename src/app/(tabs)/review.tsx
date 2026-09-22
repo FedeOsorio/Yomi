@@ -24,10 +24,12 @@ import { Rating } from 'ts-fsrs';
 import { speakText, stopSpeech } from '../../../lib/audio-service';
 import { ALL_LANGUAGES, DeckWithStats, SUPPORTED_LANGUAGES } from '../../../lib/deck-service';
 import { cleanAndFormatMeanings } from '../../../lib/japanese-search';
-import { formatJapaneseReading, getEffectiveCardLanguage, toNormalizedHiragana } from '../../../lib/japanese-utils';
+import { formatJapaneseReading, getEffectiveCardLanguage, toNormalizedHiragana, getMonosyllableVariants, normalizeYouon, hiraganaToRomaji, JA_NUMBERS } from '../../../lib/japanese-utils';
 import { JLPT_KANJI_READINGS } from '../../../lib/jlpt-data';
+import { KANJI_READINGS_MAP } from '../../../lib/kanji-readings-db';
 import { calculateChineseAccuracyScore, PinyinBreakdownItem } from '../../../lib/pinyin-utils';
 import { speechService } from '../../../lib/speech-recognition-service';
+import { voskVoiceService } from '../../../lib/vosk-service';
 import {
   calculateReviewRating,
   checkMeaningMatch,
@@ -47,10 +49,8 @@ import { useTranslation } from '../../i18n';
 import { SessionSummaryView } from '../../components/review/SessionSummaryView';
 import { VoiceMicControl } from '../../components/review/VoiceMicControl';
 import { VoiceTranscriptArea } from '../../components/review/VoiceTranscriptArea';
-import { WhisperDownloadModal } from '../../components/review/WhisperDownloadModal';
 import { getFloatingTabBarStyle, Shadows, Spacing, Typography } from '../../constants/theme';
 import { useReviewStore } from '../../stores/reviewStore';
-import { whisperVoiceService } from '../../../lib/whisper-service';
 
 const VOICE_TIMEOUT_SECONDS = 15;
 
@@ -320,21 +320,6 @@ export default function ReviewScreen() {
   const isCountdownPausedRef = useRef<boolean>(false);
   const restartAttemptsRef = useRef<number>(0);
 
-  // Estado para la descarga bajo demanda del modelo Whisper (~31 MB)
-  const [showWhisperDownloadModal, setShowWhisperDownloadModal] = useState(false);
-  const [whisperDownloadProgress, setWhisperDownloadProgress] = useState(0);
-  const [whisperBytesWritten, setWhisperBytesWritten] = useState(0);
-  const [whisperTotalBytes, setWhisperTotalBytes] = useState(31.5 * 1024 * 1024);
-  const [whisperDownloadStatus, setWhisperDownloadStatus] = useState<
-    'idle' | 'downloading' | 'verifying' | 'ready' | 'error'
-  >('idle');
-  const [whisperErrorMessage, setWhisperErrorMessage] = useState('');
-  const [pendingVoiceParams, setPendingVoiceParams] = useState<{
-    deckId: string | 'all';
-    deckName: string;
-    practiceMode: boolean;
-  } | null>(null);
-
   // Estilos de animación 3D optimizados para 60 FPS continuos con backfaceVisibility
   const frontAnimatedStyle = useMemo(() => ({
     backfaceVisibility: 'hidden' as const,
@@ -402,6 +387,13 @@ export default function ReviewScreen() {
     const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => subscription.remove();
   }, [selectedDeckId]);
+
+  // Precargar modelo acústico de Vosk en segundo plano para el repaso offline
+  useEffect(() => {
+    voskVoiceService.loadModel('model-ja-jp').catch((e) => {
+      console.warn('[ReviewScreen] Could not preload Vosk model:', e);
+    });
+  }, []);
 
   // Pausar y liberar el micrófono si la app pasa a segundo plano (llamada, minimizar, bloquear pantalla)
   useEffect(() => {
@@ -504,84 +496,10 @@ export default function ReviewScreen() {
     });
   }, [selectedDeckId, selectedDeckName, colors]);
 
-  const startWhisperModelDownload = async (params?: {
-    deckId: string | 'all';
-    deckName: string;
-    practiceMode: boolean;
-  }) => {
-    if (params) {
-      setPendingVoiceParams(params);
-    }
-    setShowWhisperDownloadModal(true);
-    setWhisperDownloadStatus('downloading');
-    setWhisperDownloadProgress(0);
-    setWhisperBytesWritten(0);
-    setWhisperErrorMessage('');
-
-    try {
-      await whisperVoiceService.ensureModel((pct, written, total) => {
-        setWhisperDownloadProgress(pct);
-        setWhisperBytesWritten(written);
-        if (total > 0) setWhisperTotalBytes(total);
-        if (pct >= 100) {
-          setWhisperDownloadStatus('verifying');
-        }
-      });
-
-      setWhisperDownloadStatus('ready');
-      setWhisperDownloadProgress(100);
-
-      // Breve pausa para mostrar el estado completado y arrancar la sesión
-      setTimeout(() => {
-        setShowWhisperDownloadModal(false);
-        setWhisperDownloadStatus('idle');
-        const activeParams = params || pendingVoiceParams;
-        if (activeParams) {
-          handleStartSession(
-            activeParams.deckId,
-            activeParams.deckName,
-            'voice',
-            activeParams.practiceMode
-          );
-          setPendingVoiceParams(null);
-        }
-      }, 700);
-    } catch (err: any) {
-      console.warn('Error descargando modelo Whisper:', err);
-      setWhisperDownloadStatus('error');
-      setWhisperErrorMessage(
-        err?.message || 'No se pudo descargar el modelo. Revisa tu conexión a internet.'
-      );
-    }
-  };
-
-  const handleCancelWhisperDownload = async () => {
-    await whisperVoiceService.cancelDownload();
-    setShowWhisperDownloadModal(false);
-    setWhisperDownloadStatus('idle');
-    setPendingVoiceParams(null);
-  };
-
   const handleSelectMethod = async (method: 'text' | 'voice') => {
     if (!pendingSelection) return;
     const { deckId, deckName, hasDue } = pendingSelection;
     setShowMethodModal(false);
-
-    if (method === 'voice') {
-      const isReady = await whisperVoiceService.isModelReady();
-      if (!isReady) {
-        const params = {
-          deckId,
-          deckName,
-          practiceMode: !hasDue,
-        };
-        setPendingVoiceParams(params);
-        setTimeout(() => {
-          startWhisperModelDownload(params);
-        }, 200);
-        return;
-      }
-    }
 
     // Margen para que el modal nativo termine de desmontarse antes de arrancar la sesión
     setTimeout(() => {
@@ -662,12 +580,39 @@ export default function ReviewScreen() {
           String.fromCharCode(ch.charCodeAt(0) + 0x60)
         );
         if (kata && !strings.includes(kata)) extraVariants.push(kata);
+
+        // Si la lectura o término es corto (≤ 2 moras, monosílabo), generar variantes fonéticas profundas
+        if (hira && hira.length <= 2) {
+          extraVariants.push(...getMonosyllableVariants(hira, card.displayText));
+        }
       });
 
-      // Si es un kanji o palabra común, agregar variantes fonéticas directas (romaji y números)
+      // Generar variantes para el displayReading directo si es de 1 o 2 moras
+      if (card.displayReading) {
+        const rHira = toNormalizedHiragana(card.displayReading);
+        if (rHira && rHira.length <= 2) {
+          extraVariants.push(...getMonosyllableVariants(rHira, card.displayText));
+        }
+      }
+
+      // Si es un kanji del catálogo universal (N5 a N1), agregar todas sus lecturas On y Kun
       const kanjiChar = (card.displayText || '').trim();
-      if (JLPT_KANJI_READINGS[kanjiChar]) {
+      if (KANJI_READINGS_MAP[kanjiChar]) {
+        KANJI_READINGS_MAP[kanjiChar].forEach((r) => {
+          extraVariants.push(r);
+          const kata = r.replace(/[\u3041-\u3096]/g, (ch) =>
+            String.fromCharCode(ch.charCodeAt(0) + 0x60)
+          );
+          if (kata) extraVariants.push(kata);
+          if (r.length <= 2) {
+            extraVariants.push(...getMonosyllableVariants(r, kanjiChar));
+          }
+        });
+      } else if (JLPT_KANJI_READINGS[kanjiChar]) {
         const entry = JLPT_KANJI_READINGS[kanjiChar];
+        if (entry.essential) {
+          extraVariants.push(...getMonosyllableVariants(entry.essential, kanjiChar));
+        }
         if (entry.on) {
           entry.on.split(/[,、\s]+/).forEach((p) => {
             const clean = p.trim();
@@ -680,44 +625,38 @@ export default function ReviewScreen() {
             if (clean) extraVariants.push(clean, toNormalizedHiragana(clean));
           });
         }
-        if (entry.essential) {
-          extraVariants.push(entry.essential, toNormalizedHiragana(entry.essential));
+      }
+
+      // 1. Detectar automáticamente números de JA_NUMBERS (ej. 百, 千, 一, 二, etc.)
+      for (const [numKey, numVal] of Object.entries(JA_NUMBERS)) {
+        if (card.displayText === numVal.kanji || card.displayReading?.includes(numVal.kana)) {
+          extraVariants.push(numKey, numVal.kanji, numVal.kana);
+          const rom = hiraganaToRomaji(numVal.kana);
+          if (rom) extraVariants.push(rom);
         }
       }
 
-      if (card.displayText === '時' || card.displayReading?.includes('とき') || card.displayReading?.includes('じ')) {
-        extraVariants.push('とき', 'じ', '時', 'toki', 'ji');
-      }
-      if (card.displayText === '上' || card.displayReading?.includes('うえ')) {
-        extraVariants.push('うえ', '上', 'ue');
-      }
-      if (card.displayText === '千' || card.displayReading?.includes('せん')) {
-        extraVariants.push('せん', '1000', 'sen');
-      }
-      if (card.displayText === '週' || card.displayReading?.includes('しゅう')) {
-        extraVariants.push('しゅう', 'シュー', 'shuu');
-      }
-      if (card.displayText === '多' || card.displayText === '多い' || card.displayReading?.includes('おおい')) {
-        extraVariants.push('おおい', 'オーイ', 'ooi', 'o-i');
-      }
-      if (card.displayText === '口' || card.displayReading?.includes('くち')) {
-        extraVariants.push('くち', 'クチ', '口', 'kuchi');
-      }
-      if (card.displayText === '耳' || card.displayReading?.includes('みみ')) {
-        extraVariants.push('みみ', 'ミミ', '耳', 'mimi');
-      }
-      if (card.displayText === '目' || card.displayReading?.includes('め')) {
-        extraVariants.push('め', 'メ', '目', 'me');
-      }
-      if (card.displayText === '手' || card.displayReading?.includes('て')) {
-        extraVariants.push('て', 'テ', '手', 'te');
-      }
-      if (card.displayText === '足' || card.displayReading?.includes('あし')) {
-        extraVariants.push('あし', 'アシ', '足', 'ashi');
-      }
+      // 2. Generación fonética universal para todas las lecturas (N5 a N1):
+      // - Romaji universal para todas las lecturas
+      // - Variante Youon expandida si contiene ゃ, ゅ, ょ (ej. ひやく para ひゃく)
+      strings.forEach((str) => {
+        const hira = toNormalizedHiragana(str);
+        if (hira) {
+          const rom = hiraganaToRomaji(hira);
+          if (rom && !strings.includes(rom)) extraVariants.push(rom);
+
+          if (/[ゃゅょ]/.test(hira)) {
+            const youonNorm = normalizeYouon(hira);
+            if (youonNorm && !strings.includes(youonNorm)) extraVariants.push(youonNorm);
+            const youonRom = hiraganaToRomaji(youonNorm);
+            if (youonRom && !strings.includes(youonRom)) extraVariants.push(youonRom);
+          }
+        }
+      });
 
       strings.push(...extraVariants);
     }
+
     return Array.from(new Set(strings.filter(Boolean)));
   };
 
@@ -778,30 +717,17 @@ export default function ReviewScreen() {
     }, 1200);
 
     let restartTimer: NodeJS.Timeout | null = null;
+    // Ningún silencio apaga el micrófono mientras corren los 15 segundos de la tarjeta.
+    // Si el motor nativo recicla su sesión por silencio, se reinicia inmediatamente en segundo plano
+    // sin alterar el estado visual (isListening se mantiene true y status 'listening').
     const scheduleRestart = () => {
       if (isStale()) return;
-      const currentElapsed = startTime > 0 ? (Date.now() - startTime) / 1000 : 0;
-
-      // Máximo 3 reintentos. Si se agotan, el micrófono queda pausado
-      // y el usuario puede tocar para reiniciar manualmente.
-      if (restartAttemptsRef.current >= 3) {
-        setIsListening(false);
-        setSpeechStatus('idle');
-        return;
-      }
-
-      if (currentElapsed < VOICE_TIMEOUT_SECONDS - 1.0) {
-        if (restartTimer) clearTimeout(restartTimer);
-        restartTimer = setTimeout(async () => {
-          if (!isStale()) {
-            restartAttemptsRef.current += 1;
-            await initRecognizer();
-          }
-        }, 250);
-      } else {
-        setIsListening(false);
-        setSpeechStatus('idle');
-      }
+      if (restartTimer) clearTimeout(restartTimer);
+      restartTimer = setTimeout(async () => {
+        if (!isStale()) {
+          await initRecognizer();
+        }
+      }, 350);
     };
 
     const initRecognizer = async () => {
@@ -812,6 +738,7 @@ export default function ReviewScreen() {
       }
 
       const contextualStrings = getCardContextualStrings(card, lang);
+      const isJapanese = lang.toLowerCase().startsWith('ja');
 
       await speechService.start(
         lang,
@@ -820,12 +747,14 @@ export default function ReviewScreen() {
             if (!isStale()) {
               clearTimeout(fallbackTimer);
               startTimerCountdown();
+              restartAttemptsRef.current = 0; // Reset consecutive errors on successful start
               setIsListening(true);
               setSpeechStatus('listening');
             }
           },
           onResult: (transcript, isFinal, alternatives) => {
             if (isStale()) return;
+            console.log('[ReviewVoice] onResult received:', transcript, 'isFinal:', isFinal, 'alternatives:', alternatives);
             const currentTrimmed = transcript.trim();
             if (!currentTrimmed && (!alternatives || alternatives.length === 0)) return;
 
@@ -841,14 +770,20 @@ export default function ReviewScreen() {
               ...(alternatives || []),
             ].filter(Boolean);
 
+            // Validación de acierto fonético
             let matchedHypo = '';
+            let matchedReading = '';
             const isMatch = candidateHypotheses.some((hypo) => {
-              if (checkVoiceMatch(card, hypo, lang)) {
+              const res = checkVoiceMatch(card, hypo, lang);
+              if (res.isMatch) {
                 matchedHypo = hypo;
+                matchedReading = res.matchedReading || '';
                 return true;
               }
               return false;
             });
+
+            console.log('[ReviewVoice] isMatch:', isMatch, 'matchedHypo:', matchedHypo, 'matchedReading:', matchedReading, 'for card:', card.displayText, card.displayReading);
 
             if (isMatch) {
               // Cortar el micrófono inmediatamente en cuanto se detecta la coincidencia
@@ -856,26 +791,22 @@ export default function ReviewScreen() {
               speechService.abort().catch(() => { });
               setIsListening(false);
               setSpeechStatus('evaluating');
-              const matchedFormatted = formatSpokenTranscript(matchedHypo || currentTrimmed, lang);
+              const matchedFormatted = formatSpokenTranscript(matchedReading || matchedHypo || currentTrimmed, lang);
               setSpeechTranscript(matchedFormatted);
               // Breve pausa para apreciar en verde la pronunciación antes de la rotación 3D
               setTimeout(() => {
-                handleVoiceEvaluation(card, true, matchedHypo || currentTrimmed);
+                handleVoiceEvaluation(card, true, matchedReading || matchedHypo || currentTrimmed);
               }, 400);
             }
           },
           onError: (err) => {
             if (err === 'aborted' || isStale()) return;
-            if (err === 'MODEL_NOT_DOWNLOADED') {
-              setIsListening(false);
-              setSpeechStatus('idle');
-              startWhisperModelDownload();
-              return;
-            }
+            console.warn('[ReviewVoice] Native event (silence/recycle), keeping mic alive:', err);
             scheduleRestart();
           },
           onEnd: () => {
             if (isStale()) return;
+            console.log('[ReviewVoice] onEnd received (user thinking), keeping mic alive');
             scheduleRestart();
           },
         },
@@ -883,7 +814,9 @@ export default function ReviewScreen() {
           contextualStrings,
           maxAlternatives: 10,
           initialPrompt: card.displayReading || card.displayText || contextualStrings[0],
-          preferredEngine: 'whisper',
+          voskGrammar: isJapanese ? voskVoiceService.buildGrammarForCard(card) : undefined,
+          preferredEngine: isJapanese ? 'vosk' : 'native',
+          continuous: true,
         }
       );
     };
@@ -923,6 +856,7 @@ export default function ReviewScreen() {
       isMeaningCorrect: isSuccess,
       computedRating: rating,
       voiceScore,
+      matchedReading: isSuccess ? directTranscript : undefined,
     });
 
     // Si falló (tiempo agotado o pronunciación errónea), registrar fallo de sesión y reinsertar en la cola
@@ -940,7 +874,12 @@ export default function ReviewScreen() {
     }).start(({ finished }) => {
       if (finished) {
         // Reproducir audio TTS y arrancar temporizador de 7s recién cuando la tarjeta completó el giro
-        speakText(card.displayText, lang, card.displayReading);
+        // Si acertó y tenemos la lectura específica que el usuario pronunció (ej. 'にち' para 日),
+        // TTS repite esa lectura exacta y no fuerza lecturas por defecto
+        const readingToSpeak = isSuccess && directTranscript
+          ? directTranscript
+          : card.displayReading;
+        speakText(card.displayText, lang, readingToSpeak);
         startCountdownTimer(7000);
       }
     });
@@ -1028,7 +967,7 @@ export default function ReviewScreen() {
   };
 
   // Pase automático o manual a la siguiente tarjeta en modo voz con transición fluida 3D
-  const advanceToNextVoiceCard = () => {
+  const advanceToNextVoiceCard = async () => {
     if (autoTimerRef.current) {
       clearTimeout(autoTimerRef.current);
       autoTimerRef.current = null;
@@ -1036,16 +975,16 @@ export default function ReviewScreen() {
     isCountdownPausedRef.current = false;
     flipCountdownAnim.stopAnimation();
     flipCountdownAnim.setValue(0);
-    // Detener cualquier reproducción TTS activa y limpiar transcripciones
-    stopSpeech();
+    // Detener cualquier reproducción TTS activa de forma asíncrona y limpiar transcripciones
+    await stopSpeech();
     setSpeechTranscript('');
     accumulatedSpeechRef.current = '';
 
     // Invalidar la generación ANTES de la transición para que cualquier callback
     // tardío de la tarjeta anterior se descarte automáticamente.
-    // isCardEvaluatedRef se mantiene como guard secundario dentro de la misma generación.
     isCardEvaluatedRef.current = true;
     speechService.invalidate();
+    speechService.abort().catch(() => { });
 
     // Rotar la tarjeta suavemente de regreso al frente a 60 FPS
     Animated.timing(cardFlipAnim, {
@@ -1055,18 +994,18 @@ export default function ReviewScreen() {
       useNativeDriver: true,
     }).start(({ finished }) => {
       if (finished) {
-        // En cuanto la animación 3D termina y la nueva tarjeta está 100% visible de frente,
-        // la nueva palabra activa el micrófono. La promise queue del servicio garantiza
-        // que el abort de la sesión anterior se complete antes del nuevo start.
-        const nextCard = useReviewStore.getState().getCurrentCard();
-        if (nextCard) {
-          const lang = getEffectiveCardLanguage(nextCard);
-          startVoiceListeningForCard(nextCard, lang);
-        } else {
-          speechService.abort().catch(() => { });
-          setIsListening(false);
-          setSpeechStatus('idle');
-        }
+        // Pausa de 250ms para que Android AudioManager libere audio focus y el binder esté 100% libre
+        setTimeout(() => {
+          const nextCard = useReviewStore.getState().getCurrentCard();
+          if (nextCard) {
+            const lang = getEffectiveCardLanguage(nextCard);
+            startVoiceListeningForCard(nextCard, lang);
+          } else {
+            speechService.abort().catch(() => { });
+            setIsListening(false);
+            setSpeechStatus('idle');
+          }
+        }, 250);
       }
     });
 
@@ -1622,18 +1561,6 @@ export default function ReviewScreen() {
           onClose={() => setShowMethodModal(false)}
           onSelectMethod={handleSelectMethod}
         />
-
-        <WhisperDownloadModal
-          visible={showWhisperDownloadModal}
-          progressPercent={whisperDownloadProgress}
-          bytesWritten={whisperBytesWritten}
-          totalBytes={whisperTotalBytes}
-          status={whisperDownloadStatus}
-          errorMessage={whisperErrorMessage}
-          colors={colors}
-          onCancel={handleCancelWhisperDownload}
-          onRetry={() => startWhisperModelDownload()}
-        />
       </View>
     );
   }
@@ -1663,18 +1590,6 @@ export default function ReviewScreen() {
           colors={colors}
           onClose={() => setShowMethodModal(false)}
           onSelectMethod={handleSelectMethod}
-        />
-
-        <WhisperDownloadModal
-          visible={showWhisperDownloadModal}
-          progressPercent={whisperDownloadProgress}
-          bytesWritten={whisperBytesWritten}
-          totalBytes={whisperTotalBytes}
-          status={whisperDownloadStatus}
-          errorMessage={whisperErrorMessage}
-          colors={colors}
-          onCancel={handleCancelWhisperDownload}
-          onRetry={() => startWhisperModelDownload()}
         />
       </View>
     );
@@ -1900,9 +1815,41 @@ export default function ReviewScreen() {
                     {Boolean(currentCard.displayReading) && (
                       <>
                         <Text style={[styles.flipBackLabel, { color: colors.textMuted }]}>Pronunciación</Text>
-                        <Text style={[styles.flipHeroReadingSmall, { color: colors.primary, marginBottom: 4 }]} numberOfLines={2}>
-                          {isJapanese ? formatJapaneseReading(currentCard.displayReading) : currentCard.displayReading}
-                        </Text>
+                        {(() => {
+                          const rawText = currentCard.displayReading;
+                          const formatted = isJapanese ? formatJapaneseReading(rawText) : rawText;
+                          const matched = evaluation?.matchedReading;
+                          if (!matched || !isJapanese) {
+                            return (
+                              <Text style={[styles.flipHeroReadingSmall, { color: colors.primary, marginBottom: 4 }]} numberOfLines={2}>
+                                {formatted}
+                              </Text>
+                            );
+                          }
+                          const normMatched = toNormalizedHiragana(matched);
+                          const tokens = formatted.split(/([,、・•/|\s]+)/);
+                          return (
+                            <Text style={[styles.flipHeroReadingSmall, { color: colors.primary, marginBottom: 4 }]} numberOfLines={2}>
+                              {tokens.map((tok, idx) => {
+                                const cleanTok = tok.replace(/^(on|kun|音|訓)[:：\s]*/i, '').replace(/[・~～\s\(\)（）\-\.]/g, '').trim();
+                                const normTok = toNormalizedHiragana(cleanTok);
+                                const isMatched = normTok && normMatched && (normTok === normMatched || normMatched.includes(normTok) || normTok.includes(normMatched));
+                                if (isMatched) {
+                                  return (
+                                    <Text key={idx} style={{ color: '#10B981', fontWeight: '800' }}>
+                                      {tok}
+                                    </Text>
+                                  );
+                                }
+                                return (
+                                  <Text key={idx} style={{ color: colors.textMuted }}>
+                                    {tok}
+                                  </Text>
+                                );
+                              })}
+                            </Text>
+                          );
+                        })()}
 
                         {/* Desglose On/Kun adicional para tarjetas de Kanji */}
                         {(() => {
@@ -1913,11 +1860,34 @@ export default function ReviewScreen() {
                               kanjiReadings = aux.kanjiReadings;
                             } catch { }
                           }
-                          return kanjiReadings && kanjiReadings !== currentCard.displayReading ? (
+                          if (!kanjiReadings || kanjiReadings === currentCard.displayReading) return null;
+                          const matched = evaluation?.matchedReading;
+                          if (!matched || !isJapanese) {
+                            return (
+                              <Text style={[styles.flipKanjiReadingsSub, { color: colors.textMuted }]} numberOfLines={1}>
+                                {kanjiReadings}
+                              </Text>
+                            );
+                          }
+                          const normMatched = toNormalizedHiragana(matched);
+                          const tokens = kanjiReadings.split(/([,、・•/|\s]+)/);
+                          return (
                             <Text style={[styles.flipKanjiReadingsSub, { color: colors.textMuted }]} numberOfLines={1}>
-                              {kanjiReadings}
+                              {tokens.map((tok, idx) => {
+                                const cleanTok = tok.replace(/^(on|kun|音|訓)[:：\s]*/i, '').replace(/[・~～\s\(\)（）\-\.]/g, '').trim();
+                                const normTok = toNormalizedHiragana(cleanTok);
+                                const isMatched = normTok && normMatched && (normTok === normMatched || normMatched.includes(normTok) || normTok.includes(normMatched));
+                                if (isMatched) {
+                                  return (
+                                    <Text key={idx} style={{ color: '#10B981', fontWeight: '800' }}>
+                                      {tok}
+                                    </Text>
+                                  );
+                                }
+                                return <Text key={idx} style={{ color: colors.textMuted }}>{tok}</Text>;
+                              })}
                             </Text>
-                          ) : null;
+                          );
                         })()}
 
                         {/* Desglose por sílaba Pinyin con círculos de porcentaje y barra de llenado (memoizado) */}
@@ -2172,18 +2142,6 @@ export default function ReviewScreen() {
           )
         )}
       </View>
-
-      <WhisperDownloadModal
-        visible={showWhisperDownloadModal}
-        progressPercent={whisperDownloadProgress}
-        bytesWritten={whisperBytesWritten}
-        totalBytes={whisperTotalBytes}
-        status={whisperDownloadStatus}
-        errorMessage={whisperErrorMessage}
-        colors={colors}
-        onCancel={handleCancelWhisperDownload}
-        onRetry={() => startWhisperModelDownload()}
-      />
     </KeyboardAvoidingView>
   );
 }

@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -34,6 +35,7 @@ export default function SearchScreen() {
   const [decks, setDecks] = useState<DeckWithStats[]>([]);
   const [selectedDeckId, setSelectedDeckId] = useState<string>(params.deckId || '');
   const [currentDeck, setCurrentDeck] = useState<DeckWithStats | null>(null);
+  const [deckModalVisible, setDeckModalVisible] = useState(false);
 
   const [query, setQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -375,36 +377,29 @@ export default function SearchScreen() {
       </View>
 
       <View style={{ flex: 1, paddingHorizontal: Spacing.md }}>
-        {/* Selector de Mazo */}
+        {/* Selector de Mazo (Dropdown) */}
         <View style={styles.deckPickerSection}>
           <Text style={[styles.deckPickerLabel, { color: colors.textMuted }]}>Mazo de destino:</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.deckChipsScroll}>
-            {decks.map((d) => {
-              const isSelected = d.id === selectedDeckId;
-              const langMeta = ALL_LANGUAGES.find(l => l.code === d.languageCode);
-              return (
-                <TouchableOpacity
-                  key={d.id}
-                  style={[
-                    styles.deckChip,
-                    { backgroundColor: colors.surface, borderColor: colors.border },
-                    isSelected && { backgroundColor: colors.primary, borderColor: colors.primary }
-                  ]}
-                  onPress={() => handleSelectDeck(d)}
-                >
-                  <Text style={styles.deckChipFlag}>{langMeta?.flag || '📚'}</Text>
-                  <Text style={[styles.deckChipText, { color: colors.text }, isSelected && { color: '#FFF' }]}>
-                    {d.name}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
+          <TouchableOpacity
+            style={[
+              styles.deckDropdownBtn,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+            ]}
+            onPress={() => setDeckModalVisible(true)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.deckDropdownContent}>
+              <Text style={styles.deckDropdownFlag}>{currentLangMeta?.flag || '📚'}</Text>
+              <Text style={[styles.deckDropdownText, { color: colors.text }]} numberOfLines={1}>
+                {currentDeck?.name || 'Seleccionar mazo'}
+              </Text>
+            </View>
+            <Ionicons name="chevron-down" size={18} color={colors.textMuted} />
+          </TouchableOpacity>
         </View>
 
-        {/* Aclaratorio sutil del idioma del mazo (sin invadir espacio) */}
+        {/* Aclaratorio sutil del idioma del mazo (sin icono (i) y con espaciado consistente) */}
         <View style={styles.searchInstructionRow}>
-          <Ionicons name="information-circle-outline" size={15} color={colors.primary} style={{ marginRight: 6 }} />
           <Text style={[styles.searchInstructionText, { color: colors.textMuted }]}>
             {getSearchInstruction()}
           </Text>
@@ -720,6 +715,68 @@ export default function SearchScreen() {
             </View>
           </ScrollView>
         )}
+
+        {/* Modal Dropdown para Selector de Mazo */}
+        <Modal
+          visible={deckModalVisible}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setDeckModalVisible(false)}
+        >
+          <TouchableOpacity
+            style={styles.modalOverlay}
+            activeOpacity={1}
+            onPress={() => setDeckModalVisible(false)}
+          >
+            <View
+              style={[styles.deckModalContent, { backgroundColor: colors.surface, borderColor: colors.border }]}
+              onStartShouldSetResponder={() => true}
+            >
+              <View style={styles.deckModalHeader}>
+                <Text style={[styles.deckModalTitle, { color: colors.text }]}>Mazo de destino</Text>
+                <TouchableOpacity onPress={() => setDeckModalVisible(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="close" size={22} color={colors.textMuted} />
+                </TouchableOpacity>
+              </View>
+
+              <FlatList
+                data={decks}
+                keyExtractor={(item) => item.id}
+                style={{ maxHeight: 320 }}
+                renderItem={({ item }) => {
+                  const isSelected = item.id === selectedDeckId;
+                  const langMeta = ALL_LANGUAGES.find((l) => l.code === item.languageCode);
+                  return (
+                    <TouchableOpacity
+                      style={[
+                        styles.deckModalItem,
+                        {
+                          backgroundColor: isSelected ? colors.primary + '18' : colors.surfaceHighlight,
+                          borderColor: isSelected ? colors.primary : colors.border,
+                        },
+                      ]}
+                      onPress={() => {
+                        handleSelectDeck(item);
+                        setDeckModalVisible(false);
+                      }}
+                    >
+                      <Text style={styles.deckModalItemFlag}>{langMeta?.flag || '📚'}</Text>
+                      <View style={styles.deckModalItemTextCol}>
+                        <Text style={[styles.deckModalItemName, { color: colors.text, fontWeight: isSelected ? '700' : '500' }]}>
+                          {item.name}
+                        </Text>
+                        <Text style={[styles.deckModalItemSub, { color: colors.textMuted }]}>
+                          {item.wordCount || 0} {(item.wordCount || 0) === 1 ? 'palabra' : 'palabras'}
+                        </Text>
+                      </View>
+                      {isSelected && <Ionicons name="checkmark-circle" size={20} color={colors.primary} />}
+                    </TouchableOpacity>
+                  );
+                }}
+              />
+            </View>
+          </TouchableOpacity>
+        </Modal>
       </View>
     </View>
   );
@@ -756,31 +813,36 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   deckPickerSection: {
-    marginBottom: Spacing.md,
+    marginBottom: 10,
   },
   deckPickerLabel: {
     ...Typography.bodySmall,
     marginBottom: 6,
+    fontWeight: '600',
   },
-  deckChipsScroll: {
-    flexDirection: 'row',
-  },
-  deckChip: {
+  deckDropdownBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-    marginRight: Spacing.xs,
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    borderRadius: 12,
     borderWidth: 1,
   },
-  deckChipFlag: {
-    fontSize: 16,
-    marginRight: 6,
+  deckDropdownContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 8,
   },
-  deckChipText: {
-    fontSize: 13,
+  deckDropdownFlag: {
+    fontSize: 16,
+    marginRight: 8,
+  },
+  deckDropdownText: {
+    fontSize: 14,
     fontWeight: '600',
+    flex: 1,
   },
   inputContainer: {
     flexDirection: 'row',
@@ -788,7 +850,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: Spacing.md,
     borderWidth: 1,
-    marginBottom: Spacing.md,
+    marginBottom: 14,
   },
   searchIcon: { marginRight: Spacing.sm },
   loader: { marginLeft: Spacing.sm },
@@ -1098,14 +1160,60 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   searchInstructionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 6,
-    paddingHorizontal: 2,
+    marginBottom: 8,
   },
   searchInstructionText: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 12.5,
+    fontWeight: '500',
+    lineHeight: 17,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Spacing.lg,
+  },
+  deckModalContent: {
+    width: '100%',
+    maxHeight: '75%',
+    borderRadius: 20,
+    padding: Spacing.md,
+    borderWidth: 1,
+    ...Shadows.card,
+  },
+  deckModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+    paddingBottom: Spacing.xs,
+  },
+  deckModalTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  deckModalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 8,
+  },
+  deckModalItemFlag: {
+    fontSize: 20,
+    marginRight: 10,
+  },
+  deckModalItemTextCol: {
+    flex: 1,
+  },
+  deckModalItemName: {
+    fontSize: 14,
+  },
+  deckModalItemSub: {
+    fontSize: 11,
+    marginTop: 2,
   },
   initialStateBox: {
     padding: Spacing.lg,

@@ -576,9 +576,12 @@ export async function searchJapanese(rawInput: string, toLang: string = 'es'): P
 
     const exactMatches = combinedData.filter(isExactMatchItem);
 
-    // OPTIMIZACIÓN: Si existe al menos una coincidencia exacta (ej. "tabete" -> 食べる o "kesu" -> 消す),
-    // descartar compuestos largos (como tabesugiru) y procesar/traducir ÚNICAMENTE las palabras exactas.
-    const filteredData = exactMatches.length > 0 ? exactMatches : combinedData;
+    // OPTIMIZACIÓN: Si la búsqueda es un único kanji (ej. "飲", "食", "行"), NO descartar
+    // los verbos y palabras esenciales que llevan okurigana (como "飲む", "食べる", "行く").
+    // Solo cuando la búsqueda tiene 2 o más caracteres y hay coincidencia exacta (ej. "tabete" -> 食べる),
+    // filtrar estrictamente para evitar compuestos largos no deseados.
+    const isSingleKanjiSearch = input.length === 1 && /[\u4e00-\u9faf]/.test(input);
+    const filteredData = (!isSingleKanjiSearch && exactMatches.length > 0) ? exactMatches : combinedData;
 
     // Scoring y ordenamiento determinista por popularidad y relevancia:
     const getScore = (item: any): number => {
@@ -616,9 +619,8 @@ export async function searchJapanese(rawInput: string, toLang: string = 'es'): P
 
     const sortedData = filteredData.sort((a, b) => getScore(b) - getScore(a));
 
-    // Si hay coincidencias exactas, limitar a máximo 3 (variantes Kanji de la misma palabra),
-    // si no hay exacta, hasta 4 resultados para sugerencias mientras el usuario escribe.
-    const topResults = sortedData.slice(0, exactMatches.length > 0 ? 3 : 4);
+    // Si hay coincidencias exactas multicarácter, limitar a 3; si es búsqueda de 1 kanji o general, hasta 5 resultados.
+    const topResults = sortedData.slice(0, (!isSingleKanjiSearch && exactMatches.length > 0) ? 3 : 5);
     const preparedItems: Array<{
       item: any;
       dictionaryWord: string;

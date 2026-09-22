@@ -29,10 +29,10 @@ export function getSpokenRubyDisplay(
     }
 
     if (card) {
-      const isMatch = checkVoiceMatch(card, transcript, lang);
+      const matchRes = checkVoiceMatch(card, transcript, lang);
       const cardHasKanji = /[\u4e00-\u9faf]/.test(card.displayText);
 
-      if (isMatch) {
+      if (matchRes.isMatch) {
         const cleanSpoken = toNormalizedHiragana(transcript).replace(/[a-zA-Z]/g, '');
         if (cardHasKanji) {
           return {
@@ -61,7 +61,7 @@ export function getSpokenRubyDisplay(
         rubyText: ZH_NUMBERS[trimmed].hanzi,
       };
     }
-    if (card && checkVoiceMatch(card, transcript, lang)) {
+    if (card && checkVoiceMatch(card, transcript, lang).isMatch) {
       return {
         mainText: card.displayReading,
         rubyText: card.displayText,

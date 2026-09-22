@@ -659,7 +659,6 @@ const styles = StyleSheet.create({
   langGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    marginBottom: Spacing.lg,
   },
   langChip: {
     flexDirection: 'row',
@@ -729,20 +728,19 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   dynamicSectionContainer: {
-    height: 64,
-    justifyContent: 'center',
-    marginBottom: Spacing.lg,
+    minHeight: 72,
+    marginBottom: Spacing.md,
   },
   languageSectionBox: {
-    height: 64,
-    justifyContent: 'center',
+    width: '100%',
   },
   customNoticeBox: {
-    height: 64,
+    minHeight: 56,
     flexDirection: 'row',
     alignItems: 'center',
     borderRadius: 12,
     paddingHorizontal: 12,
+    paddingVertical: 10,
     borderWidth: 1,
   },
   customNoticeText: {
