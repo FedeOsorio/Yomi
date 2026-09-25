@@ -1,11 +1,13 @@
+import { and, eq, like, ne } from 'drizzle-orm';
 import { db, dictDb } from '../db';
-import { words, decks, srsItems } from '../db/schema';
 import { dictionaryEntries } from '../db/dict-schema';
-import { eq, and, like, ne } from 'drizzle-orm';
-import { createNewSrsItem } from './srs-engine';
+import { decks, srsItems, words } from '../db/schema';
+import { cleanHtmlAndAnkiTags, parseAnkiFuriganaSyntax } from './anki-importer';
+import { cleanAndFormatMeanings, extractKanjis, searchJapanese } from './japanese-search';
+import { classifyJapaneseWord, deconjugateJapanese, isJapaneseDictionaryForm, toNormalizedHiragana, COMMON_KANA_NOUNS_AND_EXPRESSIONS } from './japanese-utils';
+import { JLPT_KANJI_READINGS } from './jlpt-data';
 import { DictionaryEntry } from './search-engine';
-import { searchJapanese, extractKanjis, cleanAndFormatMeanings } from './japanese-search';
-import { classifyJapaneseWord, isJapaneseDictionaryForm } from './japanese-utils';
+import { createNewSrsItem } from './srs-engine';
 
 import * as crypto from 'expo-crypto';
 
@@ -172,7 +174,42 @@ export async function getWordDetailWithRelations(
       level = parsedAux.level;
       category = parsedAux.category;
       conjugationEnabled = parsedAux.conjugationEnabled;
-    } catch {}
+
+      // Autocuración para palabras japonesas que terminan en kanji que NO son verbos/adjetivos base (ej. 右, 犬, 肉, 靴, 夏, 学校, 今日)
+      const isJapanese = deck?.languageCode?.startsWith('ja');
+      const cleanWord = (word.simplified || '').trim();
+      const endsWithKanji = /[\u4e00-\u9faf]$/.test(cleanWord);
+
+      if (isJapanese && endsWithKanji) {
+        let rawKun = parsedAux.kunReading || '';
+        const baseInfo = resolveJapaneseBaseForm(cleanWord, word.pinyinDisplay || '', rawKun);
+        if (!baseInfo) {
+          let dirty = false;
+          if (category?.startsWith('Verbo') || category?.startsWith('Adjetivo -i')) {
+            category = classifyJapaneseWord(cleanWord, word.pinyinDisplay || '');
+            parsedAux.category = category;
+            dirty = true;
+          }
+          if (conjugationEnabled) {
+            conjugationEnabled = false;
+            delete parsedAux.conjugationEnabled;
+            dirty = true;
+          }
+          if (parsedAux.dictionaryForm) {
+            delete parsedAux.dictionaryForm;
+            dirty = true;
+          }
+          if (dirty) {
+            word.auxiliaryInfo = JSON.stringify(parsedAux);
+            await db
+              .update(words)
+              .set({ auxiliaryInfo: word.auxiliaryInfo })
+              .where(eq(words.id, wordId))
+              .catch(() => { });
+          }
+        }
+      }
+    } catch { }
   }
 
   return {
@@ -452,7 +489,7 @@ export async function updateWordSelectedMeanings(
     if (word.auxiliaryInfo) {
       try {
         auxObj = JSON.parse(word.auxiliaryInfo);
-      } catch (e) {}
+      } catch (e) { }
     }
     auxObj.selectedMeanings = selectedMeanings;
 
@@ -515,7 +552,7 @@ export async function deleteWordMeaning(
       if (Array.isArray(auxObj.selectedMeanings)) {
         newSelected = auxObj.selectedMeanings.filter((m: string) => m.trim().toLowerCase() !== targetClean);
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
   if (isCustomDeck || (newSelected.length === 0 && newMeaningsList.length > 0)) {
@@ -596,7 +633,7 @@ export async function updateWordMeaningText(
           m.trim().toLowerCase() === targetClean ? trimmedNew : m
         );
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
   if (isCustomDeck || (newSelected.length === 0 && newMeaningsList.length > 0)) {
@@ -755,6 +792,8 @@ export async function getConjugableWordsForDeck(deckId: string): Promise<Conjuga
     let conjugationEnabled: boolean | undefined = undefined;
     let disabledConjugations: string[] = [];
 
+    let dictionaryForm: { kanji: string; reading: string } | undefined = undefined;
+
     if (w.auxiliaryInfo) {
       try {
         const aux = JSON.parse(w.auxiliaryInfo);
@@ -766,27 +805,55 @@ export async function getConjugableWordsForDeck(deckId: string): Promise<Conjuga
         if (Array.isArray(aux.disabledConjugations)) {
           disabledConjugations = aux.disabledConjugations;
         }
-      } catch {}
+        if (aux.dictionaryForm && aux.dictionaryForm.kanji) {
+          if (aux.dictionaryForm.kanji.length >= 2 && !/[\u4e00-\u9faf]$/.test(aux.dictionaryForm.kanji) && aux.dictionaryForm.kanji !== 'u') {
+            dictionaryForm = aux.dictionaryForm;
+          }
+        }
+      } catch { }
     }
 
-    const cleanReading = (w.pinyinDisplay || '').replace(/\s*\([^)]*\)/g, '').trim();
-
-    // Si no tiene category explícita, intentar clasificar si es japonés
-    if (!category) {
-      category = classifyJapaneseWord(w.simplified, cleanReading);
+    const cleanSimplified = (w.simplified || '').trim();
+    let rawKun = '';
+    if (w.auxiliaryInfo) {
+      try {
+        const aux = JSON.parse(w.auxiliaryInfo);
+        rawKun = aux.kunReading || '';
+      } catch { }
     }
 
-    // Excluir si explícitamente se deshabilitó la conjugación
-    if (conjugationEnabled === false) {
+    // Si termina en kanji pero no tiene dictionaryForm resuelto todavía, intentar auto-resolver
+    if (/[\u4e00-\u9faf]$/.test(cleanSimplified) && !dictionaryForm) {
+      const resolved = resolveJapaneseBaseForm(cleanSimplified, w.pinyinDisplay || '', rawKun);
+      if (resolved) {
+        dictionaryForm = { kanji: resolved.baseKanji, reading: resolved.baseReading };
+        category = resolved.category;
+      } else {
+        continue;
+      }
+    }
+
+    const cleanReading = (w.pinyinDisplay || '').replace(/\s*[\(\[（【][^\)\]）】]*[\)\]）】]/g, '').trim();
+    const targetKanji = dictionaryForm ? dictionaryForm.kanji : cleanSimplified;
+    const targetReading = dictionaryForm ? (dictionaryForm.reading || cleanReading) : cleanReading;
+
+    // Si no tiene category explícita, o si category era Sustantivo pero tiene dictionaryForm
+    if (!category || (dictionaryForm && category === 'Sustantivo')) {
+      category = classifyJapaneseWord(targetKanji, targetReading);
+    }
+
+    // Excluir si explícitamente se deshabilitó la conjugación o si la categoría resultante es sustantivo/expresión
+    if (conjugationEnabled === false || category === 'Sustantivo' || category.includes('Frase')) {
       continue;
     }
 
     // Comprobar si la palabra está en su forma base de diccionario (Jisho-kei)
-    const isBaseForm = isJapaneseDictionaryForm(w.simplified, cleanReading, category);
+    const isBaseForm = dictionaryForm ? true : isJapaneseDictionaryForm(cleanSimplified, cleanReading, category);
 
     // Solo es conjugable si es forma base y es Verbo/Adjetivo o se habilitó explícitamente
     const isConjugable =
-      (conjugationEnabled === true && isBaseForm) ||
+      Boolean(dictionaryForm) ||
+      (conjugationEnabled === true && (category.startsWith('Verbo') || category.startsWith('Adjetivo'))) ||
       (conjugationEnabled === undefined && isBaseForm && (category.startsWith('Verbo') || category.startsWith('Adjetivo')));
 
     if (isConjugable) {
@@ -799,8 +866,8 @@ export async function getConjugableWordsForDeck(deckId: string): Promise<Conjuga
 
       results.push({
         id: w.id,
-        kanji: w.simplified,
-        reading: cleanReading,
+        kanji: targetKanji,
+        reading: targetReading,
         meanings: parsedMeanings,
         category,
         level: level || undefined,
@@ -824,7 +891,7 @@ export async function toggleWordFormConjugation(wordId: string, form: string, di
   if (word.auxiliaryInfo) {
     try {
       auxObj = JSON.parse(word.auxiliaryInfo);
-    } catch {}
+    } catch { }
   }
 
   const currentDisabled: string[] = Array.isArray(auxObj.disabledConjugations) ? auxObj.disabledConjugations : [];
@@ -854,7 +921,7 @@ export async function setWordConjugationEnabled(wordId: string, enabled: boolean
   if (word.auxiliaryInfo) {
     try {
       auxObj = JSON.parse(word.auxiliaryInfo);
-    } catch {}
+    } catch { }
   }
   auxObj.conjugationEnabled = enabled;
 
@@ -885,10 +952,10 @@ export async function getAvailableDeckWordsForConjugation(deckId: string): Promi
         const aux = JSON.parse(w.auxiliaryInfo);
         category = aux.category || '';
         level = aux.level || '';
-      } catch {}
+      } catch { }
     }
 
-    const cleanReading = (w.pinyinDisplay || '').replace(/\s*\([^)]*\)/g, '').trim();
+    const cleanReading = (w.pinyinDisplay || '').replace(/\s*[\(\[（【][^\)\]）】]*[\)\]）】]/g, '').trim();
     if (!category) {
       category = classifyJapaneseWord(w.simplified, cleanReading);
     }
@@ -916,5 +983,242 @@ export async function getAvailableDeckWordsForConjugation(deckId: string): Promi
   }
 
   return results;
+}
+
+/**
+ * Intenta encontrar la forma diccionario base de una palabra japonesa.
+ * Si ya es forma base, la devuelve tal cual.
+ * Si es una forma conjugada (ej. 飲んだ, 食べました, 美味しかった, 行かない),
+ * utiliza deconjugateJapanese para encontrar el candidato que coincida con la forma base
+ * y clasificarla en su categoría correspondiente (Verbo Godan/Ichidan/Irregular o Adjetivo).
+ */
+export function resolveJapaneseBaseForm(
+  word: string,
+  reading: string = '',
+  rawKun: string = ''
+): { baseKanji: string; baseReading: string; category: string } | null {
+  const cleanWord = word.trim();
+  const cleanReading = (reading || cleanWord).trim();
+
+  // 1. Caso Tarjeta de un solo Kanji (ej. 立, 聞, 行, 見, 食, 飲, 高, 新)
+  if (cleanWord.length === 1 && /[\u4e00-\u9faf]/.test(cleanWord)) {
+    const jlpt = JLPT_KANJI_READINGS[cleanWord];
+    const kunCandidate = jlpt?.kun || rawKun || '';
+    const kunParts = kunCandidate.split(/[,、\/]/).map((s) => s.trim());
+
+    for (const part of kunParts) {
+      if (part.includes('・') || part.includes('-')) {
+        const pieces = part.split(/[・\-]/);
+        if (pieces.length === 2 && pieces[0] && pieces[1]) {
+          const stem = toNormalizedHiragana(pieces[0]);
+          const okuri = toNormalizedHiragana(pieces[1]);
+          const fullReading = stem + okuri;
+          const baseKanji = cleanWord + okuri;
+
+          if (COMMON_KANA_NOUNS_AND_EXPRESSIONS.has(fullReading)) continue;
+          const counters = ['ひとつ', 'ふたつ', 'みっつ', 'よっつ', 'いつつ', 'むっつ', 'ななつ', 'やっつ', 'ここのつ', 'とお'];
+          if (counters.includes(fullReading)) continue;
+
+          let category = '';
+          if (okuri.endsWith('い')) {
+            category = 'Adjetivo -i';
+          } else if (fullReading === 'くる' || fullReading === 'する') {
+            category = 'Verbo Irregular';
+          } else if (okuri.endsWith('る')) {
+            const prev = fullReading[fullReading.length - 2];
+            const ichidan = [
+              'い', 'き', 'し', 'ち', 'に', 'ひ', 'み', 'り', 'ぎ', 'じ', 'ぢ', 'び', 'ぴ',
+              'え', 'け', 'せ', 'て', 'ね', 'へ', 'め', 'れ', 'げ', 'ぜ', 'で', 'べ', 'ぺ'
+            ];
+            category = ichidan.includes(prev) ? 'Verbo Ichidan (-ru)' : 'Verbo Godan (-ru)';
+          } else if (/[うくぐすつぬぶむ]/.test(okuri[okuri.length - 1])) {
+            category = 'Verbo Godan (-u)';
+          }
+
+          if (category) {
+            return {
+              baseKanji,
+              baseReading: fullReading,
+              category,
+            };
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  // 2. Si tiene más de 1 kanji y termina en kanji (sustantivo compuesto como 学校, 今日), no es conjugable
+  if (cleanWord.length < 2 || /[\u4e00-\u9faf]$/.test(cleanWord)) {
+    return null;
+  }
+
+  // 1. Verificar si ya es forma de diccionario base
+  const directCategory = classifyJapaneseWord(cleanWord, cleanReading);
+  if (isJapaneseDictionaryForm(cleanWord, cleanReading, directCategory)) {
+    if (directCategory.startsWith('Verbo') || directCategory.startsWith('Adjetivo')) {
+      return { baseKanji: cleanWord, baseReading: cleanReading, category: directCategory };
+    }
+  }
+
+  // 2. Si no es forma base o fue clasificado como Sustantivo por estar conjugado,
+  // desconjugar tanto el texto con kanji como la lectura
+  const candidatesWord = deconjugateJapanese(cleanWord);
+  const candidatesReading = deconjugateJapanese(cleanReading);
+
+  for (const candW of candidatesWord) {
+    if (candW === cleanWord || candW.length < 2 || /[\u4e00-\u9faf]$/.test(candW)) continue;
+    // Intentar emparejar con un candidato de lectura o hiragana del candidato
+    const candR = candidatesReading.find((r) => r !== cleanReading && r.length >= 2) || toNormalizedHiragana(candW);
+    if (!candR || candR.length < 2) continue;
+
+    const candCat = classifyJapaneseWord(candW, candR);
+
+    if (
+      isJapaneseDictionaryForm(candW, candR, candCat) &&
+      (candCat.startsWith('Verbo') || candCat.startsWith('Adjetivo'))
+    ) {
+      return {
+        baseKanji: candW,
+        baseReading: candR,
+        category: candCat,
+      };
+    }
+  }
+
+  return null;
+}
+
+export interface GenerateConjugationsResult {
+  totalAnalyzed: number;
+  verbsFound: number;
+  adjectivesFound: number;
+  totalConjugable: number;
+  deconjugatedCount: number;
+}
+
+/**
+ * Analiza todas las palabras de un mazo japonés para detectar verbos y adjetivos
+ * (tanto en forma base de diccionario como en formas ya conjugadas de Anki/TSV),
+ * reconvirtiéndolos a su forma base de diccionario y habilitando la práctica de conjugaciones.
+ */
+export async function generateConjugationsForDeck(deckId: string): Promise<GenerateConjugationsResult> {
+  const deckWords = await db.select().from(words).where(eq(words.deckId, deckId));
+  let verbsFound = 0;
+  let adjectivesFound = 0;
+  let deconjugatedCount = 0;
+
+  for (const w of deckWords) {
+    const rawText = w.simplified || '';
+    let rawReading = w.pinyinDisplay || '';
+
+    // Limpieza de etiquetas HTML y sintaxis Anki
+    let cleanText = cleanHtmlAndAnkiTags(rawText);
+    if (cleanText.includes('[') && cleanText.includes(']')) {
+      const parsed = parseAnkiFuriganaSyntax(cleanText);
+      cleanText = parsed.text;
+      if (!rawReading && parsed.reading) {
+        rawReading = parsed.reading;
+      }
+    }
+
+    let cleanReading = cleanHtmlAndAnkiTags(rawReading)
+      .replace(/\[sound:[^\]]+\]/gi, '')
+      .trim();
+
+    if (cleanReading.includes('[') && cleanReading.includes(']')) {
+      const bracketMatch = cleanReading.match(/\[([^\]]+)\]/);
+      if (bracketMatch) {
+        cleanReading = bracketMatch[1].trim();
+      }
+    }
+
+    cleanReading = cleanReading
+      .replace(/[\(\[（【][^\)\]）】]*[\)\]）】]/g, '')
+      .replace(/[・]/g, '')
+      .trim();
+
+    if (!cleanReading && /^[\u3040-\u309f\u30a0-\u30ff]+$/.test(cleanText)) {
+      cleanReading = toNormalizedHiragana(cleanText);
+    }
+
+    let auxObj: Record<string, any> = {};
+    let rawKun = '';
+    if (w.auxiliaryInfo) {
+      try {
+        auxObj = JSON.parse(w.auxiliaryInfo);
+        rawKun = auxObj.kunReading || '';
+      } catch { }
+    }
+
+    // Resolver la forma base de diccionario (incluso si la tarjeta es un solo kanji o una forma ya conjugada)
+    const baseInfo = resolveJapaneseBaseForm(cleanText, cleanReading, rawKun);
+
+    if (baseInfo) {
+      const isVerb = baseInfo.category.startsWith('Verbo');
+      const isAdj = baseInfo.category.startsWith('Adjetivo');
+      if (isVerb) verbsFound++;
+      if (isAdj) adjectivesFound++;
+
+      auxObj.category = baseInfo.category;
+      auxObj.conjugationEnabled = true;
+
+      // Si la palabra estaba en forma conjugada (ej. 飲んだ -> 飲む)
+      if (baseInfo.baseKanji !== cleanText) {
+        deconjugatedCount++;
+        auxObj.dictionaryForm = {
+          kanji: baseInfo.baseKanji,
+          reading: baseInfo.baseReading,
+        };
+      } else {
+        delete auxObj.dictionaryForm;
+      }
+
+      await db
+        .update(words)
+        .set({
+          simplified: cleanText || w.simplified,
+          pinyinDisplay: cleanReading || w.pinyinDisplay,
+          pinyinNumeric: (cleanReading || w.pinyinDisplay || '').toLowerCase(),
+          auxiliaryInfo: JSON.stringify(auxObj),
+        })
+        .where(eq(words.id, w.id));
+    } else {
+      // Si la palabra NO es un verbo ni adjetivo conjugable (ej. sustantivo como 右, 肉, 靴, 夏, 学校):
+      // Autocurar cualquier dato corrupto previo (como category = "Verbo Godan (-u)" o dictionaryForm = { kanji: "u" })
+      let shouldUpdate = false;
+      if (
+        auxObj.conjugationEnabled !== undefined ||
+        auxObj.dictionaryForm !== undefined ||
+        auxObj.category?.startsWith('Verbo') ||
+        auxObj.category?.startsWith('Adjetivo -i')
+      ) {
+        delete auxObj.conjugationEnabled;
+        delete auxObj.dictionaryForm;
+        auxObj.category = classifyJapaneseWord(cleanText, cleanReading);
+        shouldUpdate = true;
+      }
+
+      if (shouldUpdate || (cleanReading !== w.pinyinDisplay && cleanReading)) {
+        await db
+          .update(words)
+          .set({
+            simplified: cleanText || w.simplified,
+            pinyinDisplay: cleanReading || w.pinyinDisplay,
+            pinyinNumeric: (cleanReading || w.pinyinDisplay || '').toLowerCase(),
+            auxiliaryInfo: JSON.stringify(auxObj),
+          })
+          .where(eq(words.id, w.id));
+      }
+    }
+  }
+
+  return {
+    totalAnalyzed: deckWords.length,
+    verbsFound,
+    adjectivesFound,
+    totalConjugable: verbsFound + adjectivesFound,
+    deconjugatedCount,
+  };
 }
 

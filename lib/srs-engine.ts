@@ -140,7 +140,7 @@ export function formatSpokenTranscript(transcript: string, lang: string): string
     if (romajiConverted) {
       return romajiConverted;
     }
-    return trimmed.replace(/[a-zA-Z]/g, '');
+    return trimmed;
   }
   if (isChinese && ZH_NUMBERS[trimmed]) {
     return ZH_NUMBERS[trimmed].hanzi;
@@ -347,6 +347,21 @@ export function checkVoiceMatch(
         const rT = hiraganaToRomaji(t);
         if (rRaw && rT && rRaw.replace(/([aeiou])\1+$/g, '$1') === rT) {
           return { isMatch: true, matchedReading: t };
+        }
+
+        // Tolerancia fonética para desonorización / asimilación de consonantes ASR no nativas
+        // (ej. 'みき' para 'みぎ', 'すし' para 'すじ', etc. para términos de 2 o más moras)
+        if (rawKana.length >= 2 && t.length >= 2 && rawKana.length === t.length) {
+          const stripDakuten = (str: string) => {
+            return str
+              .replace(/[がぎぐげご]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 1))
+              .replace(/[ざじずぜぞ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 1))
+              .replace(/[だぢづでど]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 1))
+              .replace(/[ばぱ]/g, 'は').replace(/[びぴ]/g, 'ひ').replace(/[ぶぷ]/g, 'ふ').replace(/[べぺ]/g, 'へ').replace(/[ぼぽ]/g, 'ほ');
+          };
+          if (stripDakuten(rawKana) === stripDakuten(t)) {
+            return { isMatch: true, matchedReading: t };
+          }
         }
       }
 

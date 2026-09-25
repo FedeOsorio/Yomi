@@ -51,7 +51,7 @@ export function getSpokenRubyDisplay(
     if (!converted) {
       converted = romajiToHiragana(transcript).replace(/[a-zA-Z]/g, '');
     }
-    return { mainText: converted || transcript.replace(/[a-zA-Z]/g, '') };
+    return { mainText: converted || transcript };
   }
 
   if (isChinese) {

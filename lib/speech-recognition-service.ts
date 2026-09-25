@@ -45,6 +45,7 @@ export interface SpeechRecognitionOptions {
 class SpeechRecognitionService {
   private activeSubscriptions: Array<{ remove: () => void }> = [];
   private isListeningActive = false;
+  private isStarting = false;
   private hasCheckedPermissions = false;
   private activeEngine: 'vosk' | 'native' | null = null;
 
@@ -135,6 +136,19 @@ class SpeechRecognitionService {
     callbacks: SpeechRecognitionCallbacks,
     options?: SpeechRecognitionOptions
   ): Promise<boolean> {
+    this.isStarting = true;
+    try {
+      return await this._executeStart(languageCode, callbacks, options);
+    } finally {
+      this.isStarting = false;
+    }
+  }
+
+  private async _executeStart(
+    languageCode: string,
+    callbacks: SpeechRecognitionCallbacks,
+    options?: SpeechRecognitionOptions
+  ): Promise<boolean> {
     if (!this.hasCheckedPermissions) {
       const alreadyGranted = await this.checkPermissions();
       if (alreadyGranted) {
@@ -210,9 +224,9 @@ class SpeechRecognitionService {
           this.isListeningActive = true;
           return true;
         }
-      } else if (options?.preferredEngine === 'vosk') {
-        callbacks.onError?.('VOSK_MODEL_NOT_READY');
-        return false;
+        console.warn('[SpeechRecognition] Vosk failed to start, falling back to native engine');
+      } else {
+        console.warn('[SpeechRecognition] Vosk model not ready, falling back to native engine');
       }
     }
 
@@ -298,11 +312,9 @@ class SpeechRecognitionService {
         return true;
       } catch (startErr) {
         console.warn('[SpeechRecognition] Error on first start attempt, retrying:', startErr);
-        await this._waitForInactive();
         try {
           ExpoSpeechRecognitionModule.abort();
         } catch { }
-        await this._waitForInactive();
         ExpoSpeechRecognitionModule.start(recognitionOptions);
         this.isListeningActive = true;
         return true;
@@ -333,33 +345,43 @@ class SpeechRecognitionService {
         await voskVoiceService.stop();
       } catch { }
       this.activeEngine = null;
+      return;
     }
 
-    try {
-      ExpoSpeechRecognitionModule.abort();
-    } catch {
+    if (this.activeEngine === 'native') {
       try {
-        ExpoSpeechRecognitionModule.stop();
+        await new Promise<void>((resolve) => {
+          let resolved = false;
+          const endSub = ExpoSpeechRecognitionModule.addListener('end', () => {
+            if (!resolved) {
+              resolved = true;
+              try { endSub.remove(); } catch { }
+              resolve();
+            }
+          });
+          setTimeout(() => {
+            if (!resolved) {
+              resolved = true;
+              try { endSub.remove(); } catch { }
+              resolve();
+            }
+          }, 250);
+
+          try {
+            ExpoSpeechRecognitionModule.abort();
+          } catch {
+            try {
+              ExpoSpeechRecognitionModule.stop();
+            } catch { }
+          }
+        });
       } catch { }
+      this.activeEngine = null;
+      return;
     }
 
-    // Esperar determinísticamente a que el motor nativo confirme estado inactivo y liberar audio focus
-    await this._waitForInactive();
-    await new Promise((r) => setTimeout(r, 120));
-  }
-
-  /**
-   * Espera activamente a que el motor nativo reporte estado 'inactive'.
-   * Polling con intervalos cortos, máximo 500ms total.
-   */
-  private async _waitForInactive(): Promise<void> {
-    try {
-      for (let i = 0; i < 10; i++) {
-        const state = await ExpoSpeechRecognitionModule.getStateAsync();
-        if (state === 'inactive') return;
-        await new Promise((r) => setTimeout(r, 50));
-      }
-    } catch { }
+    // Si no había ningún motor activo (idle en cold start), no hay nada que esperar (0ms)
+    this.activeEngine = null;
   }
 
   /**
@@ -391,6 +413,13 @@ class SpeechRecognitionService {
    */
   getActiveEngine(): 'vosk' | 'native' | null {
     return this.activeEngine;
+  }
+
+  /**
+   * Retorna si el servicio se encuentra en proceso de conexión/arranque.
+   */
+  isStartingState(): boolean {
+    return this.isStarting;
   }
 }
 

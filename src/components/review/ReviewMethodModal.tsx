@@ -1,5 +1,5 @@
 import React, { memo } from 'react';
-import { Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Shadows, Spacing } from '../../constants/theme';
 
@@ -9,6 +9,7 @@ export interface ReviewMethodModalProps {
     deckId: string;
     deckName: string;
     hasDue: boolean;
+    languageCode?: string;
   } | null;
   colors: {
     primary: string;
@@ -20,6 +21,8 @@ export interface ReviewMethodModalProps {
   };
   onClose: () => void;
   onSelectMethod: (method: 'text' | 'voice') => void;
+  onSelectConjugation?: () => void;
+  isPreparingVoice?: boolean;
 }
 
 export const ReviewMethodModal = memo(function ReviewMethodModal({
@@ -28,7 +31,10 @@ export const ReviewMethodModal = memo(function ReviewMethodModal({
   colors,
   onClose,
   onSelectMethod,
+  onSelectConjugation,
+  isPreparingVoice = false,
 }: ReviewMethodModalProps) {
+  const isJapanese = pendingSelection?.languageCode === 'ja-JP';
   return (
     <Modal
       visible={visible}
@@ -36,7 +42,7 @@ export const ReviewMethodModal = memo(function ReviewMethodModal({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <Pressable style={styles.modalBackdrop} onPress={onClose}>
+      <Pressable style={styles.modalBackdrop} onPress={isPreparingVoice ? undefined : onClose}>
         <Pressable
           style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
           onPress={(e) => e.stopPropagation()}
@@ -52,7 +58,7 @@ export const ReviewMethodModal = memo(function ReviewMethodModal({
                   : 'Mazo al día • Modo Práctica Libre'}
               </Text>
             </View>
-            <TouchableOpacity onPress={onClose} style={styles.modalCloseBtn}>
+            <TouchableOpacity onPress={onClose} style={styles.modalCloseBtn} disabled={isPreparingVoice}>
               <Ionicons name="close" size={22} color={colors.textMuted} />
             </TouchableOpacity>
           </View>
@@ -65,6 +71,7 @@ export const ReviewMethodModal = memo(function ReviewMethodModal({
           <TouchableOpacity
             style={[styles.methodOptionCard, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}
             activeOpacity={0.8}
+            disabled={isPreparingVoice}
             onPress={() => onSelectMethod('text')}
           >
             <View style={[styles.methodIconBox, { backgroundColor: colors.surface }]}>
@@ -76,7 +83,9 @@ export const ReviewMethodModal = memo(function ReviewMethodModal({
                 Escribe la lectura o el significado con el teclado para fijar la memoria.
               </Text>
             </View>
-            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+            <View style={styles.trailingIconBox}>
+              <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+            </View>
           </TouchableOpacity>
 
           {/* Opción 2: Modo Manos Libres (Micrófono) */}
@@ -86,13 +95,19 @@ export const ReviewMethodModal = memo(function ReviewMethodModal({
               {
                 backgroundColor: colors.primary + '12',
                 borderColor: colors.primary,
+                opacity: isPreparingVoice ? 0.7 : 1,
               },
             ]}
             activeOpacity={0.8}
+            disabled={isPreparingVoice}
             onPress={() => onSelectMethod('voice')}
           >
             <View style={[styles.methodIconBox, { backgroundColor: colors.primary }]}>
-              <Ionicons name="mic" size={24} color="#FFF" />
+              {isPreparingVoice ? (
+                <Ionicons name="hourglass-outline" size={24} color="#FFF" />
+              ) : (
+                <Ionicons name="mic" size={24} color="#FFF" />
+              )}
             </View>
             <View style={styles.methodTextCol}>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -102,11 +117,53 @@ export const ReviewMethodModal = memo(function ReviewMethodModal({
                 </View>
               </View>
               <Text style={[styles.methodDesc, { color: colors.textMuted }]}>
-                Pronuncia en voz alta. Flujo de tarjetas 100% automático.
+                {isPreparingVoice
+                  ? 'Preparando motor de voz offline...'
+                  : 'Pronuncia en voz alta. Flujo de tarjetas 100% automático.'}
               </Text>
             </View>
-            <Ionicons name="chevron-forward" size={18} color={colors.primary} />
+            <View style={styles.trailingIconBox}>
+              {isPreparingVoice ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <Ionicons name="chevron-forward" size={18} color={colors.primary} />
+              )}
+            </View>
           </TouchableOpacity>
+
+          {/* Opción 3: Práctica de Conjugaciones (Solo mazos de japonés) */}
+          {isJapanese && onSelectConjugation && (
+            <>
+              <View style={[styles.sectionDivider, { backgroundColor: colors.border }]} />
+              <Text style={[styles.modalSectionLabel, { color: colors.textMuted, marginTop: 4 }]}>
+                GRAMÁTICA Y FORMAS
+              </Text>
+              <TouchableOpacity
+                style={[
+                  styles.methodOptionCard,
+                  {
+                    backgroundColor: 'rgba(59, 130, 246, 0.08)',
+                    borderColor: colors.primary,
+                  },
+                ]}
+                activeOpacity={0.8}
+                onPress={onSelectConjugation}
+              >
+                <View style={[styles.methodIconBox, { backgroundColor: colors.primary }]}>
+                  <Ionicons name="sparkles" size={24} color="#FFF" />
+                </View>
+                <View style={styles.methodTextCol}>
+                  <Text style={[styles.methodTitle, { color: colors.text }]}>Práctica de Conjugaciones</Text>
+                  <Text style={[styles.methodDesc, { color: colors.textMuted }]}>
+                    Ejercitá todas las formas de verbos y adjetivos
+                  </Text>
+                </View>
+                <View style={styles.trailingIconBox}>
+                  <Ionicons name="chevron-forward" size={18} color={colors.primary} />
+                </View>
+              </TouchableOpacity>
+            </>
+          )}
         </Pressable>
       </Pressable>
     </Modal>
@@ -158,6 +215,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     marginBottom: Spacing.sm,
+    minHeight: 78,
   },
   methodIconBox: {
     width: 44,
@@ -170,6 +228,7 @@ const styles = StyleSheet.create({
   methodTextCol: {
     flex: 1,
     marginRight: Spacing.xs,
+    justifyContent: 'center',
   },
   methodTitle: {
     fontSize: 15,
@@ -179,6 +238,13 @@ const styles = StyleSheet.create({
   methodDesc: {
     fontSize: 12,
     lineHeight: 17,
+    minHeight: 34,
+  },
+  trailingIconBox: {
+    width: 24,
+    height: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   newBadge: {
     paddingHorizontal: 6,
@@ -187,6 +253,21 @@ const styles = StyleSheet.create({
     marginLeft: 6,
   },
   newBadgeText: {
+    color: '#FFF',
+    fontSize: 9,
+    fontWeight: 'bold',
+  },
+  sectionDivider: {
+    height: 1,
+    marginVertical: Spacing.sm,
+  },
+  grammarBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 6,
+    marginLeft: 6,
+  },
+  grammarBadgeText: {
     color: '#FFF',
     fontSize: 9,
     fontWeight: 'bold',

@@ -13,7 +13,7 @@ import { getQuickHskLevel } from '../../../lib/hsk-data';
 import { cleanAndFormatMeanings } from '../../../lib/japanese-search';
 import { classifyJapaneseWord, isJapaneseDictionaryForm, formatJapaneseReading } from '../../../lib/japanese-utils';
 import { getQuickJlptLevel } from '../../../lib/jlpt-data';
-import { addCardToReview, deleteWord, removeCardFromReviewByWordId } from '../../../lib/word-service';
+import { addCardToReview, deleteWord, generateConjugationsForDeck, removeCardFromReviewByWordId, resolveJapaneseBaseForm } from '../../../lib/word-service';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { ConjugationPracticeModal } from '../../components/ConjugationPracticeModal';
 import { CustomCardData, CustomCardModal } from '../../components/CustomCardModal';
@@ -176,14 +176,33 @@ export default function DeckDetailScreen() {
       const processed = result.map((w) => {
         let level: string | undefined = undefined;
         let category: string | undefined = undefined;
-        let conjugationEnabled = false;
+        let conjugationEnabled: boolean | undefined = undefined;
+        const cleanWord = (w.simplified || '').trim();
+        const endsWithKanji = /[\u4e00-\u9faf]$/.test(cleanWord);
+        let dictionaryForm: { kanji: string; reading?: string } | undefined = undefined;
+        let rawKun = '';
 
         if (w.auxiliaryInfo) {
           try {
             const parsed = JSON.parse(w.auxiliaryInfo);
             level = parsed.level;
             category = parsed.category;
-            conjugationEnabled = Boolean(parsed.conjugationEnabled);
+            rawKun = parsed.kunReading || '';
+            if (parsed.conjugationEnabled !== undefined) {
+              conjugationEnabled = Boolean(parsed.conjugationEnabled);
+            }
+            if (parsed.dictionaryForm) {
+              const df = parsed.dictionaryForm;
+              if (
+                df.kanji &&
+                df.kanji.length >= 2 &&
+                df.kanji !== 'u' &&
+                df.kanji !== 'う' &&
+                !/[\u4e00-\u9faf]$/.test(df.kanji)
+              ) {
+                dictionaryForm = df;
+              }
+            }
           } catch { }
         }
 
@@ -197,21 +216,48 @@ export default function DeckDetailScreen() {
           }
         }
 
-        // Limpiar cualquier romanización entre paréntesis para dejar únicamente Hiragana/Pinyin y formatear On/Kun
-        const rawReading = w.pinyinDisplay || '';
+        // Limpiar cualquier romanización entre paréntesis o corchetes para dejar únicamente Hiragana/Pinyin y formatear On/Kun
+        let rawReading = w.pinyinDisplay || '';
+        if (isJapaneseDeck) {
+          if (rawReading.includes('[') && rawReading.includes(']')) {
+            const bracketMatch = rawReading.match(/\[([^\]]+)\]/);
+            if (bracketMatch) {
+              rawReading = bracketMatch[1].trim();
+            }
+          }
+        }
         const cleanReading = isJapaneseDeck
-          ? formatJapaneseReading(rawReading.replace(/\s*\([^)]*\)/g, '').trim())
+          ? formatJapaneseReading(rawReading.replace(/\s*[\(\[（【][^\)\]）】]*[\)\]）】]/g, '').trim())
           : rawReading;
 
-        // Auto-clasificación si es japonés y no tenía categoría explícita
-        if (!category && isJapaneseDeck) {
-          category = classifyJapaneseWord(w.simplified, cleanReading);
+        // Si es una tarjeta de un solo kanji y no tiene dictionaryForm resuelto todavía, auto-resolver
+        if (isJapaneseDeck && cleanWord.length === 1 && endsWithKanji && !dictionaryForm) {
+          const resolved = resolveJapaneseBaseForm(cleanWord, cleanReading, rawKun);
+          if (resolved) {
+            dictionaryForm = { kanji: resolved.baseKanji, reading: resolved.baseReading };
+            category = resolved.category;
+            if (conjugationEnabled === undefined) conjugationEnabled = true;
+          }
         }
 
-        const isBaseForm = isJapaneseDictionaryForm(w.simplified, cleanReading, category);
+        // Auto-clasificación si es japonés o corrección de falsos positivos en palabras kanji
+        if (isJapaneseDeck) {
+          if (dictionaryForm) {
+            category = classifyJapaneseWord(dictionaryForm.kanji, dictionaryForm.reading || cleanReading);
+          } else if (endsWithKanji && cleanWord.length > 1 && (category?.startsWith('Verbo') || category?.startsWith('Adjetivo -i'))) {
+            category = classifyJapaneseWord(cleanWord, cleanReading);
+          } else if (!category) {
+            category = classifyJapaneseWord(cleanWord, cleanReading);
+          }
+        }
+
+        const isBaseForm = isJapaneseDictionaryForm(cleanWord, cleanReading, category);
         const isConjugable =
-          (conjugationEnabled === true && isBaseForm) ||
-          (conjugationEnabled === undefined && isBaseForm && Boolean(category?.startsWith('Verbo') || category?.startsWith('Adjetivo')));
+          Boolean(dictionaryForm) ||
+          (!endsWithKanji &&
+            (category?.startsWith('Verbo') || category?.startsWith('Adjetivo')) &&
+            (conjugationEnabled === true ||
+              (conjugationEnabled === undefined && isBaseForm)));
 
         const isCustomDeck = deckObj?.type === 'custom';
 
@@ -233,6 +279,7 @@ export default function DeckDetailScreen() {
           resolvedCategory: category,
           displayReading: cleanReading,
           isConjugable,
+          dictionaryForm,
           displayMeanings,
           isInReview: activeSrsSet.has(w.id),
         };
@@ -292,6 +339,46 @@ export default function DeckDetailScreen() {
   }, [fetchWords]);
 
   const [menuVisible, setMenuVisible] = useState(false);
+
+  const handleGenerateConjugations = async () => {
+    setMenuVisible(false);
+    if (!id) return;
+    try {
+      const res = await generateConjugationsForDeck(id);
+      let msg = `Se analizaron ${res.totalAnalyzed} palabras.\n\n` +
+        `• Verbos detectados: ${res.verbsFound}\n` +
+        `• Adjetivos detectados: ${res.adjectivesFound}\n` +
+        `• Total conjugables: ${res.totalConjugable}`;
+
+      if (res.deconjugatedCount > 0) {
+        msg += `\n• Formas conjugadas convertidas a base: ${res.deconjugatedCount}`;
+      }
+
+      if (res.totalConjugable === 0) {
+        msg += '\n\nNo se detectaron verbos o adjetivos nuevos para conjugar.';
+      }
+
+      await fetchWords();
+
+      if (res.totalConjugable > 0) {
+        Alert.alert(
+          'Conjugaciones generadas',
+          msg,
+          [
+            { text: 'Aceptar', style: 'cancel' },
+            {
+              text: 'Practicar ahora',
+              onPress: () => setConjugationModalVisible(true),
+            },
+          ]
+        );
+      } else {
+        Alert.alert('Generar conjugaciones', msg);
+      }
+    } catch (e) {
+      Alert.alert('Error', 'No se pudieron generar las conjugaciones.');
+    }
+  };
 
   const handleExportDeck = async () => {
     setMenuVisible(false);
@@ -434,6 +521,16 @@ export default function DeckDetailScreen() {
               >
                 <Ionicons name="sparkles" size={20} color={colors.primary} style={{ marginRight: 10 }} />
                 <Text style={[styles.menuDropdownText, { color: colors.text }]}>Práctica de Conjugaciones</Text>
+              </TouchableOpacity>
+            )}
+
+            {!isCustomDeck && deckInfo?.languageCode === 'ja-JP' && deckWords.length > 0 && (
+              <TouchableOpacity
+                style={[styles.menuDropdownItem, { borderBottomColor: colors.border }]}
+                onPress={handleGenerateConjugations}
+              >
+                <Ionicons name="sparkles-outline" size={20} color={colors.primary} style={{ marginRight: 10 }} />
+                <Text style={[styles.menuDropdownText, { color: colors.text }]}>Generar conjugaciones</Text>
               </TouchableOpacity>
             )}
 

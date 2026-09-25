@@ -594,6 +594,45 @@ export function getMonosyllableVariants(reading: string, displayText?: string): 
 }
 
 /**
+ * Conjunto de sustantivos, pronombres, adverbios y expresiones comunes en Kana
+ * que terminan fonéticamente en vocales u okurigana verbales (う, く, ぐ, す, つ, ぬ, ぶ, む, る, い)
+ * pero NO son verbos ni adjetivos conjugables.
+ */
+export const COMMON_KANA_NOUNS_AND_EXPRESSIONS = new Set([
+  // Posiciones y direcciones
+  'みぎ', 'ひだり', 'うえ', 'した', 'まえ', 'うしろ', 'なか', 'そと', 'あいだ', 'となり', 'ちかく', 'とおく', 'そば',
+  // Partes del cuerpo
+  'あたま', 'かお', 'め', 'みみ', 'はな', 'くち', 'は', 'て', 'あし', 'ゆび', 'からだ', 'こころ', 'くび', 'せなか', 'ひざ', 'ひじ',
+  // Animales y naturaleza
+  'いぬ', 'ねこ', 'とり', 'さかな', 'うま', 'うし', 'ぶた', 'むし', 'そら', 'あめ', 'ゆき', 'かぜ', 'つき', 'ほし',
+  'やま', 'かわ', 'うみ', 'き', 'はな', 'くさ', 'もり', 'はやし', 'いけ', 'みず',
+  // Tiempo y estaciones
+  'きょう', 'あした', 'あす', 'きのう', 'おととい', 'あさ', 'ひる', 'よる', 'ばん', 'いま',
+  'はる', 'なつ', 'あき', 'ふゆ', 'とし', 'つき', 'ひ', 'いつ',
+  // Objetos y comida
+  'くつ', 'いす', 'つくえ', 'ほん', 'かみ', 'くるま', 'でんしゃ', 'おちゃ', 'にく', 'ごはん', 'パン', 'さけ', 'しお', 'さとう',
+  'いえ', 'うち', 'へや', 'ドア', 'まど', 'ふく', 'ぼうし', 'かばん', 'さいふ', 'とけい', 'めがね',
+  // Personas y pronombres
+  'ひと', 'かた', 'おとこ', 'おんな', 'こども', 'おとな', 'ともだち', 'かぞく',
+  'わたし', 'ぼく', 'あなた', 'かれ', 'かのじょ', 'だれ', 'どなた', 'みんな', 'みなさん',
+  'これ', 'それ', 'あれ', 'どれ', 'ここ', 'そこ', 'あそこ', 'どこ',
+  'こちら', 'そちら', 'あちら', 'どちら', 'こっち', 'そっち', 'あっち', 'どっち',
+  'なに', 'なん', 'いくら', 'いくつ', 'どう', 'いかが', 'なぜ', 'どうして',
+  // Saludos y fórmulas corteses
+  'ありがとう', 'ありがとうございます', 'どうも', 'どうぞ', 'おはよう', 'おはようございます',
+  'こんにちは', 'こんばんは', 'さようなら', 'じゃあ', 'また', 'しつれいします',
+  'すみません', 'ごめんなさい', 'いただきます', 'ごちそうさま', 'ごちそうさ免费', 'ごちそうさまでした',
+  'よろしく', 'おねがいします', 'おめでとう', 'おめでとうございます', 'はい', 'いいえ',
+  // Contadores y números que terminan en tsu/chi
+  'ひとつ', 'ふたつ', 'みっつ', 'よっつ', 'いつつ', 'むっつ', 'ななつ', 'やっつ', 'ここのつ', 'とお',
+  // Adverbios que terminan en u/ku/su/tsu/ru
+  'すこし', 'たくさん', 'もっと', 'ずっと', 'いつも', 'まだ', 'もう', 'ゆっくり', 'はっきり',
+  'しっかり', 'びっくり', 'やっぱり', 'たぶん', 'ぜんぜん', 'あまり', 'ちょうど', 'たいへん',
+  'たいてい', 'ときどき', 'たまに', 'よく', 'すぐに', 'すでに', 'だんだん', 'どんどん',
+  'ますます', 'かなり', 'ずいぶん', 'とても', 'いっしょに', 'べつに', 'とくに', 'もちろん'
+]);
+
+/**
  * Reglas de desconjugación verbal y adjetival en japonés para revertir formas conjugadas a su forma de diccionario (Jisho-kei).
  * Cubre:
  * - Forma -te (食べて -> 食べる, 待って -> 待つ/待てる, 飲んで -> 飲む, 行って -> 行く, して -> する, きて -> くる)
@@ -604,204 +643,239 @@ export function getMonosyllableVariants(reading: string, displayText?: string): 
  */
 export function deconjugateJapanese(text: string): string[] {
   if (!text) return [];
-  const normalized = toNormalizedHiragana(text);
+  const clean = text.trim();
+  if (clean.length < 2) return [clean];
+
+  // Si la palabra termina en kanji (ej. 右, 肉, 靴, 夏, 学校, 今日, 本),
+  // por ortografía del japonés NO tiene okurigana y es imposible que sea una forma conjugada de verbo o adjetivo.
+  if (/[\u4e00-\u9faf]$/.test(clean)) {
+    return [clean];
+  }
+
+  const normalized = toNormalizedHiragana(clean);
   const candidates = new Set<string>();
-  candidates.add(text); // Forma original (con kanji si lo tuviera)
-  candidates.add(normalized); // Forma hiragana directa
+  candidates.add(clean);
+  if (normalized !== clean) {
+    candidates.add(normalized);
+  }
 
-  // 1. Desconjugación de la forma -te (-て / -で)
-  if (normalized.endsWith('て') || normalized.endsWith('で')) {
-    // Ichidan (Grupo 2): 食べ(て) -> 食べる
-    if (normalized.endsWith('て')) {
-      const stem = normalized.slice(0, -1);
-      candidates.add(stem + 'る');
+  const runRulesOnString = (target: string) => {
+    const addCand = (cand: string) => {
+      if (cand && cand.length >= 2 && !/[\u4e00-\u9faf]$/.test(cand) && !COMMON_KANA_NOUNS_AND_EXPRESSIONS.has(cand)) {
+        candidates.add(cand);
+      }
+    };
 
-      // Irregular: して -> する, きて -> くる
-      if (normalized === 'して' || normalized.endsWith('して')) {
-        candidates.add(normalized.replace(/して$/, 'する'));
-      }
-      if (normalized === 'きて' || normalized.endsWith('きて')) {
-        candidates.add(normalized.replace(/きて$/, 'くる'));
-      }
-
-      // Godan (Grupo 1)
-      if (normalized.endsWith('って')) {
-        const base = normalized.slice(0, -2);
-        candidates.add(base + 'う');
-        candidates.add(base + 'つ');
-        candidates.add(base + 'る');
-      }
-      if (normalized.endsWith('いて')) {
-        const base = normalized.slice(0, -2);
-        candidates.add(base + 'く');
-        if (normalized === 'いって' || normalized.endsWith('いって')) {
-          candidates.add(normalized.replace(/いって$/, 'いく'));
+    // 1. Desconjugación de la forma -te (-て / -で)
+    if (target.endsWith('て') || target.endsWith('で')) {
+      const stem = target.slice(0, -1);
+      if (stem.length >= 1) {
+        addCand(stem + 'る'); // Ichidan
+        if (target.endsWith('って')) {
+          const base = target.slice(0, -2);
+          if (base.length >= 1) {
+            addCand(base + 'う');
+            addCand(base + 'つ');
+            addCand(base + 'る');
+          }
+        }
+        if (target.endsWith('いて')) {
+          const base = target.slice(0, -2);
+          if (base.length >= 1) {
+            addCand(base + 'く');
+          }
+        }
+        if (target.endsWith('いで')) {
+          const base = target.slice(0, -2);
+          if (base.length >= 1) {
+            addCand(base + 'ぐ');
+          }
+        }
+        if (target.endsWith('して')) {
+          const base = target.slice(0, -2);
+          if (base.length >= 1) {
+            addCand(base + 'す');
+            addCand(base + 'する');
+          }
+        }
+        if (target.endsWith('んで')) {
+          const base = target.slice(0, -2);
+          if (base.length >= 1) {
+            addCand(base + 'む');
+            addCand(base + 'ぶ');
+            addCand(base + 'ぬ');
+          }
+        }
+        // Adjetivos -i (ej. 美味しくて -> 美味しい)
+        if (target.endsWith('くて')) {
+          const base = target.slice(0, -2);
+          if (base.length >= 1) {
+            addCand(base + 'い');
+          }
         }
       }
-      if (normalized.endsWith('して')) {
-        const base = normalized.slice(0, -2);
-        candidates.add(base + 'す');
+      if (target === 'して' || target.endsWith('して')) {
+        addCand(target.replace(/して$/, 'する'));
       }
-
-      // Adjetivos -i: 美味しくて (oishikute) -> 美味しい (oishii)
-      if (normalized.endsWith('くて')) {
-        candidates.add(normalized.slice(0, -2) + 'い');
+      if (target === 'きて' || target.endsWith('きて')) {
+        addCand(target.replace(/きて$/, 'くる'));
       }
     }
 
-    if (normalized.endsWith('で')) {
-      if (normalized.endsWith('んで')) {
-        const base = normalized.slice(0, -2);
-        candidates.add(base + 'む');
-        candidates.add(base + 'ぶ');
-        candidates.add(base + 'ぬ');
+    // 2. Desconjugación de la forma -ta (-た / -だ) (pasado)
+    if (target.endsWith('た') || target.endsWith('だ')) {
+      const stem = target.slice(0, -1);
+      if (stem.length >= 1) {
+        addCand(stem + 'る');
+        if (target.endsWith('った')) {
+          const base = target.slice(0, -2);
+          if (base.length >= 1) {
+            addCand(base + 'う');
+            addCand(base + 'つ');
+            addCand(base + 'る');
+          }
+        }
+        if (target.endsWith('いた')) {
+          const base = target.slice(0, -2);
+          if (base.length >= 1) {
+            addCand(base + 'く');
+          }
+        }
+        if (target.endsWith('した')) {
+          const base = target.slice(0, -2);
+          if (base.length >= 1) {
+            addCand(base + 'す');
+            addCand(base + 'する');
+          }
+        }
+        if (target.endsWith('かった')) {
+          const base = target.slice(0, -3);
+          if (base.length >= 1) {
+            addCand(base + 'い');
+          }
+        }
+        if (target.endsWith('んだ')) {
+          const base = target.slice(0, -2);
+          if (base.length >= 1) {
+            addCand(base + 'む');
+            addCand(base + 'ぶ');
+            addCand(base + 'ぬ');
+          }
+        }
+        if (target.endsWith('いだ')) {
+          const base = target.slice(0, -2);
+          if (base.length >= 1) {
+            addCand(base + 'ぐ');
+          }
+        }
       }
-      if (normalized.endsWith('いで')) {
-        const base = normalized.slice(0, -2);
-        candidates.add(base + 'ぐ');
+      if (target === 'した' || target.endsWith('した')) {
+        addCand(target.replace(/した$/, 'する'));
+      }
+      if (target === 'きた' || target.endsWith('きた')) {
+        addCand(target.replace(/きた$/, 'くる'));
       }
     }
+
+    // 3. Desconjugación de la forma cortés -masu (-ます)
+    if (target.endsWith('ます')) {
+      const stem = target.slice(0, -2);
+      if (stem.length >= 1) {
+        addCand(stem + 'る');
+        const lastChar = stem[stem.length - 1];
+        const base = stem.slice(0, -1);
+        if (base.length >= 1) {
+          if (lastChar === 'い') addCand(base + 'う');
+          if (lastChar === 'ち') addCand(base + 'つ');
+          if (lastChar === 'り') addCand(base + 'る');
+          if (lastChar === 'き') addCand(base + 'く');
+          if (lastChar === 'ぎ') addCand(base + 'ぐ');
+          if (lastChar === 'し') addCand(base + 'す');
+          if (lastChar === 'み') addCand(base + 'む');
+          if (lastChar === 'び') addCand(base + 'ぶ');
+          if (lastChar === 'に') addCand(base + 'ぬ');
+        }
+      }
+
+      if (target === 'します' || target.endsWith('します')) {
+        addCand(target.replace(/します$/, 'する'));
+      }
+      if (target === 'きます' || target.endsWith('きます')) {
+        addCand(target.replace(/きます$/, 'くる'));
+      }
+    }
+
+    // 4. Desconjugación de la forma negativa -nai (-ない)
+    if (target.endsWith('ない')) {
+      const stem = target.slice(0, -2);
+      if (stem.length >= 1) addCand(stem + 'る');
+      if (target.endsWith('わない')) {
+        const base = target.slice(0, -3);
+        if (base.length >= 1) addCand(base + 'う');
+      }
+      if (target.endsWith('かない')) {
+        const base = target.slice(0, -3);
+        if (base.length >= 1) addCand(base + 'く');
+      }
+      if (target.endsWith('さない')) {
+        const base = target.slice(0, -3);
+        if (base.length >= 1) addCand(base + 'す');
+      }
+      if (target.endsWith('たない')) {
+        const base = target.slice(0, -3);
+        if (base.length >= 1) addCand(base + 'つ');
+      }
+      if (target.endsWith('なない')) {
+        const base = target.slice(0, -3);
+        if (base.length >= 1) addCand(base + 'ぬ');
+      }
+      if (target.endsWith('ばない')) {
+        const base = target.slice(0, -3);
+        if (base.length >= 1) addCand(base + 'ぶ');
+      }
+      if (target.endsWith('まない')) {
+        const base = target.slice(0, -3);
+        if (base.length >= 1) addCand(base + 'む');
+      }
+      if (target.endsWith('らない')) {
+        const base = target.slice(0, -3);
+        if (base.length >= 1) addCand(base + 'る');
+      }
+    }
+
+    // 5. Desconjugación de la forma progresiva / estado (-te imasu / -te iru / -te ita / -te imashita)
+    if (/(ています|でいます|ている|でいる|ていた|でいた|ていました|でいました)$/.test(target)) {
+      const teForm = target.replace(/(ています|でいます|ている|でいる|ていた|でいた|ていました|でいました)$/, (m) => m.startsWith('で') ? 'で' : 'て');
+      for (const c of deconjugateJapanese(teForm)) {
+        addCand(c);
+      }
+    }
+
+    // 6. Desconjugación de formas corteses derivadas (-mashita, -masen, -masendeshita, -mashou, -tai, -takunai)
+    if (/(ました|ませんでした|ません|ましょう|たい|たくない)$/.test(target)) {
+      const masuForm = target.replace(/(ました|ませんでした|ません|ましょう|たい|たくない)$/, 'ます');
+      for (const c of deconjugateJapanese(masuForm)) {
+        addCand(c);
+      }
+    }
+
+    // 7. Desconjugación de formas negativas derivadas (-nakatta, -nakute, -naide)
+    if (/(なかった|なくて|ないで)$/.test(target)) {
+      const naiForm = target.replace(/(なかった|なくて|ないで)$/, 'ない');
+      for (const c of deconjugateJapanese(naiForm)) {
+        addCand(c);
+      }
+    }
+  };
+
+  runRulesOnString(normalized);
+  if (clean !== normalized && !/[\u4e00-\u9faf]$/.test(clean)) {
+    runRulesOnString(clean);
   }
 
-  // 2. Desconjugación de la forma -ta (-た / -だ)
-  if (normalized.endsWith('た') || normalized.endsWith('だ')) {
-    if (normalized.endsWith('た')) {
-      candidates.add(normalized.slice(0, -1) + 'る');
-      if (normalized.endsWith('った')) {
-        const base = normalized.slice(0, -2);
-        candidates.add(base + 'う');
-        candidates.add(base + 'つ');
-        candidates.add(base + 'る');
-      }
-      if (normalized.endsWith('いた')) {
-        candidates.add(normalized.slice(0, -2) + 'く');
-      }
-      if (normalized.endsWith('した')) {
-        candidates.add(normalized.slice(0, -2) + 'す');
-        candidates.add(normalized.replace(/した$/, 'する'));
-      }
-      if (normalized.endsWith('かった')) {
-        candidates.add(normalized.slice(0, -3) + 'い');
-      }
-    }
-    if (normalized.endsWith('だ')) {
-      if (normalized.endsWith('んだ')) {
-        const base = normalized.slice(0, -2);
-        candidates.add(base + 'む');
-        candidates.add(base + 'ぶ');
-        candidates.add(base + 'ぬ');
-      }
-      if (normalized.endsWith('いだ')) {
-        candidates.add(normalized.slice(0, -2) + 'ぐ');
-      }
-    }
-  }
-
-  // 3. Desconjugación de la forma cortés -masu (-ます)
-  if (normalized.endsWith('ます')) {
-    const stem = normalized.slice(0, -2);
-    candidates.add(stem + 'る');
-    
-    if (stem.length > 0) {
-      const lastChar = stem[stem.length - 1];
-      const base = stem.slice(0, -1);
-      if (lastChar === 'い') candidates.add(base + 'う');
-      if (lastChar === 'ち') candidates.add(base + 'つ');
-      if (lastChar === 'り') candidates.add(base + 'る');
-      if (lastChar === 'き') candidates.add(base + 'く');
-      if (lastChar === 'ぎ') candidates.add(base + 'ぐ');
-      if (lastChar === 'し') candidates.add(base + 'す');
-      if (lastChar === 'み') candidates.add(base + 'む');
-      if (lastChar === 'び') candidates.add(base + 'ぶ');
-      if (lastChar === 'に') candidates.add(base + 'ぬ');
-    }
-
-    if (normalized === 'します' || normalized.endsWith('します')) {
-      candidates.add(normalized.replace(/します$/, 'する'));
-    }
-    if (normalized === 'きます' || normalized.endsWith('きます')) {
-      candidates.add(normalized.replace(/きます$/, 'くる'));
-    }
-
-    if (text.endsWith('ます')) {
-      const kStem = text.slice(0, -2);
-      candidates.add(kStem + 'る');
-      if (kStem.length > 0) {
-        const kLastChar = kStem[kStem.length - 1];
-        const kBase = kStem.slice(0, -1);
-        if (kLastChar === 'い') candidates.add(kBase + 'う');
-        if (kLastChar === 'ち') candidates.add(kBase + 'つ');
-        if (kLastChar === 'り') candidates.add(kBase + 'る');
-        if (kLastChar === 'き') candidates.add(kBase + 'く');
-        if (kLastChar === 'ぎ') candidates.add(kBase + 'ぐ');
-        if (kLastChar === 'し') candidates.add(kBase + 'す');
-        if (kLastChar === 'み') candidates.add(kBase + 'む');
-        if (kLastChar === 'び') candidates.add(kBase + 'ぶ');
-        if (kLastChar === 'に') candidates.add(kBase + 'ぬ');
-      }
-    }
-  }
-
-  // 4. Desconjugación de la forma negativa -nai (-ない)
-  if (normalized.endsWith('ない')) {
-    const stem = normalized.slice(0, -2);
-    candidates.add(stem + 'る');
-    if (normalized.endsWith('わない')) candidates.add(normalized.slice(0, -3) + 'う');
-    if (normalized.endsWith('かない')) candidates.add(normalized.slice(0, -3) + 'く');
-    if (normalized.endsWith('さない')) candidates.add(normalized.slice(0, -3) + 'す');
-    if (normalized.endsWith('たない')) candidates.add(normalized.slice(0, -3) + 'つ');
-    if (normalized.endsWith('なない')) candidates.add(normalized.slice(0, -3) + 'ぬ');
-    if (normalized.endsWith('ばない')) candidates.add(normalized.slice(0, -3) + 'ぶ');
-    if (normalized.endsWith('まない')) candidates.add(normalized.slice(0, -3) + 'む');
-    if (normalized.endsWith('らない')) candidates.add(normalized.slice(0, -3) + 'る');
-  }
-
-  // 5. Desconjugación de la forma progresiva / estado (-te imasu / -te iru / -te ita / -te imashita)
-  // Ejemplos: 住んでいます (sundeimasu) -> 住む (sumu), 食べています -> 食べる, 知っています -> 知る
-  if (/(ています|でいます|ている|でいる|ていた|でいた|ていました|でいました)$/.test(normalized)) {
-    const teForm = normalized.replace(/(ています|でいます|ている|でいる|ていた|でいた|ていました|でいました)$/, (m) => m.startsWith('で') ? 'で' : 'て');
-    for (const c of deconjugateJapanese(teForm)) {
-      candidates.add(c);
-    }
-    if (/(ています|でいます|ている|でいる|ていた|でいた|ていました|でいました)$/.test(text)) {
-      const kTeForm = text.replace(/(ています|でいます|ている|でいる|ていた|でいた|ていました|でいました)$/, (m) => m.startsWith('で') ? 'で' : 'て');
-      for (const c of deconjugateJapanese(kTeForm)) {
-        candidates.add(c);
-      }
-    }
-  }
-
-  // 6. Desconjugación de formas corteses derivadas (-mashita, -masen, -masendeshita, -mashou, -tai, -takunai)
-  // Ejemplos: 食べました -> 食べる, 飲みません -> 飲む, 行きましょう -> 行く
-  if (/(ました|ませんでした|ません|ましょう|たい|たくない)$/.test(normalized)) {
-    const masuForm = normalized.replace(/(ました|ませんでした|ません|ましょう|たい|たくない)$/, 'ます');
-    for (const c of deconjugateJapanese(masuForm)) {
-      candidates.add(c);
-    }
-    if (/(ました|ませんでした|ません|ましょう|たい|たくない)$/.test(text)) {
-      const kMasuForm = text.replace(/(ました|ませんでした|ません|ましょう|たい|たくない)$/, 'ます');
-      for (const c of deconjugateJapanese(kMasuForm)) {
-        candidates.add(c);
-      }
-    }
-  }
-
-  // 7. Desconjugación de formas negativas derivadas (-nakatta, -nakute, -naide)
-  // Ejemplos: 食べなかった -> 食べる, 食べなくて / 食べないで -> 食べる
-  if (/(なかった|なくて|ないで)$/.test(normalized)) {
-    const naiForm = normalized.replace(/(なかった|なくて|ないで)$/, 'ない');
-    for (const c of deconjugateJapanese(naiForm)) {
-      candidates.add(c);
-    }
-    if (/(なかった|なくて|ないで)$/.test(text)) {
-      const kNaiForm = text.replace(/(なかった|なくて|ないで)$/, 'ない');
-      for (const c of deconjugateJapanese(kNaiForm)) {
-        candidates.add(c);
-      }
-    }
-  }
-
-  return Array.from(candidates);
+  return Array.from(candidates).filter(
+    (c) => c.length >= 2 && !/[\u4e00-\u9faf]$/.test(c) && !COMMON_KANA_NOUNS_AND_EXPRESSIONS.has(c)
+  );
 }
 
 /**
@@ -809,67 +883,135 @@ export function deconjugateJapanese(text: string): string[] {
  */
 export function classifyJapaneseWord(word: string, reading?: string): string {
   if (!word) return 'Sustantivo';
-  const clean = (reading || word).trim();
-  const normalized = toNormalizedHiragana(clean);
+  const cleanWord = word.trim();
+  if (cleanWord.length === 0) return 'Sustantivo';
 
-  if (normalized.length === 0) return 'Sustantivo';
-
-  // Frase u oración larga
-  if (word.includes(' ') || normalized.length >= 7) {
-    return 'Frase / Expresión';
-  }
-
-  // Verbos Irregulares (hacer / venir)
-  if (normalized === 'する' || normalized.endsWith('する')) {
-    return 'Verbo Irregular';
-  }
-  if (normalized === 'くる' || normalized.endsWith('くる') || word === '来る') {
-    return 'Verbo Irregular';
-  }
-
-  // Adjetivos -i (terminan en い precedido de vocal y no son excepciones sustantivas conocidas)
-  if (normalized.length >= 2 && normalized.endsWith('い')) {
-    const prevChar = normalized[normalized.length - 2];
-    // Excepciones conocidas sustantivos: 綺麗 (kirei -> na), 嫌い (kirai -> na)
-    if (word === '綺麗' || normalized === 'きれい') return 'Adjetivo -na';
-    if (word === '嫌い' || normalized === 'きらい') return 'Adjetivo -na';
-    if (['あ', 'い', 'う', 'え', 'お', 'か', 'き', 'く', 'け', 'こ', 'さ', 'し', 'す', 'せ', 'そ', 'た', 'ち', 'つ', 'て', 'と', 'な', 'に', 'ぬ', 'ね', 'の', 'は', 'ひ', 'ふ', 'へ', 'ほ', 'ま', 'み', 'む', 'め', 'も', 'ら', 'り', 'る', 'れ', 'ろ', 'わ'].includes(prevChar)) {
-      return 'Adjetivo -i';
-    }
-  }
-
-  // Verbos Ichidan (terminados en る precedido de sonido i o e)
-  if (normalized.endsWith('る') && normalized.length >= 2) {
-    const prevChar = normalized[normalized.length - 2];
-    const ichidanPrevs = [
-      'い', 'き', 'し', 'ち', 'に', 'ひ', 'み', 'り', 'ぎ', 'じ', 'ぢ', 'び', 'ぴ',
-      'え', 'け', 'せ', 'て', 'ね', 'へ', 'め', 'れ', 'げ', 'ぜ', 'で', 'べ', 'ぺ'
-    ];
-    // Excepciones conocidas Godan que terminan en iru/eru: 帰る (kaeru), 知る (shiru), 切る (kiru), 入る (hairu), 走る (hashiru)
-    const godanExceptions = ['かえる', 'しる', 'きる', 'はいる', 'はしる', 'へる', 'しゃべる', 'すべる'];
-    if (ichidanPrevs.includes(prevChar) && !godanExceptions.includes(normalized)) {
-      return 'Verbo Ichidan (-ru)';
-    }
-    return 'Verbo Godan (-ru)';
-  }
-
-  // Adjetivos -na comunes o terminados en な
   const knownNaAdj = [
     'だいじょうぶ', 'ゆうめい', 'べんり', 'げんき', 'しずか', 'ひま', 'しんせつ',
     'かんたん', 'すき', 'きらい', 'きれい', 'あんぜん', 'じょうず', 'へた',
     'たいせつ', 'とくべつ', 'ひつよう', 'じゆう', 'ざんねん', 'すてき',
     'たいへん', 'さまざま', 'ふくざつ', 'まじめ', 'にぎやか', 'ふべん'
   ];
+
+  let clean = (reading || word).trim();
+  if (clean.includes('Kun:')) {
+    const m = clean.match(/Kun:\s*([^•|\n]+)/i);
+    if (m) clean = m[1].trim();
+  } else if (clean.includes('/')) {
+    const parts = clean.split('/');
+    if (parts[1]) clean = parts[1].trim();
+  }
+  clean = clean.replace(/^(on|kun)[:：\s]*/i, '').replace(/[・\-\~]/g, '').trim();
+
+  // 1. Caso Tarjeta de un solo Kanji (ej. 立, 聞, 行, 見, 食, 飲, 高, 新)
+  if (cleanWord.length === 1 && /[\u4e00-\u9faf]/.test(cleanWord)) {
+    const normalizedReading = toNormalizedHiragana(clean);
+    if (
+      normalizedReading &&
+      normalizedReading.length >= 2 &&
+      !COMMON_KANA_NOUNS_AND_EXPRESSIONS.has(normalizedReading)
+    ) {
+      if (normalizedReading.endsWith('い')) return 'Adjetivo -i';
+      if (normalizedReading === 'くる' || normalizedReading === 'する') return 'Verbo Irregular';
+      if (normalizedReading.endsWith('る')) {
+        const prevChar = normalizedReading[normalizedReading.length - 2];
+        const ichidanPrevs = [
+          'い', 'き', 'し', 'ち', 'に', 'ひ', 'み', 'り', 'ぎ', 'じ', 'ぢ', 'び', 'ぴ',
+          'え', 'け', 'せ', 'て', 'ね', 'へ', 'め', 'れ', 'げ', 'ぜ', 'で', 'べ', 'ぺ'
+        ];
+        const godanExceptions = ['かえる', 'しる', 'きる', 'はいる', 'はしる', 'へる', 'しゃべる', 'すべる'];
+        if (ichidanPrevs.includes(prevChar) && !godanExceptions.includes(normalizedReading)) {
+          return 'Verbo Ichidan (-ru)';
+        }
+        return 'Verbo Godan (-ru)';
+      }
+      if (/[うくぐすつぬぶむ]/.test(normalizedReading[normalizedReading.length - 1])) {
+        return 'Verbo Godan (-u)';
+      }
+    }
+    // Sustantivos individuales (ej. 右, 犬, 肉, 本)
+    return 'Sustantivo';
+  }
+
+  // 2. Si tiene 2 o más kanjis y termina en kanji (sustantivo compuesto como 学校, 今日, 先生, 世界):
+  const endsWithKanji = /[\u4e00-\u9faf]$/.test(cleanWord);
+  if (cleanWord.length > 1 && endsWithKanji) {
+    if (knownNaAdj.includes(cleanWord) || cleanWord.endsWith('的')) {
+      return 'Adjetivo -na';
+    }
+    return 'Sustantivo';
+  }
+
+  if (cleanWord.length < 2) {
+    return 'Sustantivo';
+  }
+
+  const normalized = toNormalizedHiragana(clean);
+  if (normalized.length < 2) return 'Sustantivo';
+
+  if (COMMON_KANA_NOUNS_AND_EXPRESSIONS.has(normalized)) {
+    return 'Sustantivo';
+  }
+
+  // Frase u oración larga
+  if (word.includes(' ') || normalized.length >= 16 || /[。！？]/.test(clean)) {
+    return 'Frase / Expresión';
+  }
+
+  // Verbos Irregulares (hacer / venir)
+  if (normalized === 'する' || cleanWord.endsWith('する') || normalized.endsWith('する')) {
+    return 'Verbo Irregular';
+  }
+  if (normalized === 'くる' || cleanWord.endsWith('くる') || cleanWord.endsWith('来る')) {
+    return 'Verbo Irregular';
+  }
+
+  // Adjetivos -i (terminan en い precedido de vocal y no son excepciones sustantivas conocidas)
+  if (normalized.length >= 2 && normalized.endsWith('い')) {
+    // Si contiene kanji, la propia palabra escrita DEBE terminar en 'い'
+    if (!/[\u4e00-\u9faf]/.test(cleanWord) || cleanWord.endsWith('い')) {
+      const prevChar = normalized[normalized.length - 2];
+      // Excepciones conocidas sustantivos: 綺麗 (kirei -> na), 嫌い (kirai -> na)
+      if (cleanWord === '綺麗' || normalized === 'きれい') return 'Adjetivo -na';
+      if (cleanWord === '嫌い' || normalized === 'きらい') return 'Adjetivo -na';
+      if (['あ', 'い', 'う', 'え', 'お', 'か', 'き', 'く', 'け', 'こ', 'さ', 'し', 'す', 'せ', 'そ', 'た', 'ち', 'つ', 'て', 'と', 'な', 'に', 'ぬ', 'ね', 'の', 'は', 'ひ', 'ふ', 'へ', 'ほ', 'ま', 'み', 'む', 'め', 'も', 'ら', 'り', 'る', 'れ', 'ろ', 'わ'].includes(prevChar)) {
+        return 'Adjetivo -i';
+      }
+    }
+  }
+
+  // Verbos Ichidan (terminados en る precedido de sonido i o e)
+  if (normalized.endsWith('る') && normalized.length >= 2) {
+    // Si contiene kanji, la palabra escrita DEBE terminar en 'る'
+    if (!/[\u4e00-\u9faf]/.test(cleanWord) || cleanWord.endsWith('る')) {
+      const prevChar = normalized[normalized.length - 2];
+      const ichidanPrevs = [
+        'い', 'き', 'し', 'ち', 'に', 'ひ', 'み', 'り', 'ぎ', 'じ', 'ぢ', 'び', 'ぴ',
+        'え', 'け', 'せ', 'て', 'ね', 'へ', 'め', 'れ', 'げ', 'ぜ', 'で', 'べ', 'ぺ'
+      ];
+      // Excepciones conocidas Godan que terminan en iru/eru: 帰る (kaeru), 知る (shiru), 切る (kiru), 入る (hairu), 走る (hashiru)
+      const godanExceptions = ['かえる', 'しる', 'きる', 'はいる', 'はしる', 'へる', 'しゃべる', 'すべる'];
+      if (ichidanPrevs.includes(prevChar) && !godanExceptions.includes(normalized)) {
+        return 'Verbo Ichidan (-ru)';
+      }
+      return 'Verbo Godan (-ru)';
+    }
+  }
+
+  // Adjetivos -na comunes o terminados en な
   if (knownNaAdj.includes(normalized) || knownNaAdj.some(na => clean.startsWith(na))) {
     return 'Adjetivo -na';
   }
 
   // Verbos Godan (terminados en う, く, ぐ, す, つ, ぬ, ぶ, む)
   if (/[うくぐすつぬぶむ]/.test(normalized[normalized.length - 1])) {
-    return 'Verbo Godan (-u)';
+    // Si contiene kanji, la propia palabra DEBE terminar en uno de [うくぐすつぬぶむ]
+    if (!/[\u4e00-\u9faf]/.test(cleanWord) || /[うくぐすつぬぶむ]$/.test(cleanWord)) {
+      return 'Verbo Godan (-u)';
+    }
   }
 
-  // Adjetivos -na
+  // Adjetivos -na terminados en な
   if (normalized.endsWith('な') && normalized.length > 2) {
     return 'Adjetivo -na';
   }
@@ -888,12 +1030,19 @@ export function isJapaneseDictionaryForm(
 ): boolean {
   if (!word) return false;
   const cleanWord = word.trim();
+  // 1. REGLA FUNDAMENTAL: si termina en kanji o longitud < 2, NUNCA es forma de diccionario conjugable
+  if (cleanWord.length < 2 || /[\u4e00-\u9faf]$/.test(cleanWord)) {
+    return false;
+  }
+
   const hira = toNormalizedHiragana(reading || cleanWord);
+  if (!hira || hira.length < 2) return false;
 
-  if (!hira) return false;
-
-  // Frases o expresiones no son formas de diccionario conjugables
-  if (category.includes('Frase') || cleanWord.includes(' ') || hira.length >= 7) {
+  // Frases o expresiones o sustantivos comunes en kana no son conjugables
+  if (category === 'Sustantivo' || category.includes('Frase') || cleanWord.includes(' ') || hira.length >= 16 || /[。！？]/.test(cleanWord)) {
+    return false;
+  }
+  if (COMMON_KANA_NOUNS_AND_EXPRESSIONS.has(hira)) {
     return false;
   }
 
@@ -948,19 +1097,19 @@ export function isJapaneseDictionaryForm(
     return hira.endsWith('する') || hira.endsWith('くる') || cleanWord.endsWith('来る');
   }
 
-  // 3. Si es Verbo Ichidan: debe terminar en る
+  // 3. Si es Verbo Ichidan: debe terminar en る (y la palabra escrita también si tiene kanji)
   if (category.includes('Ichidan')) {
-    return hira.endsWith('る');
+    return hira.endsWith('る') && (!/[\u4e00-\u9faf]/.test(cleanWord) || cleanWord.endsWith('る'));
   }
 
   // 4. Si es Verbo Godan: debe terminar en u (う, く, ぐ, す, つ, ぬ, ぶ, む, る)
   if (category.includes('Godan')) {
-    return /[うくぐすつぬぶむる]$/.test(hira);
+    return /[うくぐすつぬぶむる]$/.test(hira) && (!/[\u4e00-\u9faf]/.test(cleanWord) || /[うくぐすつぬぶむる]$/.test(cleanWord));
   }
 
   // 5. Si es Adjetivo -i: debe terminar en い
   if (category.includes('Adjetivo -i')) {
-    return hira.endsWith('い');
+    return hira.endsWith('い') && (!/[\u4e00-\u9faf]/.test(cleanWord) || cleanWord.endsWith('い'));
   }
 
   // 6. Si es Adjetivo -na:
@@ -970,11 +1119,11 @@ export function isJapaneseDictionaryForm(
 
   // Si no tiene categoría explícita pero termina en terminación verbal de diccionario
   if (category.startsWith('Verbo')) {
-    return /[うくぐすつぬぶむる]$/.test(hira);
+    return /[うくぐすつぬぶむる]$/.test(hira) && (!/[\u4e00-\u9faf]/.test(cleanWord) || /[うくぐすつぬぶむる]$/.test(cleanWord));
   }
 
   if (category.startsWith('Adjetivo')) {
-    return hira.endsWith('い') || !hira.endsWith('じゃない');
+    return (hira.endsWith('い') && (!/[\u4e00-\u9faf]/.test(cleanWord) || cleanWord.endsWith('い'))) || !hira.endsWith('じゃない');
   }
 
   return false;

@@ -12,6 +12,7 @@ import {
   healCorruptedSrsIntervals,
 } from '../../lib/srs-engine';
 import { CompoundWord } from '../../lib/word-service';
+import { voskVoiceService } from '../../lib/vosk-service';
 
 export interface CardEvaluation {
   isReadingCorrect: boolean;
@@ -21,7 +22,7 @@ export interface CardEvaluation {
   matchedReading?: string;
 }
 
-export type SpeechStatus = 'idle' | 'listening' | 'evaluating' | 'correct' | 'incorrect';
+export type SpeechStatus = 'idle' | 'starting' | 'listening' | 'evaluating' | 'correct' | 'incorrect';
 export type StudyMethod = 'text' | 'voice';
 
 export interface ReviewState {
@@ -36,6 +37,7 @@ export interface ReviewState {
     deckId: string | 'all';
     deckName: string;
     hasDue: boolean;
+    languageCode?: string;
   } | null;
 
   // Sesión activa
@@ -131,6 +133,8 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
   fetchDecksData: async () => {
     set({ loading: true });
     try {
+      // Disparar precarga del modelo acústico en segundo plano desde el primer momento
+      voskVoiceService.loadModel('model-ja-jp').catch(() => {});
       await healCorruptedSrsIntervals().catch(() => {});
 
       const d = await getDecksWithStats();
@@ -169,7 +173,7 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       return;
     }
     set({
-      pendingSelection: { deckId, deckName, hasDue },
+      pendingSelection: { deckId, deckName, hasDue, languageCode: targetDeck?.languageCode },
       showMethodModal: true,
     });
   },

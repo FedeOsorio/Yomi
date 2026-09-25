@@ -24,12 +24,11 @@ import { Rating } from 'ts-fsrs';
 import { speakText, stopSpeech } from '../../../lib/audio-service';
 import { ALL_LANGUAGES, DeckWithStats, SUPPORTED_LANGUAGES } from '../../../lib/deck-service';
 import { cleanAndFormatMeanings } from '../../../lib/japanese-search';
-import { formatJapaneseReading, getEffectiveCardLanguage, toNormalizedHiragana, getMonosyllableVariants, normalizeYouon, hiraganaToRomaji, JA_NUMBERS } from '../../../lib/japanese-utils';
+import { formatJapaneseReading, getEffectiveCardLanguage, getMonosyllableVariants, hiraganaToRomaji, JA_NUMBERS, normalizeYouon, toNormalizedHiragana } from '../../../lib/japanese-utils';
 import { JLPT_KANJI_READINGS } from '../../../lib/jlpt-data';
 import { KANJI_READINGS_MAP } from '../../../lib/kanji-readings-db';
 import { calculateChineseAccuracyScore, PinyinBreakdownItem } from '../../../lib/pinyin-utils';
 import { speechService } from '../../../lib/speech-recognition-service';
-import { voskVoiceService } from '../../../lib/vosk-service';
 import {
   calculateReviewRating,
   checkMeaningMatch,
@@ -41,138 +40,21 @@ import {
   removeCardFromReview,
   rescheduleCardNextDay
 } from '../../../lib/srs-engine';
+import { voskVoiceService } from '../../../lib/vosk-service';
 import { getCompoundWordsForChar } from '../../../lib/word-service';
 import { useTheme } from '../../../providers/ThemeProvider';
+import { ConjugationPracticeModal } from '../../components/ConjugationPracticeModal';
 import { ReviewMethodModal } from '../../components/review/ReviewMethodModal';
 import { ReviewTextInputSection } from '../../components/review/ReviewTextInputSection';
-import { useTranslation } from '../../i18n';
 import { SessionSummaryView } from '../../components/review/SessionSummaryView';
 import { VoiceMicControl } from '../../components/review/VoiceMicControl';
 import { VoiceTranscriptArea } from '../../components/review/VoiceTranscriptArea';
 import { getFloatingTabBarStyle, Shadows, Spacing, Typography } from '../../constants/theme';
+import { useTranslation } from '../../i18n';
 import { useReviewStore } from '../../stores/reviewStore';
 
 const VOICE_TIMEOUT_SECONDS = 15;
 
-interface DeckGridCardProps {
-  item: DeckWithStats;
-  colors: any;
-  onPress: (id: string, name: string, hasDue: boolean) => void;
-}
-
-const DeckGridCard = memo(function DeckGridCard({
-  item,
-  colors,
-  onPress,
-}: DeckGridCardProps) {
-  const isCustom = item.type === 'custom';
-  const langMeta = ALL_LANGUAGES.find((l) => l.code === item.languageCode) || SUPPORTED_LANGUAGES[0];
-  const dueCount = item.dueCount || 0;
-  const cardsInReview = item.activeCardsCount !== undefined ? item.activeCardsCount : (item.wordCount || 0);
-  const hasDue = dueCount > 0;
-
-  return (
-    <TouchableOpacity
-      style={[
-        styles.gridCard,
-        {
-          backgroundColor: colors.surface,
-          borderColor: hasDue ? (isCustom ? '#10B981' : colors.primary) : colors.border,
-        },
-      ]}
-      activeOpacity={0.75}
-      onPress={() => onPress(item.id, item.name, hasDue)}
-    >
-      <View style={styles.gridCardTopRow}>
-        <View
-          style={[
-            styles.gridFlagCircle,
-            {
-              backgroundColor: isCustom
-                ? 'rgba(16, 185, 129, 0.15)'
-                : 'rgba(59, 130, 246, 0.15)',
-            },
-          ]}
-        >
-          {isCustom ? (
-            <Ionicons
-              name="layers"
-              size={20}
-              color="#10B981"
-            />
-          ) : (
-            <Text style={styles.gridFlagEmoji}>{langMeta.flag}</Text>
-          )}
-        </View>
-
-        {hasDue ? (
-          <View
-            style={[
-              styles.gridDueBadge,
-              {
-                backgroundColor: isCustom
-                  ? 'rgba(16, 185, 129, 0.15)'
-                  : 'rgba(59, 130, 246, 0.15)',
-                borderColor: isCustom
-                  ? 'rgba(16, 185, 129, 0.35)'
-                  : 'rgba(59, 130, 246, 0.35)',
-              },
-            ]}
-          >
-            <Text
-              style={[
-                styles.gridDueBadgeText,
-                { color: isCustom ? '#10B981' : colors.primary },
-              ]}
-            >
-              {dueCount} hoy
-            </Text>
-          </View>
-        ) : (
-          <View
-            style={[
-              styles.gridDueBadge,
-              {
-                backgroundColor: 'rgba(16, 185, 129, 0.12)',
-                borderColor: 'rgba(16, 185, 129, 0.25)',
-              },
-            ]}
-          >
-            <Text style={[styles.gridDueBadgeText, { color: '#10B981' }]}>
-              Al día
-            </Text>
-          </View>
-        )}
-      </View>
-
-      <View style={styles.gridCardBody}>
-        <Text style={[styles.gridCardTitle, { color: colors.text }]} numberOfLines={2}>
-          {item.name}
-        </Text>
-        <Text style={[styles.gridCardSub, { color: colors.textMuted }]} numberOfLines={1}>
-          {isCustom ? 'Personalizado' : (langMeta?.label || 'General')} • {cardsInReview}{' '}
-          {cardsInReview === 1 ? (isCustom ? 'tarjeta' : 'palabra') : (isCustom ? 'tarjetas' : 'palabras')}
-        </Text>
-      </View>
-
-      <View style={[styles.gridCardFooter, { borderTopColor: colors.border }]}>
-        <Text
-          style={[
-            styles.gridCardActionText,
-            { color: hasDue ? (isCustom ? '#10B981' : colors.primary) : colors.textMuted },
-          ]}
-        >
-          {hasDue ? 'Repasar ahora' : 'Practicar'}
-        </Text>
-        <Ionicons
-          name="chevron-forward"
-          size={14}
-          color={hasDue ? (isCustom ? '#10B981' : colors.primary) : colors.textMuted}
-        />
-      </View>
-    </TouchableOpacity>
-  );
-});
 
 interface SyllableBreakdownViewProps {
   breakdown: PinyinBreakdownItem[];
@@ -285,6 +167,22 @@ export default function ReviewScreen() {
   const evaluation = useReviewStore((s) => s.evaluation);
   const currentCompoundWords = useReviewStore((s) => s.currentCompoundWords);
 
+  // Estado para abrir práctica de conjugaciones desde la selección de mazo
+  const [conjugationDeck, setConjugationDeck] = useState<{ id: string; name: string } | null>(null);
+
+  // Estado de preparación del motor de voz offline
+  const [isVoiceEngineReady, setIsVoiceEngineReady] = useState<boolean>(() => {
+    return voskVoiceService.isReady();
+  });
+  const [isPreparingVoice, setIsPreparingVoice] = useState<boolean>(false);
+
+  const handleOpenConjugation = (deckId: string, deckName: string) => {
+    setShowMethodModal(false);
+    setTimeout(() => {
+      setConjugationDeck({ id: deckId, name: deckName });
+    }, 150);
+  };
+
   const isListening = useReviewStore((s) => s.isListening);
   const speechStatus = useReviewStore((s) => s.speechStatus);
 
@@ -390,16 +288,26 @@ export default function ReviewScreen() {
 
   // Precargar modelo acústico de Vosk en segundo plano para el repaso offline
   useEffect(() => {
-    voskVoiceService.loadModel('model-ja-jp').catch((e) => {
+    let mounted = true;
+    voskVoiceService.loadModel('model-ja-jp').then((ready) => {
+      if (mounted && ready) {
+        setIsVoiceEngineReady(true);
+      }
+    }).catch((e) => {
       console.warn('[ReviewScreen] Could not preload Vosk model:', e);
     });
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   // Pausar y liberar el micrófono si la app pasa a segundo plano (llamada, minimizar, bloquear pantalla)
   useEffect(() => {
     speechService.checkPermissions().catch(() => { });
     const handleAppStateChange = (nextState: AppStateStatus) => {
-      if (nextState === 'background' || nextState === 'inactive') {
+      // En Android, los diálogos del sistema provocan temporalmente 'inactive'.
+      // Solo abortar y liberar el micrófono si la app realmente pasa a segundo plano ('background').
+      if (nextState === 'background') {
         stopSpeech();
         speechService.abort().catch(() => { });
         setIsListening(false);
@@ -498,13 +406,33 @@ export default function ReviewScreen() {
 
   const handleSelectMethod = async (method: 'text' | 'voice') => {
     if (!pendingSelection) return;
-    const { deckId, deckName, hasDue } = pendingSelection;
-    setShowMethodModal(false);
+    const { deckId, deckName, hasDue, languageCode } = pendingSelection;
 
-    // Margen para que el modal nativo termine de desmontarse antes de arrancar la sesión
-    setTimeout(() => {
-      handleStartSession(deckId, deckName, method, !hasDue);
-    }, 200);
+    // Si el usuario elige voz, asegurar permisos y modelo 100% en RAM antes de entrar
+    if (method === 'voice') {
+      setIsPreparingVoice(true);
+      try {
+        const hasPerm = await speechService.checkPermissions();
+        if (!hasPerm) {
+          const granted = await speechService.requestPermissions();
+          if (!granted) {
+            setIsPreparingVoice(false);
+            return;
+          }
+        }
+        if (!languageCode || languageCode.startsWith('ja')) {
+          const ready = await voskVoiceService.loadModel('model-ja-jp');
+          setIsVoiceEngineReady(ready);
+        }
+      } catch (err) {
+        console.warn('Error preparando motor de voz:', err);
+      } finally {
+        setIsPreparingVoice(false);
+      }
+    }
+
+    setShowMethodModal(false);
+    handleStartSession(deckId, deckName, method, !hasDue);
   };
 
   // Inicia la sesión para un mazo específico o para todos los mazos ('all')
@@ -681,18 +609,15 @@ export default function ReviewScreen() {
     restartAttemptsRef.current = 0;
     accumulatedSpeechRef.current = '';
     setSpeechTranscript('');
-    setSpeechStatus('listening');
-    setIsListening(true);
+    setIsListening(false);
+    setSpeechStatus('starting');
 
     let isTimerStarted = false;
-    let startTime = 0;
-
     const isStale = () => speechService.getGeneration() !== cardGeneration || isCardEvaluatedRef.current;
 
     const startTimerCountdown = () => {
       if (isTimerStarted || isStale()) return;
       isTimerStarted = true;
-      startTime = Date.now();
 
       voiceProgressAnim.stopAnimation();
       voiceProgressAnim.setValue(0);
@@ -711,117 +636,90 @@ export default function ReviewScreen() {
       });
     };
 
-    // Fallback de seguridad: si el evento onStart del micrófono tarda más de 1200ms, arrancar el temporizador
-    const fallbackTimer = setTimeout(() => {
-      if (!isStale()) startTimerCountdown();
-    }, 1200);
+    const contextualStrings = getCardContextualStrings(card, lang);
+    const isJapanese = lang.toLowerCase().startsWith('ja');
 
-    let restartTimer: NodeJS.Timeout | null = null;
-    // Ningún silencio apaga el micrófono mientras corren los 15 segundos de la tarjeta.
-    // Si el motor nativo recicla su sesión por silencio, se reinicia inmediatamente en segundo plano
-    // sin alterar el estado visual (isListening se mantiene true y status 'listening').
-    const scheduleRestart = () => {
-      if (isStale()) return;
-      if (restartTimer) clearTimeout(restartTimer);
-      restartTimer = setTimeout(async () => {
-        if (!isStale()) {
-          await initRecognizer();
-        }
-      }, 350);
-    };
-
-    const initRecognizer = async () => {
-      if (isStale()) return;
-      if (restartTimer) {
-        clearTimeout(restartTimer);
-        restartTimer = null;
-      }
-
-      const contextualStrings = getCardContextualStrings(card, lang);
-      const isJapanese = lang.toLowerCase().startsWith('ja');
-
-      await speechService.start(
-        lang,
-        {
-          onStart: () => {
-            if (!isStale()) {
-              clearTimeout(fallbackTimer);
-              startTimerCountdown();
-              restartAttemptsRef.current = 0; // Reset consecutive errors on successful start
-              setIsListening(true);
-              setSpeechStatus('listening');
-            }
-          },
-          onResult: (transcript, isFinal, alternatives) => {
-            if (isStale()) return;
-            console.log('[ReviewVoice] onResult received:', transcript, 'isFinal:', isFinal, 'alternatives:', alternatives);
-            const currentTrimmed = transcript.trim();
-            if (!currentTrimmed && (!alternatives || alternatives.length === 0)) return;
-
-            // Formatear y mostrar de inmediato exactamente lo que se está diciendo en este intento
-            const formatted = formatSpokenTranscript(currentTrimmed, lang);
-            if (formatted) {
-              setSpeechTranscript(formatted);
-            }
-
-            // Recolectar todas las hipótesis candidatas para evaluación en tiempo real
-            const candidateHypotheses = [
-              currentTrimmed,
-              ...(alternatives || []),
-            ].filter(Boolean);
-
-            // Validación de acierto fonético
-            let matchedHypo = '';
-            let matchedReading = '';
-            const isMatch = candidateHypotheses.some((hypo) => {
-              const res = checkVoiceMatch(card, hypo, lang);
-              if (res.isMatch) {
-                matchedHypo = hypo;
-                matchedReading = res.matchedReading || '';
-                return true;
-              }
-              return false;
-            });
-
-            console.log('[ReviewVoice] isMatch:', isMatch, 'matchedHypo:', matchedHypo, 'matchedReading:', matchedReading, 'for card:', card.displayText, card.displayReading);
-
-            if (isMatch) {
-              // Cortar el micrófono inmediatamente en cuanto se detecta la coincidencia
-              isCardEvaluatedRef.current = true;
-              speechService.abort().catch(() => { });
-              setIsListening(false);
-              setSpeechStatus('evaluating');
-              const matchedFormatted = formatSpokenTranscript(matchedReading || matchedHypo || currentTrimmed, lang);
-              setSpeechTranscript(matchedFormatted);
-              // Breve pausa para apreciar en verde la pronunciación antes de la rotación 3D
-              setTimeout(() => {
-                handleVoiceEvaluation(card, true, matchedReading || matchedHypo || currentTrimmed);
-              }, 400);
-            }
-          },
-          onError: (err) => {
-            if (err === 'aborted' || isStale()) return;
-            console.warn('[ReviewVoice] Native event (silence/recycle), keeping mic alive:', err);
-            scheduleRestart();
-          },
-          onEnd: () => {
-            if (isStale()) return;
-            console.log('[ReviewVoice] onEnd received (user thinking), keeping mic alive');
-            scheduleRestart();
-          },
+    const started = await speechService.start(
+      lang,
+      {
+        onStart: () => {
+          if (!isStale()) {
+            startTimerCountdown();
+            setIsListening(true);
+            setSpeechStatus('listening');
+          }
         },
-        {
-          contextualStrings,
-          maxAlternatives: 10,
-          initialPrompt: card.displayReading || card.displayText || contextualStrings[0],
-          voskGrammar: isJapanese ? voskVoiceService.buildGrammarForCard(card) : undefined,
-          preferredEngine: isJapanese ? 'vosk' : 'native',
-          continuous: true,
-        }
-      );
-    };
+        onResult: (transcript, isFinal, alternatives) => {
+          if (isStale()) return;
+          console.log('[ReviewVoice] onResult received:', transcript, 'isFinal:', isFinal, 'alternatives:', alternatives);
+          const currentTrimmed = transcript.trim();
+          if (!currentTrimmed && (!alternatives || alternatives.length === 0)) return;
 
-    await initRecognizer();
+          // Formatear y mostrar de inmediato exactamente lo que se está diciendo en este intento
+          const formatted = formatSpokenTranscript(currentTrimmed, lang);
+          if (formatted) {
+            setSpeechTranscript(formatted);
+          }
+
+          // Recolectar todas las hipótesis candidatas para evaluación en tiempo real
+          const candidateHypotheses = [
+            currentTrimmed,
+            ...(alternatives || []),
+          ].filter(Boolean);
+
+          // Validación de acierto fonético
+          let matchedHypo = '';
+          let matchedReading = '';
+          const isMatch = candidateHypotheses.some((hypo) => {
+            const res = checkVoiceMatch(card, hypo, lang);
+            if (res.isMatch) {
+              matchedHypo = hypo;
+              matchedReading = res.matchedReading || '';
+              return true;
+            }
+            return false;
+          });
+
+          console.log('[ReviewVoice] isMatch:', isMatch, 'matchedHypo:', matchedHypo, 'matchedReading:', matchedReading, 'for card:', card.displayText, card.displayReading);
+
+          if (isMatch) {
+            // Cortar el micrófono inmediatamente en cuanto se detecta la coincidencia
+            isCardEvaluatedRef.current = true;
+            speechService.abort().catch(() => { });
+            setIsListening(false);
+            setSpeechStatus('evaluating');
+            const matchedFormatted = formatSpokenTranscript(matchedReading || matchedHypo || currentTrimmed, lang);
+            setSpeechTranscript(matchedFormatted);
+            setTimeout(() => {
+              handleVoiceEvaluation(card, true, matchedReading || matchedHypo || currentTrimmed);
+            }, 150);
+          }
+        },
+        onError: (err) => {
+          if (err === 'aborted' || isStale()) return;
+          console.warn('[ReviewVoice] Speech error:', err);
+          setIsListening(false);
+          setSpeechStatus('idle');
+        },
+        onEnd: () => {
+          if (isStale()) return;
+          console.log('[ReviewVoice] Speech session ended');
+        },
+      },
+      {
+        contextualStrings,
+        maxAlternatives: 10,
+        initialPrompt: card.displayReading || card.displayText || contextualStrings[0],
+        voskGrammar: isJapanese ? voskVoiceService.buildGrammarForCard(card) : undefined,
+        preferredEngine: isJapanese ? 'vosk' : 'native',
+        continuous: true,
+      }
+    );
+
+    if (!started && !isStale()) {
+      setIsListening(false);
+      setSpeechStatus('idle');
+    }
   };
 
   // Evaluación y feedback de voz con avance continuo y Flip 3D (tanto acierto como fallo)
@@ -994,18 +892,15 @@ export default function ReviewScreen() {
       useNativeDriver: true,
     }).start(({ finished }) => {
       if (finished) {
-        // Pausa de 250ms para que Android AudioManager libere audio focus y el binder esté 100% libre
-        setTimeout(() => {
-          const nextCard = useReviewStore.getState().getCurrentCard();
-          if (nextCard) {
-            const lang = getEffectiveCardLanguage(nextCard);
-            startVoiceListeningForCard(nextCard, lang);
-          } else {
-            speechService.abort().catch(() => { });
-            setIsListening(false);
-            setSpeechStatus('idle');
-          }
-        }, 250);
+        const nextCard = useReviewStore.getState().getCurrentCard();
+        if (nextCard) {
+          const lang = getEffectiveCardLanguage(nextCard);
+          startVoiceListeningForCard(nextCard, lang);
+        } else {
+          speechService.abort().catch(() => { });
+          setIsListening(false);
+          setSpeechStatus('idle');
+        }
       }
     });
 
@@ -1364,6 +1259,7 @@ export default function ReviewScreen() {
 
   const renderDeckGridItem = useCallback(({ item }: { item: DeckWithStats }) => {
     const isCustom = item.type === 'custom';
+    const isJapanese = !isCustom && item.languageCode === 'ja-JP';
     const langMeta = ALL_LANGUAGES.find((l) => l.code === item.languageCode) || SUPPORTED_LANGUAGES[0];
     const dueCount = item.dueCount || 0;
     const cardsInReview = item.activeCardsCount !== undefined ? item.activeCardsCount : (item.wordCount || 0);
@@ -1489,16 +1385,8 @@ export default function ReviewScreen() {
     return (
       <View style={[styles.container, { backgroundColor: colors.background, paddingTop: Spacing.sm }]}>
         <View style={styles.selectionHeader}>
-          <View style={styles.selectionTitleRow}>
-            <Text style={[styles.selectionTitle, { color: colors.text }]}>Repetición Espaciada</Text>
-            {totalDue > 0 ? (
-              <View style={[styles.totalDuePill, { backgroundColor: colors.primary }]}>
-                <Text style={styles.totalDuePillText}>{totalDue} pendientes</Text>
-              </View>
-            ) : null}
-          </View>
-          <Text style={[styles.selectionSub, { color: colors.textMuted }]}>
-            Elige un mazo para enfocar tu estudio o repasa todos juntos
+          <Text style={[styles.selectionSub, { color: colors.textMuted, fontSize: 14 }]}>
+            Elige un mazo para repasar o practica todos juntos.
           </Text>
         </View>
 
@@ -1558,9 +1446,27 @@ export default function ReviewScreen() {
           visible={showMethodModal}
           pendingSelection={pendingSelection}
           colors={colors}
+          isPreparingVoice={isPreparingVoice}
           onClose={() => setShowMethodModal(false)}
           onSelectMethod={handleSelectMethod}
+          onSelectConjugation={() => {
+            if (pendingSelection) {
+              handleOpenConjugation(pendingSelection.deckId, pendingSelection.deckName);
+            }
+          }}
         />
+
+        {conjugationDeck && (
+          <ConjugationPracticeModal
+            visible={Boolean(conjugationDeck)}
+            onClose={() => {
+              setConjugationDeck(null);
+              fetchDecksData();
+            }}
+            deckId={conjugationDeck.id}
+            deckName={conjugationDeck.name}
+          />
+        )}
       </View>
     );
   }
@@ -1588,6 +1494,7 @@ export default function ReviewScreen() {
           visible={showMethodModal}
           pendingSelection={pendingSelection}
           colors={colors}
+          isPreparingVoice={isPreparingVoice}
           onClose={() => setShowMethodModal(false)}
           onSelectMethod={handleSelectMethod}
         />
@@ -1916,17 +1823,18 @@ export default function ReviewScreen() {
                 <VoiceMicControl
                   isListening={isListening}
                   speechStatus={speechStatus}
+                  isEngineReady={isVoiceEngineReady}
                   voiceProgressAnim={voiceProgressAnim}
                   micPulseAnim={micPulseAnim}
                   colors={colors}
                   onPress={() => {
+                    if (speechStatus === 'starting') return;
                     if (isListening) {
                       speechService.stop();
                       setIsListening(false);
                       setSpeechStatus('idle');
                       voiceProgressAnim.stopAnimation();
                     } else {
-                      restartAttemptsRef.current = 0;
                       startVoiceListeningForCard(currentCard, lang);
                     }
                   }}
@@ -2660,6 +2568,20 @@ const styles = StyleSheet.create({
   selectionSub: {
     ...Typography.bodySmall,
     fontSize: 13,
+  },
+  cardConjugationTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginTop: 5,
+  },
+  cardConjugationTagText: {
+    fontSize: 10,
+    fontWeight: '600',
   },
   heroAllDecksCard: {
     flexDirection: 'row',

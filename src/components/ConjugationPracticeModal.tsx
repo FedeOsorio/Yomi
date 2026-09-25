@@ -48,60 +48,136 @@ export interface PracticeQueueItem {
   form: JapaneseConjugationForm;
 }
 
+export interface FormPromptDetails {
+  badge: string;
+  title: string;
+  hint: string;
+  explanation: string;
+}
+
 const FORM_OPTIONS: Array<{ key: ConjugationFilterForm; label: string; suffix: string }> = [
   { key: 'all', label: 'Aleatorio (Todas)', suffix: 'Todas' },
   { key: 'te', label: 'Forma -TE', suffix: '-て / -で / -くて' },
-  { key: 'nakute', label: 'Forma -TE Negativa', suffix: '-なくて / -ないで' },
-  { key: 'ta', label: 'Pasado', suffix: '-た / -だ / -かった / -だった' },
-  { key: 'nai', label: 'Negativo', suffix: '-ない / -くない / -じゃない' },
-  { key: 'nakatta', label: 'Pasado Negativo', suffix: '-なかった / -くなかった / -じゃなかった' },
-  { key: 'adverbial', label: 'Forma Adverbial', suffix: '-く / -に' },
-  { key: 'masu', label: 'Formal', suffix: '-ます / -です' },
+  { key: 'nakute', label: '-TE Negativa', suffix: '-なくて / -ないで' },
+  { key: 'ta', label: 'Pasado Informal', suffix: '-た / -だ / -かった' },
+  { key: 'nai', label: 'Negativo Informal', suffix: '-ない / -くない' },
+  { key: 'nakatta', label: 'Pasado Neg. Informal', suffix: '-なかった / -くなかった' },
+  { key: 'adverbial', label: 'Adverbial', suffix: '-く / -に' },
+  { key: 'masu', label: 'Presente Formal', suffix: '-ます / -です' },
   { key: 'mashita', label: 'Pasado Formal', suffix: '-ました / -でした' },
   { key: 'masen', label: 'Negativo Formal', suffix: '-ません / -じゃありません' },
-  { key: 'mashou', label: 'Volitiva', suffix: '-ましょう' },
+  { key: 'mashou', label: 'Volitiva (Hagamos)', suffix: '-ましょう' },
 ];
 
 const FORM_LABELS: Record<JapaneseConjugationForm, string> = {
-  te: 'Forma -TE',
+  te: 'Forma -TE (Conectiva)',
   nakute: 'Forma -TE Negativa',
-  ta: 'Pasado',
-  nai: 'Negativo',
-  nakatta: 'Pasado Negativo',
-  adverbial: 'Forma Adverbial',
-  masu: 'Formal',
-  mashita: 'Pasado Formal',
-  masen: 'Negativo Formal',
-  mashou: 'Volitiva',
+  ta: 'Pasado Informal (-ta)',
+  nai: 'Negativo Informal (-nai)',
+  nakatta: 'Pasado Negativo Informal (-nakatta)',
+  adverbial: 'Forma Adverbial (-ku / -ni)',
+  masu: 'Presente Formal (-masu)',
+  mashita: 'Pasado Formal (-mashita)',
+  masen: 'Negativo Formal (-masen)',
+  mashou: 'Forma Volitiva (Invitación / -mashou)',
 };
 
-export function getPromptLabelForForm(word?: ConjugableWord, form?: JapaneseConjugationForm): string {
-  if (!form) return 'Forma -TE';
+export function getPromptDetailsForForm(
+  word?: ConjugableWord,
+  form?: JapaneseConjugationForm
+): FormPromptDetails {
+  if (!form) {
+    return {
+      badge: 'CONEXIÓN / PETICIÓN',
+      title: 'Forma Conectiva (-TE)',
+      hint: 'Terminación en -て / -で / -くて',
+      explanation: 'Para conectar acciones consecutivas o pedir favores.',
+    };
+  }
 
   switch (form) {
-    case 'masu':
-      return 'Forma Formal';
-    case 'mashita':
-      return 'Pasado Formal';
-    case 'masen':
-      return 'Negativo Formal';
-    case 'mashou':
-      return 'Forma Volitiva';
     case 'ta':
-      return 'Pasado';
+      return {
+        badge: 'PASADO INFORMAL (LLANO)',
+        title: 'Pasado Informal',
+        hint: 'Terminación en -た / -だ / -かった',
+        explanation: 'Acción pasada en lenguaje casual o cotidiano.',
+      };
     case 'nai':
-      return 'Negativo';
+      return {
+        badge: 'NEGATIVO INFORMAL (LLANO)',
+        title: 'Negativo Informal',
+        hint: 'Terminación en -ない / -くない / -じゃない',
+        explanation: 'Negación en presente para lenguaje casual.',
+      };
     case 'nakatta':
-      return 'Pasado Negativo';
+      return {
+        badge: 'PASADO NEGATIVO INFORMAL',
+        title: 'Pasado Negativo Informal',
+        hint: 'Terminación en -なかった / -くなかった',
+        explanation: 'Acción que no ocurrió, en lenguaje casual.',
+      };
+    case 'masu':
+      return {
+        badge: 'PRESENTE FORMAL (CORTÉS)',
+        title: 'Presente Formal',
+        hint: 'Terminación en -ます / -です',
+        explanation: 'Afirmación en presente/futuro en lenguaje respetuoso.',
+      };
+    case 'mashita':
+      return {
+        badge: 'PASADO FORMAL (CORTÉS)',
+        title: 'Pasado Formal',
+        hint: 'Terminación en -ました / -でした',
+        explanation: 'Acción que ya ocurrió, en lenguaje respetuoso.',
+      };
+    case 'masen':
+      return {
+        badge: 'NEGATIVO FORMAL (CORTÉS)',
+        title: 'Negativo Formal',
+        hint: 'Terminación en -ません / -じゃありません',
+        explanation: 'Negación en presente, en lenguaje respetuoso.',
+      };
+    case 'mashou':
+      return {
+        badge: 'VOLITIVA (INVITACIÓN / "VAMOS A...")',
+        title: 'Forma Volitiva (Invitación)',
+        hint: 'Terminación en -ましょう ("¡Hagamos...!", "¡Vamos a...!")',
+        explanation: 'Expresa propuesta, invitación o intención conjunta.',
+      };
     case 'te':
-      return 'Forma -TE';
+      return {
+        badge: 'FORMA CONECTIVA (-TE)',
+        title: 'Forma Conectiva (-TE)',
+        hint: 'Terminación en -て / -で / -くて',
+        explanation: 'Conecta dos o más acciones en una misma oración.',
+      };
     case 'nakute':
-      return 'Forma -TE Negativa';
+      return {
+        badge: 'FORMA CONECTIVA NEGATIVA',
+        title: 'Forma Conectiva Negativa',
+        hint: 'Terminación en -なくて / -ないで',
+        explanation: 'Conecta en negativo o expresa "sin haber hecho...".',
+      };
     case 'adverbial':
-      return 'Forma Adverbial';
+      return {
+        badge: 'FORMA ADVERBIAL',
+        title: 'Forma Adverbial',
+        hint: 'Terminación en -く / -に',
+        explanation: 'Convierte el adjetivo en adverbio para modificar al verbo.',
+      };
     default:
-      return 'Forma -TE';
+      return {
+        badge: 'FORMA -TE',
+        title: 'Forma -TE',
+        hint: 'Terminación en -て / -で',
+        explanation: 'Forma conectiva básica.',
+      };
   }
+}
+
+export function getPromptLabelForForm(word?: ConjugableWord, form?: JapaneseConjugationForm): string {
+  return getPromptDetailsForForm(word, form).title;
 }
 
 export function ConjugationPracticeModal({
@@ -705,7 +781,8 @@ export function ConjugationPracticeModal({
     }
   };
 
-  const currentTargetLabel = getPromptLabelForForm(currentWord, currentForm);
+  const currentTargetDetails = getPromptDetailsForForm(currentWord, currentForm);
+  const currentTargetLabel = currentTargetDetails.title;
   const furiganaPairs = currentWord ? parseFurigana(currentWord.kanji, currentWord.reading) : [];
 
   return (
@@ -873,9 +950,17 @@ export function ConjugationPracticeModal({
                 </View>
 
                 {/* Pregunta Objetivo */}
-                <View style={styles.targetPromptBox}>
+                <View style={[styles.targetPromptBox, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}>
+                  <View style={[styles.targetFormBadge, { backgroundColor: colors.primary + '18' }]}>
+                    <Text style={[styles.targetFormBadgeText, { color: colors.primary }]}>
+                      {currentTargetDetails.badge}
+                    </Text>
+                  </View>
                   <Text style={[styles.targetPromptText, { color: colors.text }]}>
-                    Pasar a <Text style={{ fontWeight: '800', color: colors.primary }}>{currentTargetLabel}</Text>
+                    Pasar a <Text style={{ fontWeight: '800', color: colors.primary }}>{currentTargetDetails.title}</Text>
+                  </Text>
+                  <Text style={[styles.targetPromptHint, { color: colors.textMuted }]}>
+                    {currentTargetDetails.hint}
                   </Text>
                 </View>
 
@@ -1471,10 +1556,31 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: Spacing.md,
     marginTop: Spacing.xs,
+    paddingVertical: 12,
+    paddingHorizontal: Spacing.md,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  targetFormBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginBottom: 6,
+  },
+  targetFormBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.6,
   },
   targetPromptText: {
     fontSize: 16,
     textAlign: 'center',
+  },
+  targetPromptHint: {
+    fontSize: 12,
+    marginTop: 4,
+    textAlign: 'center',
+    fontWeight: '500',
   },
   interactionSection: {
     gap: 12,

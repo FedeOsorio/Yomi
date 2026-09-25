@@ -21,6 +21,7 @@ export interface VoskStartOptions {
 type VoskModuleType = typeof import('react-native-vosk');
 
 let cachedVoskModule: VoskModuleType | null = null;
+let cachedNativeVosk: any = null;
 let hasCheckedModule = false;
 
 /**
@@ -45,6 +46,23 @@ function getVoskModule(): VoskModuleType | null {
     );
   }
   return null;
+}
+
+/**
+ * Obtiene el TurboModule nativo directo de Vosk para iniciar el recognizer
+ * instantáneamente (<5ms) sin pasar por PermissionsAndroid.request en JS
+ * (los permisos ya fueron verificados previamente al entrar a la sesión).
+ */
+function getNativeVoskDirect(): any {
+  if (cachedNativeVosk) return cachedNativeVosk;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { TurboModuleRegistry } = require('react-native');
+    cachedNativeVosk = TurboModuleRegistry?.get('Vosk') || null;
+    return cachedNativeVosk;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -80,9 +98,41 @@ function getMonoraProlongations(hira: string): string[] {
   return prolonged;
 }
 
+/**
+ * Extrae los prefijos progresivos por mora de una lectura en hiragana.
+ * Permite que Kaldi emita hipótesis parciales inmediatas (<150ms) mientras el usuario pronuncia,
+ * logrando un feedback en vivo instantáneo en pantalla.
+ * Ej: 'のむ' -> ['の']
+ *     'たべる' -> ['た', 'たべ']
+ *     'びょういん' -> ['びょう', 'びょうい']
+ */
+function getMoraPrefixes(hira: string): string[] {
+  if (!hira || hira.length <= 1) return [];
+  const moras: string[] = [];
+  let i = 0;
+  while (i < hira.length) {
+    let mora = hira[i];
+    if (i + 1 < hira.length && 'ゃゅょぁぃぅぇぉャュョァィゥェォ'.includes(hira[i + 1])) {
+      mora += hira[i + 1];
+      i += 2;
+    } else {
+      i += 1;
+    }
+    moras.push(mora);
+  }
+
+  const prefixes: string[] = [];
+  let accum = '';
+  for (let m = 0; m < moras.length - 1; m++) {
+    accum += moras[m];
+    prefixes.push(accum);
+  }
+  return prefixes;
+}
+
 class VoskVoiceService {
   private isModelLoaded = false;
-  private isModelLoading = false;
+  private modelLoadPromise: Promise<boolean> | null = null;
   private isListeningActive = false;
   private activeSubscriptions: Array<{ remove: () => void }> = [];
   private currentModelName = 'model-ja-jp';
@@ -113,30 +163,35 @@ class VoskVoiceService {
       return false;
     }
 
-    if (this.isModelLoading) {
-      // Esperar a que la carga en curso finalice
-      let attempts = 0;
-      while (this.isModelLoading && attempts < 50) {
-        await new Promise((r) => setTimeout(r, 100));
-        attempts++;
+    if (this.modelLoadPromise) {
+      await this.modelLoadPromise;
+      if (this.isModelLoaded && this.currentModelName === modelName) {
+        return true;
       }
-      return this.isModelLoaded;
     }
 
-    this.isModelLoading = true;
+    const loadPromise = (async () => {
+      try {
+        console.log(`[VoskService] Loading acoustic model: ${modelName}`);
+        await vosk.loadModel(modelName);
+        this.isModelLoaded = true;
+        this.currentModelName = modelName;
+        console.log(`[VoskService] Model ${modelName} successfully loaded`);
+        return true;
+      } catch (err) {
+        console.error(`[VoskService] Failed to load model ${modelName}:`, err);
+        this.isModelLoaded = false;
+        return false;
+      }
+    })();
+
+    this.modelLoadPromise = loadPromise;
     try {
-      console.log(`[VoskService] Loading acoustic model: ${modelName}`);
-      await vosk.loadModel(modelName);
-      this.isModelLoaded = true;
-      this.currentModelName = modelName;
-      console.log(`[VoskService] Model ${modelName} successfully loaded`);
-      return true;
-    } catch (err) {
-      console.error(`[VoskService] Failed to load model ${modelName}:`, err);
-      this.isModelLoaded = false;
-      return false;
+      return await loadPromise;
     } finally {
-      this.isModelLoading = false;
+      if (this.modelLoadPromise === loadPromise) {
+        this.modelLoadPromise = null;
+      }
     }
   }
 
@@ -317,8 +372,10 @@ class VoskVoiceService {
       }
     }
 
-    // Detener cualquier escucha previa y limpiar listeners
-    await this.stop();
+    // Solo detener escucha previa si estaba efectivamente activo
+    if (this.isListeningActive) {
+      await this.stop();
+    }
 
     this.generation++;
     const currentGen = this.generation;
@@ -367,7 +424,34 @@ class VoskVoiceService {
         startOptions.timeout = options.timeout;
       }
 
-      await vosk.start(startOptions);
+      // Prioridad 1: Usar TurboModule nativo directo para inicio inmediato (<10ms) sin pasar por PermissionsAndroid.request
+      const nativeVosk = getNativeVoskDirect();
+      try {
+        if (nativeVosk && typeof nativeVosk.start === 'function') {
+          await nativeVosk.start(startOptions);
+        } else {
+          await vosk.start(startOptions);
+        }
+      } catch (nativeErr: any) {
+        // Auto-recuperación resiliente: si el motor nativo de Android quedó en "already in use",
+        // forzar cleanRecognizer() mediante stop() y reintentar de inmediato
+        const msg = String(nativeErr?.message || nativeErr || '');
+        if (msg.includes('already in use') || msg.includes('use')) {
+          console.warn('[VoskService] Engine was in use, resetting native audio stream and retrying...');
+          try {
+            if (nativeVosk?.stop) nativeVosk.stop();
+            else vosk.stop();
+          } catch { }
+          if (nativeVosk && typeof nativeVosk.start === 'function') {
+            await nativeVosk.start(startOptions);
+          } else {
+            await vosk.start(startOptions);
+          }
+        } else {
+          throw nativeErr;
+        }
+      }
+
       this.isListeningActive = true;
       callbacks.onStart?.();
       return true;
@@ -375,6 +459,11 @@ class VoskVoiceService {
       console.error('[VoskService] Error starting Vosk:', err);
       this.isListeningActive = false;
       this.cleanupSubscriptions();
+      try {
+        const nativeVosk = getNativeVoskDirect();
+        if (nativeVosk?.stop) nativeVosk.stop();
+        else vosk.stop();
+      } catch { }
       callbacks.onError?.(err?.message || 'Error starting Vosk recognizer');
       return false;
     }
@@ -388,13 +477,18 @@ class VoskVoiceService {
     this.isListeningActive = false;
     this.cleanupSubscriptions();
 
-    const vosk = getVoskModule();
-    if (vosk) {
-      try {
-        vosk.stop();
-      } catch (err) {
-        // Ignorar errores benignos si el recognizer no estaba activo
+    try {
+      const nativeVosk = getNativeVoskDirect();
+      if (nativeVosk && typeof nativeVosk.stop === 'function') {
+        nativeVosk.stop();
+      } else {
+        const vosk = getVoskModule();
+        if (vosk) {
+          vosk.stop();
+        }
       }
+    } catch {
+      // Ignorar errores benignos si el recognizer no estaba activo
     }
   }
 

@@ -14,27 +14,28 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { State } from 'ts-fsrs';
-import { speakText } from '../../../lib/audio-service';
+import { preloadAudioService, releaseAudioService, speakText, stopSpeech } from '../../../lib/audio-service';
 import { getQuickHskLevel } from '../../../lib/hsk-data';
 import { cleanAndFormatMeanings, extractKanjis, parseFurigana } from '../../../lib/japanese-search';
-import { classifyJapaneseWord, formatJapaneseReading } from '../../../lib/japanese-utils';
-import { getKanjiJlptLevel, getQuickJlptLevel, getKanjiEssentialReading } from '../../../lib/jlpt-data';
+import { classifyJapaneseWord, formatJapaneseReading, toNormalizedHiragana } from '../../../lib/japanese-utils';
+import { getKanjiEssentialReading, getKanjiJlptLevel, getQuickJlptLevel, JLPT_KANJI_READINGS } from '../../../lib/jlpt-data';
+import { formatNextReviewTime, healCorruptedSrsIntervals } from '../../../lib/srs-engine';
 import { getStorageItem, setStorageItem } from '../../../lib/storage-service';
 import {
   CompoundWord,
   deleteWord,
+  deleteWordMeaning,
   getCompoundWordsForChar,
   getWordDetailWithRelations,
-  WordDetailWithRelations,
-  updateWordSelectedMeanings,
-  deleteWordMeaning,
+  resolveJapaneseBaseForm,
   updateWordMeaningText,
   updateWordReading,
+  updateWordSelectedMeanings,
+  WordDetailWithRelations,
 } from '../../../lib/word-service';
-import { formatNextReviewTime, healCorruptedSrsIntervals } from '../../../lib/srs-engine';
 import { useTheme } from '../../../providers/ThemeProvider';
-import { Shadows, Spacing, Typography } from '../../constants/theme';
 import { KanjiStrokeViewer, preloadStrokeSvg } from '../../components/kanji/KanjiStrokeViewer';
+import { Shadows, Spacing, Typography } from '../../constants/theme';
 
 export default function WordDetailScreen() {
   const { colors } = useTheme();
@@ -51,11 +52,13 @@ export default function WordDetailScreen() {
   const [editMeaningText, setEditMeaningText] = useState('');
   const [isEditingReading, setIsEditingReading] = useState(false);
   const [editReadingText, setEditReadingText] = useState('');
+  const [isAudioReady, setIsAudioReady] = useState(false);
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
 
   const fetchDetail = async () => {
     if (typeof id === 'string') {
       setLoading(true);
-      await healCorruptedSrsIntervals().catch(() => {});
+      await healCorruptedSrsIntervals().catch(() => { });
       const res = await getWordDetailWithRelations(id);
       setData(res);
 
@@ -78,14 +81,14 @@ export default function WordDetailScreen() {
             if (Array.isArray(parsed.selectedMeanings) && parsed.selectedMeanings.length > 0) {
               currentSelected = parsed.selectedMeanings;
             }
-          } catch (e) {}
+          } catch (e) { }
         } else if (res.srsItem?.displayMeaning) {
           try {
             const srsMeanings = JSON.parse(res.srsItem.displayMeaning);
             if (Array.isArray(srsMeanings) && srsMeanings.length > 0) {
               currentSelected = srsMeanings;
             }
-          } catch (e) {}
+          } catch (e) { }
         }
 
         // En mazo custom, o si currentSelected está vacío o no coincide, asegurar que todos queden seleccionados
@@ -226,13 +229,14 @@ export default function WordDetailScreen() {
           },
           srsItem: prev.srsItem
             ? {
-                ...prev.srsItem,
-                displayReading: res.updatedReading,
-              }
+              ...prev.srsItem,
+              displayReading: res.updatedReading,
+            }
             : null,
         };
       });
       setIsEditingReading(false);
+      speakText(trimmed, isJap ? 'ja-JP' : (data.deck?.languageCode || 'zh-CN'), trimmed);
     } catch (e) {
       Alert.alert('Error', 'No se pudo actualizar la lectura.');
     }
@@ -263,7 +267,7 @@ export default function WordDetailScreen() {
             return;
           }
         }
-      } catch (e) {}
+      } catch (e) { }
 
       if (isMounted) {
         setCompoundsLoading(true);
@@ -301,14 +305,37 @@ export default function WordDetailScreen() {
     });
   }, [data]);
 
+  // Precarga automática del motor de audio (TTS) al entrar a la pantalla y liberación al salir
+  useEffect(() => {
+    let isMounted = true;
+    if (data) {
+      const langCode = data.deck?.languageCode || 'zh-CN';
+      preloadAudioService(langCode).then(() => {
+        if (isMounted) setIsAudioReady(true);
+      });
+    }
+
+    return () => {
+      isMounted = false;
+      stopSpeech();
+      releaseAudioService();
+    };
+  }, [data?.deck?.languageCode]);
+
   const handlePlayAudio = () => {
-    if (!data) return;
+    if (!data || isPlayingAudio) return;
     const lang = data.deck?.languageCode || 'zh-CN';
     const rawReading = data.word.pinyinDisplay || '';
     const cleanReading = lang.startsWith('ja')
       ? rawReading.replace(/\s*\([^)]*\)/g, '').trim()
       : rawReading;
-    speakText(data.word.simplified, lang, cleanReading);
+    setIsPlayingAudio(true);
+    speakText(data.word.simplified, lang, cleanReading, {
+      onStart: () => setIsPlayingAudio(true),
+      onDone: () => setIsPlayingAudio(false),
+      onStopped: () => setIsPlayingAudio(false),
+      onError: () => setIsPlayingAudio(false),
+    });
   };
 
   const handleDelete = () => {
@@ -354,13 +381,13 @@ export default function WordDetailScreen() {
   const isCustomDeck = deck?.type === 'custom';
   const displayMeaningsList = isCustomDeck
     ? (() => {
-        try {
-          const parsed = JSON.parse(word.meanings);
-          return Array.isArray(parsed) ? parsed : [String(word.meanings)];
-        } catch {
-          return [word.meanings];
-        }
-      })()
+      try {
+        const parsed = JSON.parse(word.meanings);
+        return Array.isArray(parsed) ? parsed : [String(word.meanings)];
+      } catch {
+        return [word.meanings];
+      }
+    })()
     : cleanAndFormatMeanings(word.meanings);
 
   const lang = deck?.languageCode || 'zh-CN';
@@ -389,24 +416,114 @@ export default function WordDetailScreen() {
   if (word.auxiliaryInfo) {
     try {
       parsedAux = JSON.parse(word.auxiliaryInfo);
-    } catch {}
+    } catch { }
   }
 
+  const cleanWord = (word.simplified || '').trim();
+  const endsWithKanji = /[\u4e00-\u9faf]$/.test(cleanWord);
   const isSingleKanji = isJapanese && word.simplified.length === 1 && /[\u4e00-\u9faf]/.test(word.simplified);
   const kanjiMeta = isSingleKanji ? getKanjiEssentialReading(word.simplified, parsedAux.onReading, parsedAux.kunReading) : null;
   const kanjiReadingsDisplay = parsedAux.kanjiReadings || kanjiMeta?.kanjiReadings;
   const onReadingCandidate = parsedAux.onReading || kanjiMeta?.onReading;
   const kunReadingCandidate = parsedAux.kunReading || kanjiMeta?.kunReading;
 
+  // Obtener lecturas On y Kun para mostrar como botones interactivos
+  let rawOn = onReadingCandidate || '';
+  if (!rawOn && kanjiReadingsDisplay) {
+    const match = kanjiReadingsDisplay.match(/On:\s*([^|\n]+)/i);
+    if (match) rawOn = match[1];
+  }
+  if (!rawOn && isSingleKanji) {
+    const jlpt = JLPT_KANJI_READINGS[word.simplified];
+    if (jlpt?.on) rawOn = jlpt.on;
+  }
+  const onReadingsList: string[] = rawOn ? rawOn.split(/[,、\/]/).map((s: string) => s.trim()).filter(Boolean) : [];
+
+  let rawKun = kunReadingCandidate || '';
+  if (!rawKun && kanjiReadingsDisplay) {
+    const match = kanjiReadingsDisplay.match(/Kun:\s*([^|\n]+)/i);
+    if (match) rawKun = match[1];
+  }
+  if (!rawKun && isSingleKanji) {
+    const jlpt = JLPT_KANJI_READINGS[word.simplified];
+    if (jlpt?.kun) rawKun = jlpt.kun;
+  }
+  const kunReadingsList: string[] = rawKun ? rawKun.split(/[,、\/]/).map((s: string) => s.trim()).filter(Boolean) : [];
+
+  const rawBaseKanji = parsedAux.dictionaryForm?.kanji;
+  let resolvedBase: { baseKanji: string; baseReading: string; category: string } | null = null;
+  if (isJapanese && isSingleKanji && !rawBaseKanji) {
+    resolvedBase = resolveJapaneseBaseForm(cleanWord, cleanReading, rawKun);
+  }
+
+  const effectiveBaseKanji = rawBaseKanji || resolvedBase?.baseKanji;
+  const baseKanji =
+    effectiveBaseKanji &&
+      effectiveBaseKanji.length >= 2 &&
+      effectiveBaseKanji !== 'u' &&
+      effectiveBaseKanji !== 'う' &&
+      !/[\u4e00-\u9faf]$/.test(effectiveBaseKanji)
+      ? effectiveBaseKanji
+      : undefined;
+
+  const hasKanjiReadings = onReadingsList.length > 0 || kunReadingsList.length > 0;
+
+  const handleSelectQuickReading = async (readingRaw: string) => {
+    if (!data) return;
+    const clean = readingRaw.replace(/[・\-\~]/g, '').trim();
+    const normalizedReading = toNormalizedHiragana(clean);
+    try {
+      const res = await updateWordReading(data.word.id, normalizedReading);
+      setData((prev) => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          word: {
+            ...prev.word,
+            pinyinDisplay: res.updatedReading,
+            pinyinNumeric: res.updatedReading.toLowerCase(),
+          },
+          srsItem: prev.srsItem
+            ? {
+              ...prev.srsItem,
+              displayReading: res.updatedReading,
+            }
+            : null,
+        };
+      });
+      speakText(clean, lang, clean);
+    } catch (e) {
+      Alert.alert('Error', 'No se pudo actualizar la lectura.');
+    }
+  };
+
   // Para furigana, asegurar kana puro para evitar romper ruby sobre el kanji
   const furiganaReading = isJapanese
     ? (cleanReading.includes('•') || /\b(on|kun)\b/i.test(cleanReading)
-        ? (kanjiMeta?.essentialReading || cleanReading.split(/[\/•]/)[0].replace(/^(on|kun)[:：\s]*/i, '').trim())
-        : cleanReading)
+      ? (kanjiMeta?.essentialReading || cleanReading.split(/[\/•]/)[0].replace(/^(on|kun)[:：\s]*/i, '').trim())
+      : cleanReading)
     : cleanReading;
 
-  // Categoría gramatical (explícita o heurística para japonés)
-  const activeCategory = category || (isJapanese ? classifyJapaneseWord(word.simplified, cleanReading) : undefined);
+  // Categoría gramatical (explícita o heurística para japonés con saneamiento para palabras que terminan en kanji)
+  let activeCategory = category;
+  if (isJapanese) {
+    if (parsedAux.dictionaryForm) {
+      activeCategory = classifyJapaneseWord(parsedAux.dictionaryForm.kanji, parsedAux.dictionaryForm.reading || cleanReading);
+    } else if (resolvedBase) {
+      activeCategory = resolvedBase.category;
+    } else if (isSingleKanji) {
+      const resolved = resolveJapaneseBaseForm(cleanWord, cleanReading, rawKun);
+      if (resolved) {
+        activeCategory = resolved.category;
+      } else {
+        activeCategory = 'Sustantivo';
+      }
+    } else if (endsWithKanji && cleanWord.length > 1 && (activeCategory?.startsWith('Verbo') || activeCategory?.startsWith('Adjetivo -i'))) {
+      activeCategory = classifyJapaneseWord(cleanWord, cleanReading);
+    } else if (!activeCategory) {
+      activeCategory = classifyJapaneseWord(cleanWord, cleanReading);
+    }
+  }
 
   // Formato amigable de estado FSRS
   const getSrsStateLabel = (stateNum?: number) => {
@@ -453,37 +570,7 @@ export default function WordDetailScreen() {
         {/* Tarjeta Principal de la Palabra */}
         <View style={[styles.mainCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
 
-          {/* Fila superior: Badges (Categoría, JLPT/HSK) a la izquierda del parlante */}
-          <View style={styles.topActionsRow}>
-            <View style={styles.topBadgesRow}>
-              {activeCategory && !activeCategory.includes('Frase') ? (
-                <View style={[styles.categoryBadge, { backgroundColor: colors.surfaceHighlight }]}>
-                  <Text style={[styles.categoryBadgeText, { color: colors.primary }]}>{activeCategory}</Text>
-                </View>
-              ) : null}
-              {activeLevel ? (
-                <View style={styles.levelBadge}>
-                  <Text style={[styles.levelBadgeText, { color: colors.primary }]}>
-                    {activeLevel.startsWith('HSK') || activeLevel.startsWith('JLPT')
-                      ? activeLevel
-                      : lang.startsWith('ja')
-                        ? `JLPT ${activeLevel}`
-                        : `HSK ${activeLevel}`}
-                  </Text>
-                </View>
-              ) : null}
-            </View>
 
-            {!isCustomDeck && (
-              <TouchableOpacity
-                style={[styles.audioBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}
-                activeOpacity={0.8}
-                onPress={handlePlayAudio}
-              >
-                <Ionicons name="volume-high" size={24} color={colors.primary} />
-              </TouchableOpacity>
-            )}
-          </View>
 
           {/* Sección de la Palabra Principal con Furigana o Pregunta para Custom */}
           <View style={styles.wordSectionContainer}>
@@ -527,27 +614,174 @@ export default function WordDetailScreen() {
                     <Text style={[styles.readingTextBelow, { color: colors.primaryHover }]}>
                       {cleanReading}
                     </Text>
-                  ) : null}
-                  {isJapanese && (
+                  ) : (
+                    <View style={{ flex: 1 }} />
+                  )}
+
+                  {!isCustomDeck && (
                     <TouchableOpacity
-                      style={styles.editReadingBtn}
-                      onPress={handleStartEditReading}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      style={styles.smallAudioBtn}
+                      activeOpacity={0.6}
+                      onPress={handlePlayAudio}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      accessibilityLabel="Escuchar pronunciación"
                     >
-                      <Ionicons name="pencil-outline" size={15} color={colors.primary} />
+                      {!isAudioReady ? (
+                        <ActivityIndicator size="small" color={colors.primary} />
+                      ) : (
+                        <Ionicons
+                          name={isPlayingAudio ? 'volume-high' : 'volume-medium'}
+                          size={18}
+                          color={colors.primary}
+                        />
+                      )}
                     </TouchableOpacity>
                   )}
                 </View>
 
-                {Boolean(kanjiReadingsDisplay) && (
-                  <View style={[styles.kanjiReadingsCard, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}>
+                {/* Subtítulos ordenados: Nivel, Categoría, Forma Base */}
+                {(activeLevel || activeCategory || (baseKanji && baseKanji !== word.simplified)) ? (
+                  <View style={[styles.metaSubtitlesContainer, { borderTopColor: colors.border, borderBottomColor: colors.border }]}>
+                    {activeLevel ? (
+                      <View style={styles.metaSubtitleItemCompact}>
+                        <Text style={[styles.metaSubtitleLabel, { color: colors.textMuted }]}>Nivel</Text>
+                        <Text
+                          style={[styles.metaSubtitleValue, { color: colors.primary }]}
+                          numberOfLines={1}
+                          adjustsFontSizeToFit={true}
+                        >
+                          {activeLevel.startsWith('HSK') || activeLevel.startsWith('JLPT')
+                            ? activeLevel
+                            : lang.startsWith('ja')
+                              ? `JLPT ${activeLevel}`
+                              : `HSK ${activeLevel}`}
+                        </Text>
+                      </View>
+                    ) : null}
+
+                    {activeLevel && (activeCategory || (baseKanji && baseKanji !== word.simplified)) ? (
+                      <View style={[styles.metaSubtitleDivider, { backgroundColor: colors.border }]} />
+                    ) : null}
+
+                    {activeCategory && !activeCategory.includes('Frase') ? (
+                      <View style={styles.metaSubtitleItemFlexible}>
+                        <Text style={[styles.metaSubtitleLabel, { color: colors.textMuted }]}>Categoría</Text>
+                        <Text
+                          style={[styles.metaSubtitleValue, { color: colors.text }]}
+                          numberOfLines={1}
+                          adjustsFontSizeToFit={true}
+                        >
+                          {activeCategory}
+                        </Text>
+                      </View>
+                    ) : null}
+
+                    {(activeCategory && !activeCategory.includes('Frase')) && (baseKanji && baseKanji !== word.simplified) ? (
+                      <View style={[styles.metaSubtitleDivider, { backgroundColor: colors.border }]} />
+                    ) : null}
+
+                    {baseKanji && baseKanji !== word.simplified ? (
+                      <View style={styles.metaSubtitleItemCompact}>
+                        <Text style={[styles.metaSubtitleLabel, { color: colors.textMuted }]}>Forma Base</Text>
+                        <Text
+                          style={[styles.metaSubtitleValue, { color: '#8B5CF6' }]}
+                          numberOfLines={1}
+                          adjustsFontSizeToFit={true}
+                        >
+                          {baseKanji}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
+
+                {/* Sección Lectura activa del Kanji: cada lectura On y Kun es un botón seleccionable para editar la lectura */}
+                {isJapanese && hasKanjiReadings && (
+                  <View style={[styles.kanjiReadingsSection, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}>
                     <View style={styles.kanjiReadingsHeader}>
-                      <Ionicons name="book-outline" size={14} color={colors.primary} />
-                      <Text style={[styles.kanjiReadingsTitle, { color: colors.textMuted }]}>Lecturas del Kanji:</Text>
+                      <Text style={[styles.kanjiReadingsTitle, { color: colors.textMuted }]}>
+                        Lectura activa del Kanji
+                      </Text>
+                      <TouchableOpacity
+                        style={styles.manualEditBtn}
+                        onPress={handleStartEditReading}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <Text style={[styles.manualEditBtnText, { color: colors.primary }]}>Editar manual</Text>
+                      </TouchableOpacity>
                     </View>
-                    <Text style={[styles.kanjiReadingsBody, { color: colors.text }]}>
-                      {kanjiReadingsDisplay}
-                    </Text>
+
+                    {onReadingsList.length > 0 && (
+                      <View style={styles.readingGroupRow}>
+                        <Text style={[styles.readingGroupLabel, { color: colors.textMuted }]}>On:</Text>
+                        <View style={styles.readingChipsWrapper}>
+                          {onReadingsList.map((r, idx) => {
+                            const clean = r.replace(/[・\-\~]/g, '').trim();
+                            const hira = toNormalizedHiragana(clean);
+                            const isCurrent = toNormalizedHiragana(cleanReading) === hira;
+                            return (
+                              <TouchableOpacity
+                                key={`on-${idx}`}
+                                style={[
+                                  styles.readingChip,
+                                  {
+                                    backgroundColor: isCurrent ? colors.primary : colors.surface,
+                                    borderColor: isCurrent ? colors.primary : colors.border,
+                                  },
+                                ]}
+                                activeOpacity={0.7}
+                                onPress={() => handleSelectQuickReading(r)}
+                              >
+                                <Text
+                                  style={[
+                                    styles.readingChipText,
+                                    { color: isCurrent ? '#FFF' : colors.text, fontWeight: isCurrent ? '700' : '600' },
+                                  ]}
+                                >
+                                  {r}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      </View>
+                    )}
+
+                    {kunReadingsList.length > 0 && (
+                      <View style={[styles.readingGroupRow, { marginTop: onReadingsList.length > 0 ? 8 : 0 }]}>
+                        <Text style={[styles.readingGroupLabel, { color: colors.textMuted }]}>Kun:</Text>
+                        <View style={styles.readingChipsWrapper}>
+                          {kunReadingsList.map((r, idx) => {
+                            const clean = r.replace(/[・\-\~]/g, '').trim();
+                            const hira = toNormalizedHiragana(clean);
+                            const isCurrent = toNormalizedHiragana(cleanReading) === hira;
+                            return (
+                              <TouchableOpacity
+                                key={`kun-${idx}`}
+                                style={[
+                                  styles.readingChip,
+                                  {
+                                    backgroundColor: isCurrent ? colors.primary : colors.surface,
+                                    borderColor: isCurrent ? colors.primary : colors.border,
+                                  },
+                                ]}
+                                activeOpacity={0.7}
+                                onPress={() => handleSelectQuickReading(r)}
+                              >
+                                <Text
+                                  style={[
+                                    styles.readingChipText,
+                                    { color: isCurrent ? '#FFF' : colors.text, fontWeight: isCurrent ? '700' : '600' },
+                                  ]}
+                                >
+                                  {r}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      </View>
+                    )}
                   </View>
                 )}
               </>
@@ -641,8 +875,7 @@ export default function WordDetailScreen() {
         {isIdeographic && (
           <View style={[styles.sectionCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <View style={styles.sectionHeaderRow}>
-              <Ionicons name="brush-outline" size={20} color={colors.primary} />
-              <Text style={[styles.sectionTitle, { color: colors.text }]}>Trazado y Caracteres</Text>
+              <Text style={[styles.sectionTitle, { color: colors.text, marginLeft: 0 }]}>Trazado y Caracteres</Text>
             </View>
 
             <View style={[styles.strokeBox, { backgroundColor: colors.surfaceHighlight }]}>
@@ -756,7 +989,7 @@ export default function WordDetailScreen() {
           <View style={[styles.srsCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <View style={styles.sectionHeaderRow}>
               <Ionicons name="analytics-outline" size={20} color={colors.primary} />
-              <Text style={[styles.sectionTitle, { color: colors.text }]}>Estado de Memoria (SRS)</Text>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Estado de Aprendizaje</Text>
             </View>
 
             <View style={styles.srsGrid}>
@@ -1060,11 +1293,23 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     width: '100%',
   },
+  readingRowContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginTop: 4,
+    minHeight: 28,
+  },
   readingTextBelow: {
     fontSize: 16,
     fontWeight: '600',
-    marginTop: 4,
     letterSpacing: 0.5,
+  },
+  smallAudioBtn: {
+    padding: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   topBadgesRow: {
     flexDirection: 'row',
@@ -1504,31 +1749,59 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: 14,
   },
-  readingRowContainer: {
+  metaSubtitlesContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    marginTop: 4,
-  },
-  editReadingBtn: {
-    padding: 4,
-    borderRadius: 6,
-    opacity: 0.85,
-  },
-  kanjiReadingsCard: {
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    paddingHorizontal: Spacing.sm,
     marginTop: Spacing.sm,
-    paddingHorizontal: Spacing.sm + 2,
-    paddingVertical: 8,
-    borderRadius: 10,
+    marginHorizontal: -12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  metaSubtitleItemCompact: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+    minWidth: 55,
+  },
+  metaSubtitleItemFlexible: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    flex: 1,
+    paddingHorizontal: 6,
+  },
+  metaSubtitleDivider: {
+    width: StyleSheet.hairlineWidth,
+    height: 20,
+  },
+  metaSubtitleLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+    textAlign: 'center',
+  },
+  metaSubtitleValue: {
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  kanjiReadingsSection: {
+    marginTop: Spacing.sm + 2,
+    paddingHorizontal: Spacing.sm + 4,
+    paddingVertical: 10,
+    borderRadius: 12,
     borderWidth: 1,
     alignSelf: 'stretch',
   },
   kanjiReadingsHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginBottom: 4,
+    justifyContent: 'space-between',
+    marginBottom: 8,
   },
   kanjiReadingsTitle: {
     fontSize: 11,
@@ -1536,10 +1809,42 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
-  kanjiReadingsBody: {
-    fontSize: 13,
+  manualEditBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  manualEditBtnText: {
+    fontSize: 11,
     fontWeight: '600',
-    lineHeight: 18,
+  },
+  readingGroupRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  readingGroupLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    minWidth: 32,
+  },
+  readingChipsWrapper: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    flex: 1,
+  },
+  readingChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  readingChipText: {
+    fontSize: 13,
   },
   editModalSubtitle: {
     fontSize: 13,

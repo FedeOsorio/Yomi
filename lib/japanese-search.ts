@@ -730,16 +730,16 @@ export async function searchJapanese(rawInput: string, toLang: string = 'es'): P
           conjugationNote = `Forma progresiva (-te iru) de ${dictionaryWord}`;
         } else {
           const forms: Array<{ type: JapaneseConjugationForm; note: string }> = [
-            { type: 'masu', note: `Forma formal (-masu) de ${dictionaryWord}` },
+            { type: 'masu', note: `Presente formal (-masu) de ${dictionaryWord}` },
             { type: 'mashita', note: `Pasado formal (-mashita) de ${dictionaryWord}` },
             { type: 'masen', note: `Negativo formal (-masen) de ${dictionaryWord}` },
-            { type: 'mashou', note: `Volitiva (-mashou) de ${dictionaryWord}` },
-            { type: 'te', note: `Forma -te de ${dictionaryWord}` },
-            { type: 'ta', note: `Pasado (-ta) de ${dictionaryWord}` },
-            { type: 'nai', note: `Negativo (-nai) de ${dictionaryWord}` },
-            { type: 'nakatta', note: `Pasado negativo (-nakatta) de ${dictionaryWord}` },
-            { type: 'nakute', note: `Forma -te negativa de ${dictionaryWord}` },
-            { type: 'adverbial', note: `Forma adverbial de ${dictionaryWord}` },
+            { type: 'mashou', note: `Forma volitiva / invitación (-mashou) de ${dictionaryWord}` },
+            { type: 'te', note: `Forma conectiva (-te) de ${dictionaryWord}` },
+            { type: 'ta', note: `Pasado informal (-ta) de ${dictionaryWord}` },
+            { type: 'nai', note: `Negativo informal (-nai) de ${dictionaryWord}` },
+            { type: 'nakatta', note: `Pasado negativo informal (-nakatta) de ${dictionaryWord}` },
+            { type: 'nakute', note: `Forma conectiva negativa (-nakute) de ${dictionaryWord}` },
+            { type: 'adverbial', note: `Forma adverbial (-ku/-ni) de ${dictionaryWord}` },
           ];
 
           for (const f of forms) {

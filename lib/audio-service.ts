@@ -51,6 +51,38 @@ async function getBestVoiceForLanguage(langCode: string): Promise<string | undef
   }
 }
 
+export interface SpeakOptions {
+  onStart?: () => void;
+  onDone?: () => void;
+  onStopped?: () => void;
+  onError?: (err: any) => void;
+}
+
+/**
+ * Precarga el motor de voz nativo (TTS) y resuelve la mejor voz para el idioma especificado.
+ * Esto elimina el retardo (cold start) cuando el usuario pulsa el botón del parlante.
+ */
+export async function preloadAudioService(languageCode: string = 'zh-CN'): Promise<void> {
+  const targetLang = LANGUAGE_LOCALE_MAP[languageCode] || languageCode.split('-')[0] || 'zh';
+  try {
+    if (!cachedVoices || cachedVoices.length === 0) {
+      cachedVoices = await Speech.getAvailableVoicesAsync();
+    }
+    await getBestVoiceForLanguage(targetLang);
+  } catch (e) {
+    console.warn('[AudioService] Error al precargar TTS:', e);
+  }
+}
+
+/**
+ * Libera los recursos del motor de voz deteniendo cualquier reproducción activa.
+ */
+export async function releaseAudioService(): Promise<void> {
+  try {
+    await Speech.stop();
+  } catch (e) {}
+}
+
 /**
  * Reproduce la pronunciación en audio de un texto en el idioma nativo especificado.
  * Para japonés, si se proporciona una lectura (reading/furigana) o es un kanji N5/N4,
@@ -60,7 +92,8 @@ async function getBestVoiceForLanguage(langCode: string): Promise<string | undef
 export async function speakText(
   text: string,
   languageCode: string = 'zh-CN',
-  reading?: string
+  reading?: string,
+  options?: SpeakOptions
 ): Promise<void> {
   if (!text || !text.trim()) return;
 
@@ -106,31 +139,8 @@ export async function speakText(
           .trim();
 
         if (/[\u3040-\u30ff]/.test(cleanedKana)) {
-          // Si es un kanji que representa un verbo común (ej. 飲 -> 飲む), construir la palabra canónica con okurigana
-          const verbOkuriganaMap: Record<string, string> = {
-            '飲': '飲む',
-            '食': '食べる',
-            '行': '行く',
-            '来': '来る',
-            '見': '見る',
-            '聞': '聞く',
-            '読': '読む',
-            '書': '書く',
-            '買': '買う',
-            '話': '話す',
-            '待': '待つ',
-            '持': '持つ',
-            '休': '休む',
-            '言': '言う',
-            '立': '立つ',
-            '入': '入る',
-            '出': '出る',
-          };
-          if (isSingleChar && hasKanji && verbOkuriganaMap[cleanText]) {
-            cleanText = verbOkuriganaMap[cleanText];
-          } else {
-            cleanText = cleanedKana;
-          }
+          // Respetar fielmente la lectura activa seleccionada por el usuario (On'yomi o Kun'yomi)
+          cleanText = cleanedKana;
         }
       }
     }
@@ -158,12 +168,23 @@ export async function speakText(
       voice: voiceIdentifier,
       rate: 1.0,
       pitch: 1.0,
+      onStart: () => {
+        options?.onStart?.();
+      },
+      onDone: () => {
+        options?.onDone?.();
+      },
+      onStopped: () => {
+        options?.onStopped?.();
+      },
       onError: (err) => {
         console.warn('Error en Speech.speak:', err);
+        options?.onError?.(err);
       },
     });
   } catch (error) {
     console.warn('Excepción en TTS:', error);
+    options?.onError?.(error);
   }
 }
 

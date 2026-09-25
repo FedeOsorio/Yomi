@@ -1,5 +1,5 @@
 import React, { memo } from 'react';
-import { Animated, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Animated, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
 import { Spacing } from '../../constants/theme';
@@ -10,7 +10,8 @@ const CIRCUMFERENCE = 2 * Math.PI * CIRCLE_RADIUS;
 
 export interface VoiceMicControlProps {
   isListening: boolean;
-  speechStatus: 'idle' | 'listening' | 'evaluating' | 'correct' | 'incorrect';
+  speechStatus: 'idle' | 'starting' | 'listening' | 'evaluating' | 'correct' | 'incorrect';
+  isEngineReady?: boolean;
   voiceProgressAnim: Animated.Value;
   micPulseAnim: Animated.Value;
   colors: {
@@ -26,11 +27,15 @@ export interface VoiceMicControlProps {
 export const VoiceMicControl = memo(function VoiceMicControl({
   isListening,
   speechStatus,
+  isEngineReady = true,
   voiceProgressAnim,
   micPulseAnim,
   colors,
   onPress,
 }: VoiceMicControlProps) {
+  const isStarting = speechStatus === 'starting';
+  const isButtonDisabled = !isEngineReady || isStarting;
+
   return (
     <>
       <View style={styles.micCircleWrapper}>
@@ -78,21 +83,51 @@ export const VoiceMicControl = memo(function VoiceMicControl({
               {
                 backgroundColor: isListening ? colors.primary : colors.surfaceHighlight,
                 borderColor: isListening ? (colors.primaryHover || colors.primary) : colors.border,
+                opacity: isButtonDisabled ? 0.75 : 1,
               },
             ]}
             activeOpacity={0.8}
+            disabled={isButtonDisabled}
             onPress={onPress}
           >
-            <Ionicons
-              name={isListening ? 'mic' : 'mic-outline'}
-              size={38}
-              color={isListening ? '#FFF' : colors.primary}
-            />
+            {isStarting || !isEngineReady ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : (
+              <Ionicons
+                name={isListening ? 'mic' : 'mic-outline'}
+                size={38}
+                color={isListening ? '#FFF' : colors.primary}
+              />
+            )}
           </TouchableOpacity>
         </Animated.View>
       </View>
 
-      {speechStatus === 'idle' ? (
+      {isStarting ? (
+        <View
+          style={[
+            styles.startPromptPill,
+            { backgroundColor: colors.surfaceHighlight, borderColor: colors.border, borderWidth: 1, elevation: 0 },
+          ]}
+        >
+          <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: 8 }} />
+          <Text style={[styles.startPromptPillText, { color: colors.textMuted }]}>
+            Iniciando micrófono...
+          </Text>
+        </View>
+      ) : !isEngineReady ? (
+        <View
+          style={[
+            styles.startPromptPill,
+            { backgroundColor: colors.surfaceHighlight, borderColor: colors.border, borderWidth: 1, elevation: 0 },
+          ]}
+        >
+          <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: 8 }} />
+          <Text style={[styles.startPromptPillText, { color: colors.textMuted }]}>
+            Preparando motor de voz...
+          </Text>
+        </View>
+      ) : speechStatus === 'idle' ? (
         <TouchableOpacity
           style={[styles.startPromptPill, { backgroundColor: colors.primary }]}
           activeOpacity={0.8}
