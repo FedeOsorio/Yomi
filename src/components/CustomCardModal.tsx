@@ -3,9 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Animated,
   Dimensions,
-  Easing,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
@@ -18,6 +16,16 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  withSpring,
+  interpolate,
+  Extrapolation,
+  Easing,
+  runOnJS,
+} from 'react-native-reanimated';
 import { speechService } from '../../lib/speech-recognition-service';
 import { saveCustomCard, updateCustomCard } from '../../lib/word-service';
 import { useTheme } from '../../providers/ThemeProvider';
@@ -55,27 +63,25 @@ export function CustomCardModal({
   const [isSaving, setIsSaving] = useState(false);
 
   const accumulatedTextRef = useRef('');
-  const animProgress = useRef(new Animated.Value(0)).current;
-  const swapAnim = useRef(new Animated.Value(0)).current;
-  const swapIconAnim = useRef(new Animated.Value(0)).current;
+  const animProgress = useSharedValue(0);
+  const swapAnim = useSharedValue(0);
+  const swapIconRotate = useSharedValue(0);
+  const isSwappingShared = useSharedValue(false);
+  const travelDistanceShared = useSharedValue(117); // 212 * 0.55 aprox
   const swapInFlightRef = useRef(false);
-  const swapSettledRef = useRef(true);
-  const isSwappingRef = useRef(false);
+  const midSwapTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [isSwapping, setIsSwapping] = useState(false);
-  const [swapDistance, setSwapDistance] = useState(0);
-  const effectiveDistance = swapDistance > 0 ? swapDistance : 212;
-  const travelDistance = Math.round(effectiveDistance * 0.55);
   const slotMetricsRef = useRef({
     question: { containerY: 0 },
     answer: { containerY: 0 },
   });
 
   const syncSwapDistance = () => {
-    if (isSwappingRef.current) return;
+    if (swapInFlightRef.current) return;
     const metrics = slotMetricsRef.current;
     if (metrics.question.containerY >= 0 && metrics.answer.containerY > metrics.question.containerY) {
       const next = metrics.answer.containerY - metrics.question.containerY;
-      setSwapDistance((current) => (current === next ? current : next));
+      travelDistanceShared.value = Math.round(next * 0.55);
     }
   };
   const questionInputRef = useRef<TextInput>(null);
@@ -84,48 +90,94 @@ export function CustomCardModal({
 
   const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-  const backdropOpacity = animProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, 1],
+  const backdropAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: animProgress.value,
+  }));
+
+  const sheetAnimatedStyle = useAnimatedStyle(() => {
+    const translateY = interpolate(
+      animProgress.value,
+      [0, 1],
+      [SCREEN_HEIGHT, 0],
+      Extrapolation.CLAMP
+    );
+    return {
+      transform: [{ translateY }],
+    };
   });
 
-  const sheetTranslateY = animProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [SCREEN_HEIGHT, 0],
-  });
-
-  // Animación física de cartas:
+  // Animación física de cartas idéntica:
   // Fase 1 (0.0 -> 0.20): Salto y encogimiento ("saltaran y se achicaran como tarjetas").
   // Fase 2 (0.20 -> 0.65): Se desplazan hacia el centro, cruzan e intercambian textos en 0.40.
   //                       La tarjeta frontal (pregunta) vuela por encima hacia el frente.
-  // Fase 3 (0.65 -> 1.0): Asentadas en sus ranuras con los nuevos textos, vuelven a crecer ("luego del intercambio volvieran a crecer").
-  const cardScale = swapAnim.interpolate({
-    inputRange: [0, 0.08, 0.2, 0.65, 1],
-    outputRange: [1, 1.03, 0.9, 0.9, 1],
+  // Fase 3 (0.65 -> 1.0): Asentadas en sus ranuras con los nuevos textos, vuelven a crecer.
+  const questionAnimatedStyle = useAnimatedStyle(() => {
+    if (!isSwappingShared.value) {
+      return {
+        transform: [{ translateY: 0 }, { scale: 1 }],
+        opacity: 1,
+      };
+    }
+    const D = travelDistanceShared.value;
+    const scale = interpolate(
+      swapAnim.value,
+      [0, 0.08, 0.2, 0.65, 1],
+      [1, 1.03, 0.9, 0.9, 1],
+      Extrapolation.CLAMP
+    );
+    const translateY = interpolate(
+      swapAnim.value,
+      [0, 0.2, 0.32, 0.42, 0.54, 0.65, 1],
+      [0, 0, Math.round(D * 0.45), D, Math.round(D * 0.45), 0, 0],
+      Extrapolation.CLAMP
+    );
+    const opacity = interpolate(
+      swapAnim.value,
+      [0, 0.34, 0.4, 0.46, 1],
+      [1, 1, 0, 1, 1],
+      Extrapolation.CLAMP
+    );
+    return {
+      transform: [{ translateY }, { scale }],
+      opacity,
+    };
   });
 
-  const D = travelDistance;
-  const questionTranslateY = swapAnim.interpolate({
-    inputRange: [0, 0.2, 0.32, 0.42, 0.54, 0.65, 1],
-    outputRange: [0, 0, Math.round(D * 0.45), D, Math.round(D * 0.45), 0, 0],
-    extrapolate: 'clamp',
-  });
-  const answerTranslateY = swapAnim.interpolate({
-    inputRange: [0, 0.2, 0.32, 0.42, 0.54, 0.65, 1],
-    outputRange: [0, 0, -Math.round(D * 0.45), -D, -Math.round(D * 0.45), 0, 0],
-    extrapolate: 'clamp',
+  const answerAnimatedStyle = useAnimatedStyle(() => {
+    if (!isSwappingShared.value) {
+      return {
+        transform: [{ translateY: 0 }, { scale: 1 }],
+        opacity: 1,
+      };
+    }
+    const D = travelDistanceShared.value;
+    const scale = interpolate(
+      swapAnim.value,
+      [0, 0.08, 0.2, 0.65, 1],
+      [1, 1.03, 0.9, 0.9, 1],
+      Extrapolation.CLAMP
+    );
+    const translateY = interpolate(
+      swapAnim.value,
+      [0, 0.2, 0.32, 0.42, 0.54, 0.65, 1],
+      [0, 0, -Math.round(D * 0.45), -D, -Math.round(D * 0.45), 0, 0],
+      Extrapolation.CLAMP
+    );
+    const opacity = interpolate(
+      swapAnim.value,
+      [0, 0.34, 0.4, 0.46, 1],
+      [1, 1, 0, 1, 1],
+      Extrapolation.CLAMP
+    );
+    return {
+      transform: [{ translateY }, { scale }],
+      opacity,
+    };
   });
 
-  // Los textos cambian ágilmente al inicio del cruce en 0.40
-  const swapTextOpacity = swapAnim.interpolate({
-    inputRange: [0, 0.34, 0.4, 0.46, 1],
-    outputRange: [1, 1, 0, 1, 1],
-  });
-
-  const swapIconRotate = swapIconAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['0deg', '180deg'],
-  });
+  const swapIconAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${swapIconRotate.value}deg` }],
+  }));
 
   const stopVoiceListening = async () => {
     await speechService.stop();
@@ -141,35 +193,35 @@ export function CustomCardModal({
         setQuestion('');
         setAnswer('');
       }
-      swapAnim.setValue(0);
-      swapIconAnim.setValue(0);
-      isSwappingRef.current = false;
-      swapSettledRef.current = true;
+      isClosingRef.current = false;
+      swapAnim.value = 0;
+      isSwappingShared.value = false;
       setIsSwapping(false);
       swapInFlightRef.current = false;
-      animProgress.setValue(0);
-      Animated.spring(animProgress, {
-        toValue: 1,
+      animProgress.value = 0;
+      animProgress.value = withSpring(1, {
         damping: 26,
         mass: 0.7,
         stiffness: 260,
         overshootClamping: true,
-        useNativeDriver: true,
-      }).start();
+      });
     } else {
       stopVoiceListening();
       setQuestion('');
       setAnswer('');
-      swapAnim.setValue(0);
-      swapIconAnim.setValue(0);
-      isSwappingRef.current = false;
-      swapSettledRef.current = true;
+      swapAnim.value = 0;
+      isSwappingShared.value = false;
       setIsSwapping(false);
       swapInFlightRef.current = false;
     }
   }, [visible, initialCard]);
 
   const isClosingRef = useRef(false);
+
+  const notifyClose = () => {
+    isClosingRef.current = false;
+    onClose();
+  };
 
   const handleClose = () => {
     if (isClosingRef.current) return;
@@ -178,17 +230,21 @@ export function CustomCardModal({
     answerInputRef.current?.blur();
     Keyboard.dismiss();
 
-    Animated.spring(animProgress, {
-      toValue: 0,
-      damping: 26,
-      mass: 0.7,
-      stiffness: 260,
-      overshootClamping: true,
-      useNativeDriver: true,
-    }).start(() => {
-      isClosingRef.current = false;
-      onClose();
-    });
+    animProgress.value = withSpring(
+      0,
+      {
+        damping: 26,
+        mass: 0.7,
+        stiffness: 260,
+        overshootClamping: true,
+      },
+      (finished) => {
+        'worklet';
+        if (finished) {
+          runOnJS(notifyClose)();
+        }
+      }
+    );
   };
 
   const toggleVoice = async (target: 'question' | 'answer') => {
@@ -233,7 +289,17 @@ export function CustomCardModal({
     });
   };
 
-  const handleSwap = async () => {
+  const finishSwap = (newQuestion: string, newAnswer: string) => {
+    if (midSwapTimerRef.current) clearTimeout(midSwapTimerRef.current);
+    setQuestion(newQuestion);
+    setAnswer(newAnswer);
+    setIsSwapping(false);
+    isSwappingShared.value = false;
+    swapAnim.value = 0;
+    swapInFlightRef.current = false;
+  };
+
+  const handleSwap = () => {
     if (swapInFlightRef.current || isSaving) return;
     if (!question.trim() && !answer.trim()) return;
     swapInFlightRef.current = true;
@@ -243,59 +309,40 @@ export function CustomCardModal({
     Keyboard.dismiss();
 
     if (listeningTarget) {
-      await stopVoiceListening();
+      stopVoiceListening();
     }
 
     const previousQuestion = question;
     const previousAnswer = answer;
 
-    swapAnim.setValue(0);
-    swapIconAnim.setValue(0);
-    swapSettledRef.current = false;
-    isSwappingRef.current = true;
     setIsSwapping(true);
+    isSwappingShared.value = true;
+    swapAnim.value = 0;
 
-    const finish = () => {
-      if (swapSettledRef.current) return;
-      swapSettledRef.current = true;
-      clearTimeout(safetyTimer);
-      clearTimeout(midSwapTimer);
+    swapIconRotate.value = withTiming(swapIconRotate.value + 180, {
+      duration: SWAP_DURATION * 0.6,
+      easing: Easing.inOut(Easing.quad),
+    });
 
-      setQuestion(previousAnswer);
-      setAnswer(previousQuestion);
-      isSwappingRef.current = false;
-      setIsSwapping(false);
-
-      // Reseteamos las animaciones de manera limpia en el siguiente frame sin saltos
-      requestAnimationFrame(() => {
-        swapAnim.setValue(0);
-        swapIconAnim.setValue(0);
-        swapInFlightRef.current = false;
-      });
-    };
-    const safetyTimer = setTimeout(finish, SWAP_DURATION + 250);
-
-    // El intercambio de texto ocurre ágilmente al cruzarse en 0.40
-    const midSwapTimer = setTimeout(() => {
+    if (midSwapTimerRef.current) clearTimeout(midSwapTimerRef.current);
+    midSwapTimerRef.current = setTimeout(() => {
       setQuestion(previousAnswer);
       setAnswer(previousQuestion);
     }, Math.round(SWAP_DURATION * 0.4));
 
-    Animated.parallel([
-      Animated.timing(swapAnim, {
-        toValue: 1,
+    swapAnim.value = withTiming(
+      1,
+      {
         duration: SWAP_DURATION,
         easing: Easing.inOut(Easing.quad),
-        useNativeDriver: true,
-      }),
-      Animated.timing(swapIconAnim, {
-        toValue: 1,
-        duration: SWAP_DURATION * 0.6,
-        delay: SWAP_DURATION * 0.15,
-        easing: Easing.inOut(Easing.quad),
-        useNativeDriver: true,
-      }),
-    ]).start(() => finish());
+      },
+      (finished) => {
+        'worklet';
+        if (finished) {
+          runOnJS(finishSwap)(previousAnswer, previousQuestion);
+        }
+      }
+    );
   };
 
   const handleSave = async (addAnother: boolean = false) => {
@@ -349,7 +396,8 @@ export function CustomCardModal({
           <Animated.View
             style={[
               StyleSheet.absoluteFill,
-              { backgroundColor: 'rgba(0,0,0,0.65)', opacity: backdropOpacity },
+              { backgroundColor: 'rgba(0,0,0,0.65)' },
+              backdropAnimatedStyle,
             ]}
           />
           <Pressable style={StyleSheet.absoluteFill} onPress={handleClose} />
@@ -359,8 +407,8 @@ export function CustomCardModal({
               {
                 backgroundColor: colors.surface,
                 borderColor: colors.border,
-                transform: [{ translateY: sheetTranslateY }],
               },
+              sheetAnimatedStyle,
               isSwapping && { overflow: 'visible' },
             ]}
           >
@@ -431,14 +479,8 @@ export function CustomCardModal({
                     shouldRasterizeIOS={isSwapping}
                     style={[
                       styles.swapBox,
-                      isSwapping && {
-                        zIndex: 30,
-                        opacity: swapTextOpacity,
-                        transform: [
-                          { translateY: questionTranslateY },
-                          { scale: cardScale },
-                        ],
-                      },
+                      isSwapping && { zIndex: 30 },
+                      questionAnimatedStyle,
                     ]}
                   >
                     <TextInput
@@ -482,7 +524,7 @@ export function CustomCardModal({
                     activeOpacity={0.75}
                     accessibilityLabel="Intercambiar"
                   >
-                    <Animated.View style={{ transform: [{ rotateZ: swapIconRotate }] }}>
+                    <Animated.View style={swapIconAnimatedStyle}>
                       <Ionicons
                         name="swap-vertical"
                         size={15}
@@ -544,14 +586,8 @@ export function CustomCardModal({
                     shouldRasterizeIOS={isSwapping}
                     style={[
                       styles.swapBox,
-                      isSwapping && {
-                        zIndex: 20,
-                        opacity: swapTextOpacity,
-                        transform: [
-                          { translateY: answerTranslateY },
-                          { scale: cardScale },
-                        ],
-                      },
+                      isSwapping && { zIndex: 20 },
+                      answerAnimatedStyle,
                     ]}
                   >
                     <TextInput

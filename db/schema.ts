@@ -8,11 +8,18 @@ import { sqliteTable, text, integer, real, index, primaryKey } from 'drizzle-orm
 
 // --- Tablas del usuario (manejadas por Drizzle ORM) ---
 
+export const folders = sqliteTable('folders', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+});
+
 export const decks = sqliteTable('decks', {
   id: text('id').primaryKey(),
   languageCode: text('language_code').notNull().default('ja-JP'),
   name: text('name').notNull(),
   type: text('type', { enum: ['language', 'custom'] }).notNull().default('language'),
+  folderId: text('folder_id').references(() => folders.id, { onDelete: 'set null' }),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
 

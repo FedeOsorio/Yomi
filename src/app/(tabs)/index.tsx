@@ -1,9 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
-  Animated,
-  Easing,
   FlatList,
   Keyboard,
   Modal,
@@ -17,11 +15,28 @@ import {
   Platform,
   KeyboardAvoidingView,
 } from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  interpolate,
+  Extrapolation,
+  runOnJS,
+  FadeIn,
+  FadeOut,
+  LinearTransition,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   getDecksWithStats,
   createDeck,
   deleteDeck,
+  getFolders,
+  createFolder,
+  renameFolder,
+  deleteFolder,
+  assignDeckToFolder,
+  Folder,
   DeckWithStats,
   SUPPORTED_LANGUAGES,
   ALL_LANGUAGES,
@@ -29,11 +44,14 @@ import {
 import { onDataChanged } from '../../../lib/backup-service';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { Shadows, Spacing, Typography } from '../../constants/theme';
+import { FolderFilterBar } from '../../components/FolderFilterBar';
 
 export default function HomeScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const [decks, setDecks] = useState<DeckWithStats[]>([]);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
   const [menuVisible, setMenuVisible] = useState(false);
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [newDeckName, setNewDeckName] = useState('');
@@ -41,28 +59,41 @@ export default function HomeScreen() {
   const [selectedLang, setSelectedLang] = useState('ja-JP');
   const [isCreating, setIsCreating] = useState(false);
 
-  const animProgress = React.useRef(new Animated.Value(0)).current;
+  const animProgress = useSharedValue(0);
 
-  const backdropOpacity = animProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, 1],
-  });
+  const backdropAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: animProgress.value,
+  }));
 
-  const sheetTranslateY = animProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [450, 0],
-  });
+  const sheetAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [
+      {
+        translateY: interpolate(
+          animProgress.value,
+          [0, 1],
+          [450, 0],
+          Extrapolation.CLAMP
+        ),
+      },
+    ],
+  }));
 
   const closeCreateModal = () => {
     Keyboard.dismiss();
-    Animated.timing(animProgress, {
-      toValue: 0,
-      duration: 180,
-      easing: Easing.out(Easing.ease),
-      useNativeDriver: true,
-    }).start(() => {
-      setCreateModalVisible(false);
-    });
+    animProgress.value = withSpring(
+      0,
+      {
+        damping: 24,
+        mass: 0.7,
+        stiffness: 260,
+      },
+      (finished) => {
+        'worklet';
+        if (finished) {
+          runOnJS(setCreateModalVisible)(false);
+        }
+      }
+    );
   };
 
   const router = useRouter();
@@ -71,9 +102,15 @@ export default function HomeScreen() {
   const tabBottomMargin = Platform.OS === 'android' ? Math.max(insets.bottom + 4, 8) : Math.max(insets.bottom, 6);
   const fabBottomPosition = tabBottomMargin + 60 + 16;
 
+  const fetchFolders = async () => {
+    const f = await getFolders();
+    setFolders(f);
+  };
+
   const fetchDecks = async () => {
-    const d = await getDecksWithStats();
+    const [d, f] = await Promise.all([getDecksWithStats(), getFolders()]);
     setDecks(d);
+    setFolders(f);
   };
 
   useFocusEffect(
@@ -88,6 +125,25 @@ export default function HomeScreen() {
     });
   }, []);
 
+  const deckCounts = useMemo(() => {
+    const counts: { [folderId: string]: number; total: number; unassigned: number } = {
+      total: decks.length,
+      unassigned: 0,
+    };
+    for (const d of decks) {
+      if (d.folderId) {
+        counts[d.folderId] = (counts[d.folderId] || 0) + 1;
+      } else {
+        counts.unassigned++;
+      }
+    }
+    return counts;
+  }, [decks]);
+
+  const displayedDecks = selectedFolderId
+    ? decks.filter((d) => d.folderId === selectedFolderId)
+    : decks;
+
   const handleOpenSearch = () => {
     setMenuVisible(false);
     router.push('/search');
@@ -98,13 +154,31 @@ export default function HomeScreen() {
     setDeckType('language');
     setNewDeckName('');
     setCreateModalVisible(true);
-    animProgress.setValue(0);
-    Animated.timing(animProgress, {
-      toValue: 1,
-      duration: 220,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
+    animProgress.value = 0;
+    animProgress.value = withSpring(1, {
+      damping: 24,
+      mass: 0.7,
+      stiffness: 260,
+    });
+  };
+
+  const handleCreateFolder = async (name: string) => {
+    const newId = await createFolder(name);
+    await fetchFolders();
+    setSelectedFolderId(newId);
+  };
+
+  const handleRenameFolder = async (folderId: string, newName: string) => {
+    await renameFolder(folderId, newName);
+    await fetchFolders();
+  };
+
+  const handleDeleteFolder = async (folderId: string) => {
+    await deleteFolder(folderId);
+    if (selectedFolderId === folderId) {
+      setSelectedFolderId(null);
+    }
+    await Promise.all([fetchDecks(), fetchFolders()]);
   };
 
   const handleCreateDeck = async () => {
@@ -117,7 +191,8 @@ export default function HomeScreen() {
       const newId = await createDeck(
         newDeckName.trim(),
         deckType === 'custom' ? 'es-ES' : selectedLang,
-        deckType
+        deckType,
+        selectedFolderId
       );
       setNewDeckName('');
       closeCreateModal();
@@ -148,67 +223,154 @@ export default function HomeScreen() {
     );
   };
 
+  const handleMoveDeckToFolder = (deck: DeckWithStats) => {
+    const options = [
+      {
+        text: 'Sin carpeta (General)',
+        onPress: async () => {
+          await assignDeckToFolder(deck.id, null);
+          await fetchDecks();
+        },
+      },
+      ...folders.map((f) => ({
+        text: f.name + (deck.folderId === f.id ? ' (Actual)' : ''),
+        onPress: async () => {
+          await assignDeckToFolder(deck.id, f.id);
+          await fetchDecks();
+        },
+      })),
+      { text: 'Cancelar', style: 'cancel' as const },
+    ];
+
+    Alert.alert('Mover mazo a carpeta', `Selecciona el destino para "${deck.name}":`, options);
+  };
+
+  const handleDeckLongPress = (item: DeckWithStats) => {
+    Alert.alert(
+      item.name,
+      'Opciones del mazo',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Mover a carpeta...',
+          onPress: () => handleMoveDeckToFolder(item),
+        },
+        {
+          text: 'Eliminar Mazo',
+          style: 'destructive',
+          onPress: () => handleDeleteDeck(item.id, item.name),
+        },
+      ]
+    );
+  };
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      {decks.length === 0 ? (
+      {/* Barra de Filtro de Carpetas estilo Samsung Notes */}
+      <FolderFilterBar
+        folders={folders}
+        selectedFolderId={selectedFolderId}
+        deckCounts={deckCounts}
+        onSelectFolder={setSelectedFolderId}
+        onCreateFolder={handleCreateFolder}
+        onRenameFolder={handleRenameFolder}
+        onDeleteFolder={handleDeleteFolder}
+      />
+
+      {displayedDecks.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <Ionicons name="albums-outline" size={64} color={colors.textMuted} />
-          <Text style={[styles.emptyText, { color: colors.textMuted }]}>No tienes mazos creados aún.</Text>
-          <Text style={[styles.emptySubtext, { color: colors.textMuted }]}>Toca el botón + para crear un mazo de estudio.</Text>
+          <Ionicons
+            name={selectedFolderId ? 'folder-open-outline' : 'albums-outline'}
+            size={64}
+            color={colors.textMuted}
+          />
+          <Text style={[styles.emptyText, { color: colors.textMuted }]}>
+            {selectedFolderId
+              ? 'No hay mazos en esta carpeta.'
+              : 'No tienes mazos creados aún.'}
+          </Text>
+          <Text style={[styles.emptySubtext, { color: colors.textMuted }]}>
+            {selectedFolderId
+              ? 'Toca + para crear un mazo aquí o mantén presionado un mazo para moverlo.'
+              : 'Toca el botón + para crear un mazo de estudio.'}
+          </Text>
         </View>
       ) : (
         <FlatList
-          data={decks}
+          data={displayedDecks}
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ paddingBottom: 110 }}
           renderItem={({ item }) => {
             const isCustom = item.type === 'custom';
             const langMeta = ALL_LANGUAGES.find((l) => l.code === item.languageCode);
-            return (
-              <TouchableOpacity
-                style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
-                activeOpacity={0.7}
-                onPress={() => router.push(`/deck/${item.id}`)}
-                onLongPress={() => handleDeleteDeck(item.id, item.name)}
-              >
-                <View style={styles.cardContent}>
-                  <View
-                    style={[
-                      styles.flagBox,
-                      {
-                        backgroundColor: isCustom
-                          ? 'rgba(16, 185, 129, 0.15)'
-                          : 'rgba(59, 130, 246, 0.15)',
-                      },
-                    ]}
-                  >
-                    {isCustom ? (
-                      <Ionicons name="layers" size={22} color="#10B981" />
-                    ) : (
-                      <Text style={styles.flagText}>{langMeta?.flag || '🌐'}</Text>
-                    )}
-                  </View>
-                  <View style={styles.deckInfoText}>
-                    <Text style={[styles.name, { color: colors.text }]}>{item.name}</Text>
-                    <Text style={[styles.subtext, { color: colors.textMuted }]}>
-                      {isCustom ? 'Personalizado' : (langMeta?.label || 'Idiomas')} • {item.wordCount}{' '}
-                      {item.wordCount === 1
-                        ? (isCustom ? 'tarjeta' : 'palabra')
-                        : (isCustom ? 'tarjetas' : 'palabras')}
-                    </Text>
-                  </View>
-                </View>
+            const folder = folders.find((f) => f.id === item.folderId);
 
-                <View style={styles.cardRight}>
-                  {item.dueCount > 0 && (
-                    <View style={styles.dueBadge}>
-                      <Text style={styles.dueBadgeText}>Repasar hoy</Text>
+            return (
+              <Animated.View
+                layout={LinearTransition.springify().damping(15)}
+                entering={FadeIn.duration(160)}
+                exiting={FadeOut.duration(120)}
+              >
+                <TouchableOpacity
+                  style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                  activeOpacity={0.7}
+                  onPress={() => router.push(`/deck/${item.id}`)}
+                  onLongPress={() => handleDeckLongPress(item)}
+                >
+                  <View style={styles.cardContent}>
+                    <View
+                      style={[
+                        styles.flagBox,
+                        {
+                          backgroundColor: isCustom
+                            ? 'rgba(16, 185, 129, 0.15)'
+                            : 'rgba(59, 130, 246, 0.15)',
+                        },
+                      ]}
+                    >
+                      {isCustom ? (
+                        <Ionicons name="layers" size={22} color="#10B981" />
+                      ) : (
+                        <Text style={styles.flagText}>{langMeta?.flag || '🌐'}</Text>
+                      )}
                     </View>
-                  )}
-                  
-                  <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-                </View>
-              </TouchableOpacity>
+                    <View style={styles.deckInfoText}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={[styles.name, { color: colors.text }]}>{item.name}</Text>
+                        {folder && (
+                          <View
+                            style={[
+                              styles.folderBadge,
+                              { backgroundColor: colors.surfaceHighlight },
+                            ]}
+                          >
+                            <Ionicons name="folder-outline" size={10} color={colors.primary} />
+                            <Text style={[styles.folderBadgeText, { color: colors.primary }]}>
+                              {folder.name}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text style={[styles.subtext, { color: colors.textMuted }]}>
+                        {isCustom ? 'Personalizado' : (langMeta?.label || 'Idiomas')} • {item.wordCount}{' '}
+                        {item.wordCount === 1
+                          ? (isCustom ? 'tarjeta' : 'palabra')
+                          : (isCustom ? 'tarjetas' : 'palabras')}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.cardRight}>
+                    {item.dueCount > 0 && (
+                      <View style={styles.dueBadge}>
+                        <Text style={styles.dueBadgeText}>Repasar hoy</Text>
+                      </View>
+                    )}
+                    
+                    <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+                  </View>
+                </TouchableOpacity>
+              </Animated.View>
             );
           }}
         />
@@ -295,7 +457,8 @@ export default function HomeScreen() {
             <Animated.View
               style={[
                 StyleSheet.absoluteFill,
-                { backgroundColor: 'rgba(0,0,0,0.6)', opacity: backdropOpacity },
+                { backgroundColor: 'rgba(0,0,0,0.6)' },
+                backdropAnimatedStyle,
               ]}
             />
             <Pressable style={StyleSheet.absoluteFill} onPress={closeCreateModal} />
@@ -307,8 +470,8 @@ export default function HomeScreen() {
                 {
                   backgroundColor: colors.surface,
                   borderColor: colors.border,
-                  transform: [{ translateY: sheetTranslateY }],
                 },
+                sheetAnimatedStyle,
               ]}
               onStartShouldSetResponder={() => true}
             >
@@ -534,6 +697,20 @@ const styles = StyleSheet.create({
   },
   name: { ...Typography.h3 },
   subtext: { ...Typography.bodySmall, marginTop: 2 },
+  folderBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(59, 130, 246, 0.3)',
+  },
+  folderBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
   cardRight: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -2,7 +2,7 @@
   "expo": {
     "name": "Yomi",
     "slug": "Yomi",
-    "version": "0.2.8",
+    "version": "0.2.9",
     "orientation": "default",
     "scheme": [
       "yomi",
@@ -12,7 +12,7 @@
     "userInterfaceStyle": "automatic",
     "android": {
       "package": "com.kuyi.yomi",
-      "versionCode": 16,
+      "versionCode": 17,
       "adaptiveIcon": {
         "backgroundColor": "#2d74b2",
         "foregroundImage": "./assets/images/icon.png"
@@ -96,7 +96,8 @@
             "assets/model-ja-jp"
           ]
         }
-      ]
+      ],
+      "./plugins/withAndroidSigning"
     ],
     "experiments": {
       "typedRoutes": true,

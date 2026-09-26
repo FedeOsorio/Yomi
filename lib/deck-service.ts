@@ -1,13 +1,20 @@
 import { db } from '../db';
-import { decks, words, srsItems } from '../db/schema';
+import { decks, words, srsItems, folders } from '../db/schema';
 import * as crypto from 'expo-crypto';
 import { eq, lte, and } from 'drizzle-orm';
+
+export interface Folder {
+  id: string;
+  name: string;
+  createdAt: Date;
+}
 
 export interface DeckWithStats {
   id: string;
   name: string;
   languageCode: string;
   type: 'language' | 'custom';
+  folderId?: string | null;
   createdAt: Date;
   wordCount: number;
   activeCardsCount: number;
@@ -40,7 +47,8 @@ export function getLanguageMeta(code?: string) {
 export async function createDeck(
   name: string,
   languageCode: string = 'ja-JP',
-  type: 'language' | 'custom' = 'language'
+  type: 'language' | 'custom' = 'language',
+  folderId?: string | null
 ): Promise<string> {
   const allowed = ['ja-JP', 'zh-CN'];
   const finalLang = type === 'custom' ? (languageCode || 'es-ES') : (allowed.includes(languageCode) ? languageCode : 'ja-JP');
@@ -50,13 +58,58 @@ export async function createDeck(
     name: name.trim(),
     languageCode: finalLang,
     type,
+    folderId: folderId || null,
     createdAt: new Date(),
   });
   return id;
 }
 
-export async function createCustomDeck(name: string): Promise<string> {
-  return createDeck(name, 'es-ES', 'custom');
+export async function createCustomDeck(name: string, folderId?: string | null): Promise<string> {
+  return createDeck(name, 'es-ES', 'custom', folderId);
+}
+
+export async function getFolders(): Promise<Folder[]> {
+  const result = await db.select().from(folders);
+  return result.map((f) => ({
+    id: f.id,
+    name: f.name,
+    createdAt: f.createdAt,
+  }));
+}
+
+export async function createFolder(name: string): Promise<string> {
+  const id = crypto.randomUUID();
+  await db.insert(folders).values({
+    id,
+    name: name.trim(),
+    createdAt: new Date(),
+  });
+  return id;
+}
+
+export async function renameFolder(folderId: string, newName: string): Promise<void> {
+  await db
+    .update(folders)
+    .set({ name: newName.trim() })
+    .where(eq(folders.id, folderId));
+}
+
+export async function deleteFolder(folderId: string): Promise<void> {
+  // Desvincular mazos que apuntaban a esta carpeta
+  await db
+    .update(decks)
+    .set({ folderId: null })
+    .where(eq(decks.folderId, folderId));
+
+  // Eliminar la carpeta
+  await db.delete(folders).where(eq(folders.id, folderId));
+}
+
+export async function assignDeckToFolder(deckId: string, folderId: string | null): Promise<void> {
+  await db
+    .update(decks)
+    .set({ folderId: folderId || null })
+    .where(eq(decks.id, deckId));
 }
 
 export async function deleteDeck(deckId: string): Promise<void> {
@@ -140,6 +193,7 @@ export async function getDecksWithStats(): Promise<DeckWithStats[]> {
       name: deck.name,
       languageCode: deck.languageCode,
       type: (deck.type as 'language' | 'custom') || 'language',
+      folderId: deck.folderId || null,
       createdAt: deck.createdAt,
       wordCount: deckWords.length,
       activeCardsCount,
