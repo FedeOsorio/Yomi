@@ -1,5 +1,7 @@
 import {
+  conjugateJapanese,
   getEffectiveCardLanguage,
+  JapaneseConjugationForm,
   toNormalizedHiragana,
 } from './japanese-utils';
 import { KANJI_READINGS_MAP } from './kanji-readings-db';
@@ -349,6 +351,113 @@ class VoskVoiceService {
 
   getVoskGrammarForCard(card: DueCardWithContext, _lang?: string): string[] {
     return this.buildGrammarForCard(card);
+  }
+
+  /**
+   * Construye una gramática cerrada de Vosk para la práctica de conjugación actual.
+   * Incluye la forma conjugada esperada, sus variantes fonéticas, y las demás
+   * formas conjugadas/base de la palabra para que si el usuario conjuga erróneamente,
+   * Vosk reconozca el término y la evalúe como incorrecta con feedback inmediato,
+   * en lugar de clasificarla como [unk] o ruido en silencio.
+   */
+  buildGrammarForConjugation(
+    kanji: string,
+    reading: string,
+    category: string = '',
+    targetForm?: JapaneseConjugationForm
+  ): string[] {
+    const grammarSet = new Set<string>();
+
+    const addWordForms = (k?: string, r?: string) => {
+      const cleanK = (k || '').trim();
+      const cleanR = (r || '').trim();
+      if (cleanK && !/^[a-zA-Z\s]+$/.test(cleanK)) {
+        grammarSet.add(cleanK);
+      }
+      if (cleanR && !/^[a-zA-Z\s]+$/.test(cleanR)) {
+        const hira = toNormalizedHiragana(cleanR);
+        if (hira) {
+          grammarSet.add(hira);
+          const kata = hira.replace(/[\u3041-\u3096]/g, (ch) =>
+            String.fromCharCode(ch.charCodeAt(0) + 0x60)
+          );
+          if (kata) grammarSet.add(kata);
+        }
+      }
+    };
+
+    // 1. Forma base de diccionario
+    addWordForms(kanji, reading);
+
+    // 2. Si se especifica la forma objetivo, asegurar la forma esperada y variantes comunes
+    const cat = category || '';
+    if (targetForm) {
+      const expected = conjugateJapanese(kanji, reading, cat, targetForm);
+      addWordForms(expected.kanji, expected.reading);
+
+      const norm = toNormalizedHiragana(expected.reading);
+      if (norm.endsWith('なくて')) {
+        addWordForms('', norm.replace(/なくて$/, 'ないで'));
+      }
+      if (norm.endsWith('ないで')) {
+        addWordForms('', norm.replace(/ないで$/, 'なくて'));
+      }
+      if (norm.endsWith('じゃない')) {
+        addWordForms('', norm.replace(/じゃない$/, 'ではない'));
+      }
+      if (norm.endsWith('ではない')) {
+        addWordForms('', norm.replace(/ではない$/, 'じゃない'));
+      }
+      if (norm.endsWith('じゃなかった')) {
+        addWordForms('', norm.replace(/じゃなかった$/, 'ではなかった'));
+      }
+      if (norm.endsWith('ではなかった')) {
+        addWordForms('', norm.replace(/ではなかった$/, 'じゃなかった'));
+      }
+      if (norm.endsWith('じゃなくて')) {
+        addWordForms('', norm.replace(/じゃなくて$/, 'ではなくて'));
+      }
+      if (norm.endsWith('ではなくて')) {
+        addWordForms('', norm.replace(/ではなくて$/, 'じゃなくて'));
+      }
+      if (norm.endsWith('じゃありません')) {
+        addWordForms('', norm.replace(/じゃありません$/, 'じゃないです'));
+        addWordForms('', norm.replace(/じゃありません$/, 'ではありません'));
+      }
+      if (norm.endsWith('じゃないです')) {
+        addWordForms('', norm.replace(/じゃないです$/, 'じゃありません'));
+        addWordForms('', norm.replace(/じゃないです$/, 'ではありません'));
+      }
+      if (norm.endsWith('くないです')) {
+        addWordForms('', norm.replace(/くないです$/, 'くありません'));
+      }
+      if (norm.endsWith('くありません')) {
+        addWordForms('', norm.replace(/くありません$/, 'くないです'));
+      }
+      if (norm.endsWith('くなかったです')) {
+        addWordForms('', norm.replace(/くなかったです$/, 'くありませんでした'));
+      }
+    }
+
+    // 3. Incluir las demás conjugaciones posibles para capturar respuestas incorrectas
+    const allForms: JapaneseConjugationForm[] = [
+      'te', 'nakute', 'ta', 'nai', 'nakatta', 'masu', 'mashita', 'masen', 'mashou', 'adverbial'
+    ];
+    for (const form of allForms) {
+      if (form !== targetForm) {
+        const other = conjugateJapanese(kanji, reading, cat, form);
+        addWordForms(other.kanji, other.reading);
+      }
+    }
+
+    const validWords = Array.from(grammarSet)
+      .map((w) => w.trim())
+      .filter((w) => w.length > 0 && w !== '[unk]');
+
+    // Token de descarte para ruidos externos ajenos a esta palabra
+    validWords.push('[unk]');
+
+    return validWords;
   }
 
   /**

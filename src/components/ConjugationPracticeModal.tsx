@@ -15,21 +15,24 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { speakText } from '../../lib/audio-service';
+import { preloadAudioService, speakText } from '../../lib/audio-service';
 import { parseFurigana } from '../../lib/japanese-search';
 import {
   conjugateJapanese,
+  expandKanjiToHiraganaCandidates,
   JapaneseConjugationForm,
   romajiToHiragana,
   toNormalizedHiragana,
 } from '../../lib/japanese-utils';
 import { speechService } from '../../lib/speech-recognition-service';
+import { voskVoiceService } from '../../lib/vosk-service';
 import {
   ConjugableWord,
   getAvailableDeckWordsForConjugation,
   getConjugableWordsForDeck,
   setWordConjugationEnabled,
   toggleWordFormConjugation,
+  updateWordConjugationStreak,
 } from '../../lib/word-service';
 import { useTheme } from '../../providers/ThemeProvider';
 import { Shadows, Spacing } from '../constants/theme';
@@ -56,31 +59,77 @@ export interface FormPromptDetails {
 }
 
 const FORM_OPTIONS: Array<{ key: ConjugationFilterForm; label: string; suffix: string }> = [
-  { key: 'all', label: 'Aleatorio (Todas)', suffix: 'Todas' },
-  { key: 'te', label: 'Forma -TE', suffix: '-て / -で / -くて' },
-  { key: 'nakute', label: '-TE Negativa', suffix: '-なくて / -ないで' },
-  { key: 'ta', label: 'Pasado Informal', suffix: '-た / -だ / -かった' },
-  { key: 'nai', label: 'Negativo Informal', suffix: '-ない / -くない' },
-  { key: 'nakatta', label: 'Pasado Neg. Informal', suffix: '-なかった / -くなかった' },
-  { key: 'adverbial', label: 'Adverbial', suffix: '-く / -に' },
-  { key: 'masu', label: 'Presente Formal', suffix: '-ます / -です' },
-  { key: 'mashita', label: 'Pasado Formal', suffix: '-ました / -でした' },
-  { key: 'masen', label: 'Negativo Formal', suffix: '-ません / -じゃありません' },
-  { key: 'mashou', label: 'Volitiva (Hagamos)', suffix: '-ましょう' },
+  { key: 'all', label: 'Aleatorio (Todas)', suffix: '' },
+  { key: 'te', label: 'Forma -te', suffix: '' },
+  { key: 'nakute', label: 'Forma -te negativa', suffix: '' },
+  { key: 'ta', label: 'Pasado informal', suffix: '' },
+  { key: 'nai', label: 'Negativo informal', suffix: '' },
+  { key: 'nakatta', label: 'Pasado neg. informal', suffix: '' },
+  { key: 'adverbial', label: 'Forma adverbial', suffix: '' },
+  { key: 'masu', label: 'Presente formal', suffix: '' },
+  { key: 'mashita', label: 'Pasado formal', suffix: '' },
+  { key: 'masen', label: 'Negativo formal', suffix: '' },
+  { key: 'mashou', label: 'Forma -mashou', suffix: '' },
 ];
 
 const FORM_LABELS: Record<JapaneseConjugationForm, string> = {
-  te: 'Forma -TE (Conectiva)',
-  nakute: 'Forma -TE Negativa',
-  ta: 'Pasado Informal (-ta)',
-  nai: 'Negativo Informal (-nai)',
-  nakatta: 'Pasado Negativo Informal (-nakatta)',
-  adverbial: 'Forma Adverbial (-ku / -ni)',
-  masu: 'Presente Formal (-masu)',
-  mashita: 'Pasado Formal (-mashita)',
-  masen: 'Negativo Formal (-masen)',
-  mashou: 'Forma Volitiva (Invitación / -mashou)',
+  te: 'Forma -te',
+  nakute: 'Forma -te negativa',
+  ta: 'Pasado informal',
+  nai: 'Negativo informal',
+  nakatta: 'Pasado negativo informal',
+  adverbial: 'Forma adverbial',
+  masu: 'Presente formal',
+  mashita: 'Pasado formal',
+  masen: 'Negativo formal',
+  mashou: 'Forma -mashou',
 };
+
+/**
+ * Obtiene la terminación o sufijo real esperado (Streak 0) para guiar al usuario.
+ * Ej: hanasu (はなす) -> hanashite (はなして) da "-して".
+ */
+export function getConjugationSuffix(baseReading: string, conjugatedReading: string): string {
+  if (!baseReading || !conjugatedReading) return '';
+  let i = 0;
+  while (i < baseReading.length && i < conjugatedReading.length && baseReading[i] === conjugatedReading[i]) {
+    i++;
+  }
+  const remainder = conjugatedReading.slice(i);
+  return remainder ? `-${remainder}` : `-${conjugatedReading}`;
+}
+
+/**
+ * Obtiene el abanico de posibilidades/distractores de una forma (Streak 1).
+ * Fuerza al usuario a recordar la regla de transformación.
+ */
+export function getFormDistractors(form?: JapaneseConjugationForm): string {
+  if (!form) return '';
+  switch (form) {
+    case 'te':
+      return '-って / -んで / -して / -いて / -て';
+    case 'ta':
+      return '-った / -んだ / -した / -いた / -た';
+    case 'nai':
+      return '-かない / -がない / -さない / -たない / -まない / -らない / -わない / -ない';
+    case 'nakatta':
+      return '-なかった / -かなかった / -さなかった / -たなかった / -まなかった';
+    case 'nakute':
+      return '-なくて / -かなくて / -さなくて / -たなくて / -まなくて';
+    case 'masu':
+      return '-ます / -きます / -します / -ちます / -にます / -みます / -ります';
+    case 'mashita':
+      return '-ました / -きました / -しました / -ちました / -みました / -りました';
+    case 'masen':
+      return '-ません / -きません / -しません / -ちません / -みません / -りません';
+    case 'mashou':
+      return '-ましょう / -きましょう / -しましょう / -ちましょう / -みましょう / -りましょう';
+    case 'adverbial':
+      return '-く / -に';
+    default:
+      return '';
+  }
+}
 
 export function getPromptDetailsForForm(
   word?: ConjugableWord,
@@ -88,89 +137,89 @@ export function getPromptDetailsForForm(
 ): FormPromptDetails {
   if (!form) {
     return {
-      badge: 'CONEXIÓN / PETICIÓN',
-      title: 'Forma Conectiva (-TE)',
-      hint: 'Terminación en -て / -で / -くて',
-      explanation: 'Para conectar acciones consecutivas o pedir favores.',
+      badge: 'FORMA CONECTIVA',
+      title: 'Forma -te',
+      hint: '',
+      explanation: 'Para conectar acciones consecutivas o peticiones.',
     };
   }
 
   switch (form) {
     case 'ta':
       return {
-        badge: 'PASADO INFORMAL (LLANO)',
-        title: 'Pasado Informal',
-        hint: 'Terminación en -た / -だ / -かった',
-        explanation: 'Acción pasada en lenguaje casual o cotidiano.',
+        badge: 'PASADO INFORMAL',
+        title: 'Pasado informal',
+        hint: '',
+        explanation: 'Acción pasada en lenguaje informal.',
       };
     case 'nai':
       return {
-        badge: 'NEGATIVO INFORMAL (LLANO)',
-        title: 'Negativo Informal',
-        hint: 'Terminación en -ない / -くない / -じゃない',
-        explanation: 'Negación en presente para lenguaje casual.',
+        badge: 'NEGATIVO INFORMAL',
+        title: 'Negativo informal',
+        hint: '',
+        explanation: 'Negación en presente para lenguaje informal.',
       };
     case 'nakatta':
       return {
         badge: 'PASADO NEGATIVO INFORMAL',
-        title: 'Pasado Negativo Informal',
-        hint: 'Terminación en -なかった / -くなかった',
-        explanation: 'Acción que no ocurrió, en lenguaje casual.',
+        title: 'Pasado negativo informal',
+        hint: '',
+        explanation: 'Acción que no ocurrió, en lenguaje informal.',
       };
     case 'masu':
       return {
-        badge: 'PRESENTE FORMAL (CORTÉS)',
-        title: 'Presente Formal',
-        hint: 'Terminación en -ます / -です',
-        explanation: 'Afirmación en presente/futuro en lenguaje respetuoso.',
+        badge: 'PRESENTE FORMAL',
+        title: 'Presente formal',
+        hint: '',
+        explanation: 'Presente o futuro en lenguaje formal.',
       };
     case 'mashita':
       return {
-        badge: 'PASADO FORMAL (CORTÉS)',
-        title: 'Pasado Formal',
-        hint: 'Terminación en -ました / -でした',
-        explanation: 'Acción que ya ocurrió, en lenguaje respetuoso.',
+        badge: 'PASADO FORMAL',
+        title: 'Pasado formal',
+        hint: '',
+        explanation: 'Acción pasada en lenguaje formal.',
       };
     case 'masen':
       return {
-        badge: 'NEGATIVO FORMAL (CORTÉS)',
-        title: 'Negativo Formal',
-        hint: 'Terminación en -ません / -じゃありません',
-        explanation: 'Negación en presente, en lenguaje respetuoso.',
+        badge: 'NEGATIVO FORMAL',
+        title: 'Negativo formal',
+        hint: '',
+        explanation: 'Negación en presente, en lenguaje formal.',
       };
     case 'mashou':
       return {
-        badge: 'VOLITIVA (INVITACIÓN / "VAMOS A...")',
-        title: 'Forma Volitiva (Invitación)',
-        hint: 'Terminación en -ましょう ("¡Hagamos...!", "¡Vamos a...!")',
-        explanation: 'Expresa propuesta, invitación o intención conjunta.',
+        badge: 'INVITACIÓN / PROPUESTA',
+        title: 'Forma -mashou',
+        hint: '',
+        explanation: 'Expresa invitación o propuesta conjunta ("vamos a...").',
       };
     case 'te':
       return {
-        badge: 'FORMA CONECTIVA (-TE)',
-        title: 'Forma Conectiva (-TE)',
-        hint: 'Terminación en -て / -で / -くて',
+        badge: 'FORMA CONECTIVA',
+        title: 'Forma -te',
+        hint: '',
         explanation: 'Conecta dos o más acciones en una misma oración.',
       };
     case 'nakute':
       return {
         badge: 'FORMA CONECTIVA NEGATIVA',
-        title: 'Forma Conectiva Negativa',
-        hint: 'Terminación en -なくて / -ないで',
-        explanation: 'Conecta en negativo o expresa "sin haber hecho...".',
+        title: 'Forma -te negativa',
+        hint: '',
+        explanation: 'Conecta acciones en negativo.',
       };
     case 'adverbial':
       return {
         badge: 'FORMA ADVERBIAL',
-        title: 'Forma Adverbial',
-        hint: 'Terminación en -く / -に',
-        explanation: 'Convierte el adjetivo en adverbio para modificar al verbo.',
+        title: 'Forma adverbial',
+        hint: '',
+        explanation: 'Convierte en adverbio para modificar al verbo.',
       };
     default:
       return {
         badge: 'FORMA -TE',
-        title: 'Forma -TE',
-        hint: 'Terminación en -て / -で',
+        title: 'Forma -te',
+        hint: '',
         explanation: 'Forma conectiva básica.',
       };
   }
@@ -281,6 +330,8 @@ export function ConjugationPracticeModal({
   // Carga inicial de verbos/adjetivos conjugables del mazo
   useEffect(() => {
     if (visible && deckId) {
+      preloadAudioService('ja-JP').catch(() => {});
+      voskVoiceService.loadModel('model-ja-jp').catch(() => {});
       loadWords();
     } else {
       resetSession();
@@ -478,7 +529,7 @@ export function ConjugationPracticeModal({
   };
 
   // Evaluación de la respuesta
-  const evaluateAnswer = (answer: string) => {
+  const evaluateAnswer = (answer: string, alternatives?: string[]) => {
     if (!answer || !answer.trim() || hasEvaluatedRef.current) return;
 
     // Obtener la palabra actual y forma esperada directamente desde los refs para evitar stale closures
@@ -496,17 +547,32 @@ export function ConjugationPracticeModal({
       activeForm
     );
 
-    // Detener el micrófono inmediatamente al evaluar
-    speechService.stop();
+    // Detener el micrófono inmediatamente si estaba activo
+    if (isListening || speechService.isListening()) {
+      speechService.stop().catch(() => {});
+    }
     setIsListening(false);
 
     const cleanAnswer = answer.trim();
-    const normalizedAnswer = toNormalizedHiragana(cleanAnswer);
-    const normalizedExpected = toNormalizedHiragana(expected.reading);
+    const rawHypotheses = [cleanAnswer, ...(alternatives || []).map((a) => a.trim())].filter(Boolean);
 
     const validCandidates = new Set<string>();
-    validCandidates.add(cleanAnswer);
-    validCandidates.add(normalizedAnswer);
+    for (const hypo of rawHypotheses) {
+      validCandidates.add(hypo);
+      const romConverted = romajiToHiragana(hypo);
+      if (romConverted) validCandidates.add(romConverted);
+      const norm = toNormalizedHiragana(hypo);
+      if (norm) validCandidates.add(norm);
+
+      // Descomponer kanjis y homófonos acústicos de Google STT (ej. 揚がって / 挙がって -> あがって)
+      const expandedCandidates = expandKanjiToHiraganaCandidates(hypo);
+      for (const cand of expandedCandidates) {
+        validCandidates.add(cand);
+      }
+    }
+
+    const normalizedAnswer = toNormalizedHiragana(cleanAnswer);
+    const normalizedExpected = toNormalizedHiragana(expected.reading);
 
     const validTargets = new Set<string>();
     validTargets.add(expected.kanji);
@@ -569,25 +635,37 @@ export function ConjugationPracticeModal({
       validTargets.add(normalizedExpected.replace(/くなかったです$/, 'くありませんでした'));
     }
 
-    // Suffix match: si el usuario responde únicamente con el sufijo (mínimo 2 caracteres kana)
-    const isSuffixMatch = Array.from(validTargets).some(
-      (target) =>
-        normalizedAnswer.length >= 2 &&
-        toNormalizedHiragana(target).endsWith(normalizedAnswer)
+    // Validación estricta de la palabra completa conjugada (sin aceptar sufijos parciales como 'kimashita' para 'kikimashita')
+    const match = Array.from(validTargets).some(
+      (target) => validCandidates.has(target) || validCandidates.has(toNormalizedHiragana(target))
     );
-
-    const match =
-      Array.from(validTargets).some(
-        (target) => validCandidates.has(target) || validCandidates.has(toNormalizedHiragana(target))
-      ) || isSuffixMatch;
 
     setIsCorrect(match);
     setHasEvaluated(true);
     hasEvaluatedRef.current = true;
     setTotalAttempted((prev) => prev + 1);
+
+    // Actualizar racha progresiva individual (streak)
+    const currentStreak = activeWord.conjugationStreaks?.[activeForm] || 0;
+    const nextStreak = match ? currentStreak + 1 : 0;
+    if (!activeWord.conjugationStreaks) {
+      activeWord.conjugationStreaks = {};
+    }
+    activeWord.conjugationStreaks[activeForm] = nextStreak;
+    updateWordConjugationStreak(activeWord.id, activeForm, nextStreak).catch((err) => {
+      console.warn('Error al persistir streak de conjugación:', err);
+    });
+
     if (match) {
       setCorrectCount((prev) => prev + 1);
-      speakText(expected.kanji, 'ja-JP');
+      // Si el micrófono estaba activo, esperar un tick de 60ms para que Android libere el AudioFocus nativo
+      if (isListening || speechService.isListening()) {
+        setTimeout(() => {
+          speakText(expected.kanji, 'ja-JP', expected.reading);
+        }, 60);
+      } else {
+        speakText(expected.kanji, 'ja-JP', expected.reading);
+      }
     }
 
     // Animación suave de entrada del feedback sin saltos
@@ -622,44 +700,70 @@ export function ConjugationPracticeModal({
     try {
       await speechService.stop();
     } catch { }
-    const started = await speechService.start('ja-JP', {
-      onStart: () => setIsListening(true),
-      onResult: (transcript, isFinal) => {
-        if (hasEvaluatedRef.current) return;
-        const hira = romajiToHiragana(transcript);
-        setTextInput(hira);
-        setSpokenTranscript(transcript);
-        if (isFinal && transcript.trim()) {
-          speechService.stop();
-          setIsListening(false);
-          evaluateAnswer(hira);
-        }
+
+    const activeItem = queueRef.current[currentIndexRef.current];
+    let voskGrammar: string[] | undefined;
+    let initialPrompt: string | undefined;
+    let contextualStrings: string[] | undefined;
+
+    if (activeItem) {
+      const { word, form } = activeItem;
+      const expected = conjugateJapanese(word.kanji, word.reading, word.category, form);
+      voskGrammar = voskVoiceService.buildGrammarForConjugation(word.kanji, word.reading, word.category, form);
+      initialPrompt = expected.reading || expected.kanji;
+      contextualStrings = [expected.kanji, expected.reading, word.kanji, word.reading].filter(Boolean);
+    }
+
+    const started = await speechService.start(
+      'ja-JP',
+      {
+        onStart: () => setIsListening(true),
+        onResult: (transcript, isFinal, alternatives) => {
+          if (hasEvaluatedRef.current) return;
+          if (!transcript || transcript === '[unk]') return;
+          const hira = romajiToHiragana(transcript);
+          setTextInput(hira);
+          setSpokenTranscript(transcript);
+          if (isFinal && transcript.trim()) {
+            speechService.stop();
+            setIsListening(false);
+            evaluateAnswer(transcript, alternatives);
+          }
+        },
+        onError: () => {
+          // En modo automático, si el servicio da timeout o error antes de responder, reconectar automáticamente
+          if (autoVoiceModeRef.current && !hasEvaluatedRef.current) {
+            setTimeout(() => {
+              if (autoVoiceModeRef.current && !hasEvaluatedRef.current) {
+                startListening();
+              }
+            }, 300);
+          } else {
+            setIsListening(false);
+          }
+        },
+        onEnd: () => {
+          // En modo automático, si finaliza por silencio antes de responder, reconectar automáticamente
+          if (autoVoiceModeRef.current && !hasEvaluatedRef.current) {
+            setTimeout(() => {
+              if (autoVoiceModeRef.current && !hasEvaluatedRef.current) {
+                startListening();
+              }
+            }, 200);
+          } else {
+            setIsListening(false);
+          }
+        },
       },
-      onError: () => {
-        // En modo automático, si Google Speech da timeout o error antes de responder, reconectar automáticamente
-        if (autoVoiceModeRef.current && !hasEvaluatedRef.current) {
-          setTimeout(() => {
-            if (autoVoiceModeRef.current && !hasEvaluatedRef.current) {
-              startListening();
-            }
-          }, 300);
-        } else {
-          setIsListening(false);
-        }
-      },
-      onEnd: () => {
-        // En modo automático, si Google Speech finaliza por silencio antes de responder, reconectar automáticamente
-        if (autoVoiceModeRef.current && !hasEvaluatedRef.current) {
-          setTimeout(() => {
-            if (autoVoiceModeRef.current && !hasEvaluatedRef.current) {
-              startListening();
-            }
-          }, 200);
-        } else {
-          setIsListening(false);
-        }
-      },
-    });
+      {
+        contextualStrings,
+        initialPrompt,
+        voskGrammar,
+        preferredEngine: 'vosk',
+        continuous: true,
+        maxAlternatives: 5,
+      }
+    );
 
     if (started) {
       setIsListening(true);
@@ -950,18 +1054,33 @@ export function ConjugationPracticeModal({
                 </View>
 
                 {/* Pregunta Objetivo */}
-                <View style={[styles.targetPromptBox, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}>
-                  <View style={[styles.targetFormBadge, { backgroundColor: colors.primary + '18' }]}>
-                    <Text style={[styles.targetFormBadgeText, { color: colors.primary }]}>
-                      {currentTargetDetails.badge}
-                    </Text>
-                  </View>
+                <View style={styles.targetPromptBox}>
                   <Text style={[styles.targetPromptText, { color: colors.text }]}>
-                    Pasar a <Text style={{ fontWeight: '800', color: colors.primary }}>{currentTargetDetails.title}</Text>
+                    Pasar a <Text style={{ fontWeight: '800', color: colors.primary }}>{currentTargetLabel}</Text>
                   </Text>
-                  <Text style={[styles.targetPromptHint, { color: colors.textMuted }]}>
-                    {currentTargetDetails.hint}
-                  </Text>
+                  {/* Pistas Progresivas según Racha (Streak) simplemente en gris sin la palabra Pista */}
+                  {(() => {
+                    const currentStreak = currentWord?.conjugationStreaks?.[currentForm] || 0;
+                    if (currentStreak === 0) {
+                      const suffix = getConjugationSuffix(currentWord?.reading || '', expectedConjugation.reading || '');
+                      if (!suffix) return null;
+                      return (
+                        <Text style={[styles.targetPromptHint, { color: colors.textMuted }]}>
+                          {suffix}
+                        </Text>
+                      );
+                    }
+                    if (currentStreak === 1) {
+                      const distractors = getFormDistractors(currentForm);
+                      if (!distractors) return null;
+                      return (
+                        <Text style={[styles.targetPromptHint, { color: colors.textMuted }]}>
+                          {distractors}
+                        </Text>
+                      );
+                    }
+                    return null;
+                  })()}
                 </View>
 
                 {/* Input y Botón de Micrófono */}
@@ -1554,30 +1673,16 @@ const styles = StyleSheet.create({
   },
   targetPromptBox: {
     alignItems: 'center',
+    marginTop: Spacing.sm,
     marginBottom: Spacing.md,
-    marginTop: Spacing.xs,
-    paddingVertical: 12,
-    paddingHorizontal: Spacing.md,
-    borderRadius: 14,
-    borderWidth: 1,
-  },
-  targetFormBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    marginBottom: 6,
-  },
-  targetFormBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.6,
   },
   targetPromptText: {
     fontSize: 16,
     textAlign: 'center',
+    letterSpacing: 0.2,
   },
   targetPromptHint: {
-    fontSize: 12,
+    fontSize: 13,
     marginTop: 4,
     textAlign: 'center',
     fontWeight: '500',
@@ -1644,9 +1749,10 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.sm + 2,
     paddingBottom: Spacing.sm + 4,
     borderRadius: 16,
-    borderWidth: 1,
+    borderWidth: 1.5,
     gap: 4,
-    ...Shadows.card,
+    elevation: 0,
+    shadowOpacity: 0,
   },
   feedbackHeader: {
     flexDirection: 'row',

@@ -44,6 +44,8 @@ export interface TranslationSchema {
     practiceAll: string;
     noCardsDue: string;
     noCardsDueSub: string;
+    voiceMethodDesc: string;
+    voicePreparingDesc: string;
   };
   search: {
     searchPlaceholder: string;

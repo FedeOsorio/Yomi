@@ -776,6 +776,7 @@ export interface ConjugableWord {
   category: string;
   level?: string;
   disabledConjugations?: string[];
+  conjugationStreaks?: Record<string, number>;
 }
 
 /**
@@ -791,6 +792,7 @@ export async function getConjugableWordsForDeck(deckId: string): Promise<Conjuga
     let level = '';
     let conjugationEnabled: boolean | undefined = undefined;
     let disabledConjugations: string[] = [];
+    let conjugationStreaks: Record<string, number> = {};
 
     let dictionaryForm: { kanji: string; reading: string } | undefined = undefined;
 
@@ -804,6 +806,9 @@ export async function getConjugableWordsForDeck(deckId: string): Promise<Conjuga
         }
         if (Array.isArray(aux.disabledConjugations)) {
           disabledConjugations = aux.disabledConjugations;
+        }
+        if (aux.conjugationStreaks && typeof aux.conjugationStreaks === 'object') {
+          conjugationStreaks = aux.conjugationStreaks;
         }
         if (aux.dictionaryForm && aux.dictionaryForm.kanji) {
           if (aux.dictionaryForm.kanji.length >= 2 && !/[\u4e00-\u9faf]$/.test(aux.dictionaryForm.kanji) && aux.dictionaryForm.kanji !== 'u') {
@@ -872,6 +877,7 @@ export async function getConjugableWordsForDeck(deckId: string): Promise<Conjuga
         category,
         level: level || undefined,
         disabledConjugations,
+        conjugationStreaks,
       });
     }
   }
@@ -924,6 +930,33 @@ export async function setWordConjugationEnabled(wordId: string, enabled: boolean
     } catch { }
   }
   auxObj.conjugationEnabled = enabled;
+
+  await db.update(words)
+    .set({ auxiliaryInfo: JSON.stringify(auxObj) })
+    .where(eq(words.id, wordId));
+}
+
+/**
+ * Actualiza la racha de aciertos (streak) para una forma conjugada específica de una palabra.
+ * Nivel 0 = 0 aciertos (o fallada) -> pista de terminación
+ * Nivel 1 = 1 acierto -> pista con opciones/distractores
+ * Nivel 2+ = 2 o más aciertos -> sin pistas
+ */
+export async function updateWordConjugationStreak(wordId: string, form: string, streak: number): Promise<void> {
+  const existingWords = await db.select().from(words).where(eq(words.id, wordId)).limit(1);
+  if (existingWords.length === 0) return;
+
+  const word = existingWords[0];
+  let auxObj: Record<string, any> = {};
+  if (word.auxiliaryInfo) {
+    try {
+      auxObj = JSON.parse(word.auxiliaryInfo);
+    } catch { }
+  }
+  if (!auxObj.conjugationStreaks || typeof auxObj.conjugationStreaks !== 'object') {
+    auxObj.conjugationStreaks = {};
+  }
+  auxObj.conjugationStreaks[form] = Math.max(0, streak);
 
   await db.update(words)
     .set({ auxiliaryInfo: JSON.stringify(auxObj) })

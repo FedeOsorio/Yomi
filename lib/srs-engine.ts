@@ -396,7 +396,7 @@ export function checkVoiceMatch(
 
   // 4. Si es Chino
   if (targetLang.startsWith('zh')) {
-    if (cleanText.length > 0 && (cleanTranscript === cleanText || cleanTranscript.includes(cleanText) || cleanText.includes(cleanTranscript))) {
+    if (cleanText.length > 0 && (cleanTranscript === cleanText || cleanTranscript.includes(cleanText))) {
       return { isMatch: true, matchedReading: cleanReading || cleanText };
     }
 

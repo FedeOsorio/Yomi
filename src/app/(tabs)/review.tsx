@@ -423,6 +423,9 @@ export default function ReviewScreen() {
         if (!languageCode || languageCode.startsWith('ja')) {
           const ready = await voskVoiceService.loadModel('model-ja-jp');
           setIsVoiceEngineReady(ready);
+        } else {
+          // Los demás idiomas usan el motor nativo: no dependen del modelo offline de Vosk.
+          setIsVoiceEngineReady(true);
         }
       } catch (err) {
         console.warn('Error preparando motor de voz:', err);
@@ -638,6 +641,7 @@ export default function ReviewScreen() {
 
     const contextualStrings = getCardContextualStrings(card, lang);
     const isJapanese = lang.toLowerCase().startsWith('ja');
+    const isChinese = lang.toLowerCase().startsWith('zh');
 
     const started = await speechService.start(
       lang,
@@ -660,6 +664,10 @@ export default function ReviewScreen() {
           if (formatted) {
             setSpeechTranscript(formatted);
           }
+
+          // En chino el reconocedor entrega hipótesis parciales carácter a carácter: aceptarlas
+          // aprobaría la tarjeta con solo el primer carácter de la palabra.
+          if (isChinese && !isFinal) return;
 
           // Recolectar todas las hipótesis candidatas para evaluación en tiempo real
           const candidateHypotheses = [
@@ -892,10 +900,19 @@ export default function ReviewScreen() {
       useNativeDriver: true,
     }).start(({ finished }) => {
       if (finished) {
-        const nextCard = useReviewStore.getState().getCurrentCard();
+        const state = useReviewStore.getState();
+        // advanceCard() no mueve el índice en la última tarjeta: sin esta guarda el
+        // micrófono volvería a abrirse sobre la tarjeta que ya se completó.
+        if (state.sessionCompleted) {
+          speechService.abort().catch(() => { });
+          setIsListening(false);
+          setSpeechStatus('idle');
+          return;
+        }
+        const nextCard = state.getCurrentCard();
         if (nextCard) {
-          const lang = getEffectiveCardLanguage(nextCard);
-          startVoiceListeningForCard(nextCard, lang);
+          const nextLang = getEffectiveCardLanguage(nextCard);
+          startVoiceListeningForCard(nextCard, nextLang);
         } else {
           speechService.abort().catch(() => { });
           setIsListening(false);
@@ -1510,6 +1527,12 @@ export default function ReviewScreen() {
   const isIdeographic = !isCustomCard && (lang.startsWith('zh') || lang.startsWith('ja'));
   const isJapanese = !isCustomCard && lang.startsWith('ja');
 
+  // El motor nativo cubre cualquier idioma: solo el japonés necesita el modelo offline de Vosk.
+  // Si Vosk no está presente en el binario, el servicio recurre al motor nativo y la voz sigue disponible.
+  const isVoiceEngineReadyForCard = !isJapanese
+    ? true
+    : isVoiceEngineReady || !voskVoiceService.checkNativeModule();
+
   return (
     <KeyboardAvoidingView
       style={[styles.container, { backgroundColor: colors.background }]}
@@ -1823,7 +1846,7 @@ export default function ReviewScreen() {
                 <VoiceMicControl
                   isListening={isListening}
                   speechStatus={speechStatus}
-                  isEngineReady={isVoiceEngineReady}
+                  isEngineReady={isVoiceEngineReadyForCard}
                   voiceProgressAnim={voiceProgressAnim}
                   micPulseAnim={micPulseAnim}
                   colors={colors}

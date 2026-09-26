@@ -520,6 +520,55 @@ export function toNormalizedHiragana(text: string): string {
 }
 
 /**
+ * Expande cualquier transcripción con kanjis u homófonos (ej. '揚がって', '挙がって', '上がって')
+ * a todas sus posibles combinaciones fonéticas en Hiragana canónico.
+ * Es crucial para motores de voz (Google STT) que eligen kanjis homófonos arbitrarios.
+ */
+export function expandKanjiToHiraganaCandidates(text: string): string[] {
+  if (!text) return [];
+  const clean = text.trim();
+  let candidates: string[] = [''];
+
+  for (let i = 0; i < clean.length; i++) {
+    const ch = clean[i];
+    const mapReadings = UNIVERSAL_KANJI_READINGS_MAP[ch];
+    const jlptEssential = JLPT_KANJI_READINGS[ch]?.essential;
+    const readings: string[] = [];
+
+    if (mapReadings && mapReadings.length > 0) {
+      readings.push(...mapReadings);
+    }
+    if (jlptEssential && !readings.includes(jlptEssential)) {
+      readings.push(jlptEssential);
+    }
+
+    if (readings.length > 0) {
+      const next: string[] = [];
+      for (const prefix of candidates) {
+        for (const r of readings) {
+          next.push(prefix + r);
+          if (next.length >= 60) break;
+        }
+        if (next.length >= 60) break;
+      }
+      candidates = next;
+    } else {
+      for (let j = 0; j < candidates.length; j++) {
+        candidates[j] += ch;
+      }
+    }
+  }
+
+  const results = new Set<string>();
+  for (const c of candidates) {
+    const norm = toNormalizedHiragana(c);
+    if (norm) results.add(norm);
+  }
+  return Array.from(results);
+}
+
+
+/**
  * Normaliza dígrafos de 拗音 (Youon - sonidos contraídos como きゃ, ひゃ, しゅ, ちょ)
  * a su forma fonética expandida (きや, ひや, しゆ, ちよ) para salvar la diferencia
  * entre la pronunciación no nativa y el reconocimiento de voz acústico de Google STT.
@@ -1152,7 +1201,7 @@ export type JapaneseConjugationForm =
  * - 'masu': Presente formal afirmativo (〜ます / 〜です)
  * - 'mashita': Pasado formal afirmativo (〜ました / 〜でした / 〜かったです)
  * - 'masen': Negativo formal (〜ません / 〜じゃありません / 〜くないです)
- * - 'mashou': Volitiva formal (〜ましょう)
+ * - 'mashou': Forma -mashou (invitación / 〜ましょう)
  */
 export function conjugateJapanese(
   word: string,

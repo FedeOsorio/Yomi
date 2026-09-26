@@ -44,6 +44,8 @@ export const pt: TranslationSchema = {
     practiceAll: 'Praticar Todo o Baralho',
     noCardsDue: 'Não há cartões para revisar',
     noCardsDueSub: 'Excelente trabalho! Você concluiu todos os cartões programados para hoje.',
+    voiceMethodDesc: 'Fale em voz alta. Cartões automáticos.',
+    voicePreparingDesc: 'Preparando motor de voz offline...',
   },
   search: {
     searchPlaceholder: 'Digite uma palavra...',

@@ -640,60 +640,75 @@ export default function WordDetailScreen() {
                 </View>
 
                 {/* Subtítulos ordenados: Nivel, Categoría, Forma Base */}
-                {(activeLevel || activeCategory || (baseKanji && baseKanji !== word.simplified)) ? (
-                  <View style={[styles.metaSubtitlesContainer, { borderTopColor: colors.border, borderBottomColor: colors.border }]}>
-                    {activeLevel ? (
-                      <View style={styles.metaSubtitleItemCompact}>
-                        <Text style={[styles.metaSubtitleLabel, { color: colors.textMuted }]}>Nivel</Text>
-                        <Text
-                          style={[styles.metaSubtitleValue, { color: colors.primary }]}
-                          numberOfLines={1}
-                          adjustsFontSizeToFit={true}
-                        >
-                          {activeLevel.startsWith('HSK') || activeLevel.startsWith('JLPT')
-                            ? activeLevel
-                            : lang.startsWith('ja')
-                              ? `JLPT ${activeLevel}`
-                              : `HSK ${activeLevel}`}
-                        </Text>
-                      </View>
-                    ) : null}
+                {(() => {
+                  const showLevel = Boolean(activeLevel);
+                  const showCategory = Boolean(activeCategory && !activeCategory.includes('Frase'));
+                  const showBase = Boolean(baseKanji && baseKanji !== word.simplified);
+                  const count = (showLevel ? 1 : 0) + (showCategory ? 1 : 0) + (showBase ? 1 : 0);
 
-                    {activeLevel && (activeCategory || (baseKanji && baseKanji !== word.simplified)) ? (
-                      <View style={[styles.metaSubtitleDivider, { backgroundColor: colors.border }]} />
-                    ) : null}
+                  if (count === 0) return null;
 
-                    {activeCategory && !activeCategory.includes('Frase') ? (
-                      <View style={styles.metaSubtitleItemFlexible}>
-                        <Text style={[styles.metaSubtitleLabel, { color: colors.textMuted }]}>Categoría</Text>
-                        <Text
-                          style={[styles.metaSubtitleValue, { color: colors.text }]}
-                          numberOfLines={1}
-                          adjustsFontSizeToFit={true}
-                        >
-                          {activeCategory}
-                        </Text>
-                      </View>
-                    ) : null}
+                  // Cuando hay 2 subtítulos (ej. Nivel y Categoría), ambos ocupan exactamente el 50% (flex: 1) centrados
+                  // Cuando hay 3 subtítulos, Categoría recibe flex 1.25 para mayor holgura y los laterales flex 1
+                  const levelItemStyle = count === 3 ? styles.metaSubtitleItemThreeSide : styles.metaSubtitleItemEqual;
+                  const categoryItemStyle = count === 3 ? styles.metaSubtitleItemThreeCenter : styles.metaSubtitleItemEqual;
+                  const baseItemStyle = count === 3 ? styles.metaSubtitleItemThreeSide : styles.metaSubtitleItemEqual;
 
-                    {(activeCategory && !activeCategory.includes('Frase')) && (baseKanji && baseKanji !== word.simplified) ? (
-                      <View style={[styles.metaSubtitleDivider, { backgroundColor: colors.border }]} />
-                    ) : null}
+                  return (
+                    <View style={[styles.metaSubtitlesContainer, { borderTopColor: colors.border, borderBottomColor: colors.border }]}>
+                      {showLevel && (
+                        <View style={levelItemStyle}>
+                          <Text style={[styles.metaSubtitleLabel, { color: colors.textMuted }]}>Nivel</Text>
+                          <Text
+                            style={[styles.metaSubtitleValue, { color: colors.primary }]}
+                            numberOfLines={1}
+                            adjustsFontSizeToFit={true}
+                          >
+                            {activeLevel!.startsWith('HSK') || activeLevel!.startsWith('JLPT')
+                              ? activeLevel
+                              : lang.startsWith('ja')
+                                ? `JLPT ${activeLevel}`
+                                : `HSK ${activeLevel}`}
+                          </Text>
+                        </View>
+                      )}
 
-                    {baseKanji && baseKanji !== word.simplified ? (
-                      <View style={styles.metaSubtitleItemCompact}>
-                        <Text style={[styles.metaSubtitleLabel, { color: colors.textMuted }]}>Forma Base</Text>
-                        <Text
-                          style={[styles.metaSubtitleValue, { color: '#8B5CF6' }]}
-                          numberOfLines={1}
-                          adjustsFontSizeToFit={true}
-                        >
-                          {baseKanji}
-                        </Text>
-                      </View>
-                    ) : null}
-                  </View>
-                ) : null}
+                      {showLevel && (showCategory || showBase) && (
+                        <View style={[styles.metaSubtitleDivider, { backgroundColor: colors.border }]} />
+                      )}
+
+                      {showCategory && (
+                        <View style={categoryItemStyle}>
+                          <Text style={[styles.metaSubtitleLabel, { color: colors.textMuted }]}>Categoría</Text>
+                          <Text
+                            style={[styles.metaSubtitleValue, { color: colors.text }]}
+                            numberOfLines={1}
+                            adjustsFontSizeToFit={true}
+                          >
+                            {activeCategory}
+                          </Text>
+                        </View>
+                      )}
+
+                      {showCategory && showBase && (
+                        <View style={[styles.metaSubtitleDivider, { backgroundColor: colors.border }]} />
+                      )}
+
+                      {showBase && (
+                        <View style={baseItemStyle}>
+                          <Text style={[styles.metaSubtitleLabel, { color: colors.textMuted }]}>Forma Base</Text>
+                          <Text
+                            style={[styles.metaSubtitleValue, { color: '#8B5CF6' }]}
+                            numberOfLines={1}
+                            adjustsFontSizeToFit={true}
+                          >
+                            {baseKanji}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  );
+                })()}
 
                 {/* Sección Lectura activa del Kanji: cada lectura On y Kun es un botón seleccionable para editar la lectura */}
                 {isJapanese && hasKanjiReadings && (
@@ -1760,17 +1775,23 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  metaSubtitleItemCompact: {
+  metaSubtitleItemEqual: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  metaSubtitleItemThreeSide: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 4,
-    minWidth: 55,
   },
-  metaSubtitleItemFlexible: {
+  metaSubtitleItemThreeCenter: {
+    flex: 1.25,
     alignItems: 'center',
     justifyContent: 'center',
-    flex: 1,
-    paddingHorizontal: 6,
+    paddingHorizontal: 4,
   },
   metaSubtitleDivider: {
     width: StyleSheet.hairlineWidth,

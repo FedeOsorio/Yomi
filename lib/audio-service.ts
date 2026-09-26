@@ -28,24 +28,29 @@ const LANGUAGE_LOCALE_MAP: Record<string, string> = {
 };
 
 let cachedVoices: Speech.Voice[] | null = null;
+const cachedBestVoice: Record<string, string | undefined> = {};
 
 async function getBestVoiceForLanguage(langCode: string): Promise<string | undefined> {
+  const prefix = langCode.toLowerCase().split('-')[0];
+  if (cachedBestVoice[prefix] !== undefined) {
+    return cachedBestVoice[prefix];
+  }
+
   try {
     if (!cachedVoices || cachedVoices.length === 0) {
       cachedVoices = await Speech.getAvailableVoicesAsync();
     }
-    const prefix = langCode.toLowerCase().split('-')[0];
     const available = cachedVoices.filter((v) => {
       const vLang = (v.language || '').toLowerCase().replace('_', '-');
       return vLang.startsWith(prefix) || vLang.includes(prefix);
     });
 
-    console.log(`[AudioService] Found ${available.length} voices for ${prefix}:`, available.map((v) => v.name));
-
     // Descartar voces experimentales o restringidas (como 'star' de Google Assistant que fallan en TTS de terceros)
     const nonStar = available.filter((v) => !v.name.toLowerCase().includes('star'));
     const chosen = nonStar.find((v) => v.name.toLowerCase().includes('local')) || nonStar[0];
-    return chosen?.identifier;
+    const identifier = chosen?.identifier;
+    cachedBestVoice[prefix] = identifier;
+    return identifier;
   } catch {
     return undefined;
   }

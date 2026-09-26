@@ -2,6 +2,7 @@ import React, { memo } from 'react';
 import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Shadows, Spacing } from '../../constants/theme';
+import { useTranslation } from '../../i18n';
 
 export interface ReviewMethodModalProps {
   visible: boolean;
@@ -35,6 +36,7 @@ export const ReviewMethodModal = memo(function ReviewMethodModal({
   isPreparingVoice = false,
 }: ReviewMethodModalProps) {
   const isJapanese = pendingSelection?.languageCode === 'ja-JP';
+  const { t } = useTranslation();
   return (
     <Modal
       visible={visible}
@@ -118,8 +120,8 @@ export const ReviewMethodModal = memo(function ReviewMethodModal({
               </View>
               <Text style={[styles.methodDesc, { color: colors.textMuted }]}>
                 {isPreparingVoice
-                  ? 'Preparando motor de voz offline...'
-                  : 'Pronuncia en voz alta. Flujo de tarjetas 100% automático.'}
+                  ? t('review.voicePreparingDesc')
+                  : t('review.voiceMethodDesc')}
               </Text>
             </View>
             <View style={styles.trailingIconBox}>

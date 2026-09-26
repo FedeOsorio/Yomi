@@ -44,6 +44,8 @@ export const ja: TranslationSchema = {
     practiceAll: 'デッキ全体を練習',
     noCardsDue: '復習待ちのカードはありません',
     noCardsDueSub: '素晴らしい！今日の予定カードはすべて完了しました。',
+    voiceMethodDesc: '声に出して発音。カードは自動で進みます。',
+    voicePreparingDesc: 'オフライン音声エンジンを準備中...',
   },
   search: {
     searchPlaceholder: '単語を入力...',

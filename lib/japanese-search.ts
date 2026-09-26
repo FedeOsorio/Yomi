@@ -733,7 +733,7 @@ export async function searchJapanese(rawInput: string, toLang: string = 'es'): P
             { type: 'masu', note: `Presente formal (-masu) de ${dictionaryWord}` },
             { type: 'mashita', note: `Pasado formal (-mashita) de ${dictionaryWord}` },
             { type: 'masen', note: `Negativo formal (-masen) de ${dictionaryWord}` },
-            { type: 'mashou', note: `Forma volitiva / invitación (-mashou) de ${dictionaryWord}` },
+            { type: 'mashou', note: `Forma -mashou (invitación) de ${dictionaryWord}` },
             { type: 'te', note: `Forma conectiva (-te) de ${dictionaryWord}` },
             { type: 'ta', note: `Pasado informal (-ta) de ${dictionaryWord}` },
             { type: 'nai', note: `Negativo informal (-nai) de ${dictionaryWord}` },

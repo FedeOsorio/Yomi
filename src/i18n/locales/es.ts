@@ -44,6 +44,8 @@ export const es: TranslationSchema = {
     practiceAll: 'Practicar Todo el Mazo',
     noCardsDue: 'No tenés tarjetas pendientes de repaso',
     noCardsDueSub: '¡Excelente trabajo! Has completado todas las tarjetas programadas para hoy.',
+    voiceMethodDesc: 'Pronuncia en voz alta. Tarjetas automáticas.',
+    voicePreparingDesc: 'Preparando motor de voz offline...',
   },
   search: {
     searchPlaceholder: 'Escribí una palabra...',

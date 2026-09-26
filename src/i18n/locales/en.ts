@@ -44,6 +44,8 @@ export const en: TranslationSchema = {
     practiceAll: 'Practice Entire Deck',
     noCardsDue: 'No cards due for review',
     noCardsDueSub: 'Great job! You have completed all scheduled cards for today.',
+    voiceMethodDesc: 'Speak out loud. Automatic cards.',
+    voicePreparingDesc: 'Preparing offline voice engine...',
   },
   search: {
     searchPlaceholder: 'Type a word...',
