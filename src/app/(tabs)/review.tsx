@@ -1321,22 +1321,18 @@ export default function ReviewScreen() {
               style={[
                 styles.gridDueBadge,
                 {
-                  backgroundColor: isCustom
-                    ? 'rgba(16, 185, 129, 0.15)'
-                    : 'rgba(59, 130, 246, 0.15)',
-                  borderColor: isCustom
-                    ? 'rgba(16, 185, 129, 0.35)'
-                    : 'rgba(59, 130, 246, 0.35)',
+                  backgroundColor: 'rgba(245, 158, 11, 0.16)',
+                  borderColor: 'rgba(245, 158, 11, 0.35)',
                 },
               ]}
             >
               <Text
                 style={[
                   styles.gridDueBadgeText,
-                  { color: isCustom ? '#10B981' : colors.primary },
+                  { color: '#F59E0B' },
                 ]}
               >
-                {dueCount} hoy
+                {dueCount}
               </Text>
             </View>
           ) : (
@@ -2679,14 +2675,19 @@ const styles = StyleSheet.create({
     includeFontPadding: false,
   },
   gridDueBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
+    minWidth: 26,
+    height: 22,
+    paddingHorizontal: 7,
+    borderRadius: 11,
+    justifyContent: 'center',
+    alignItems: 'center',
     borderWidth: 1,
   },
   gridDueBadgeText: {
     fontSize: 11,
-    fontWeight: 'bold',
+    fontWeight: '800',
+    textAlign: 'center',
+    includeFontPadding: false,
   },
   gridCardBody: {
     marginVertical: Spacing.xs,

@@ -29,6 +29,7 @@ function RootStack() {
       <Stack.Screen name="deck/[id]" options={{ headerShown: false }} />
       <Stack.Screen name="deck/import" options={{ headerShown: false }} />
       <Stack.Screen name="word/[id]" options={{ headerShown: false }} />
+      <Stack.Screen name="folders" options={{ headerShown: false }} />
       <Stack.Screen name="search" options={{ headerShown: false }} />
       <Stack.Screen name="oauthredirect" options={{ headerShown: false }} />
       <Stack.Screen name="+not-found" options={{ headerShown: false }} />

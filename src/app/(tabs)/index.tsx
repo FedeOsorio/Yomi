@@ -345,7 +345,14 @@ export default function HomeScreen() {
                     </View>
                     <View style={styles.deckInfoText}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Text style={[styles.name, { color: colors.text }]}>{item.name}</Text>
+                        <Text
+                          style={[styles.name, { color: colors.text }]}
+                          numberOfLines={1}
+                          adjustsFontSizeToFit={true}
+                          minimumFontScale={0.75}
+                        >
+                          {item.name}
+                        </Text>
                         {folder && (
                           <View
                             style={[
@@ -371,13 +378,14 @@ export default function HomeScreen() {
                                 styles.folderBadgeText,
                                 { color: folder.color || colors.primary },
                               ]}
+                              numberOfLines={1}
                             >
                               {folder.name}
                             </Text>
                           </View>
                         )}
                       </View>
-                      <Text style={[styles.subtext, { color: colors.textMuted }]}>
+                      <Text style={[styles.subtext, { color: colors.textMuted }]} numberOfLines={1}>
                         {isCustom ? 'Personalizado' : (langMeta?.label || 'Idiomas')} • {item.wordCount}{' '}
                         {item.wordCount === 1
                           ? (isCustom ? 'tarjeta' : 'palabra')
@@ -387,12 +395,6 @@ export default function HomeScreen() {
                   </View>
 
                   <View style={styles.cardRight}>
-                    {item.dueCount > 0 && (
-                      <View style={styles.dueBadge}>
-                        <Text style={styles.dueBadgeText}>Repasar hoy</Text>
-                      </View>
-                    )}
-                    
                     <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
                   </View>
                 </TouchableOpacity>
@@ -692,9 +694,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: Spacing.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 12,
     borderRadius: 16,
-    marginBottom: Spacing.md,
+    marginBottom: 10,
     borderWidth: 1,
     ...Platform.select({
       ios: {
@@ -730,8 +733,12 @@ const styles = StyleSheet.create({
   },
   deckInfoText: {
     flex: 1,
+    marginRight: Spacing.sm,
   },
-  name: { ...Typography.h3 },
+  name: {
+    ...Typography.h3,
+    flexShrink: 1,
+  },
   subtext: { ...Typography.bodySmall, marginTop: 2 },
   folderBadge: {
     flexDirection: 'row',
@@ -754,23 +761,6 @@ const styles = StyleSheet.create({
   deleteDeckCardBtn: {
     padding: Spacing.xs,
     marginRight: 4,
-  },
-  dueBadge: {
-    backgroundColor: 'rgba(239, 68, 68, 0.12)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: Spacing.xs,
-    borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.25)',
-  },
-  dueBadgeText: {
-    fontSize: 10,
-    color: '#EF4444',
-    fontWeight: '700',
-    letterSpacing: 0.1,
   },
   emptyContainer: {
     flex: 1,

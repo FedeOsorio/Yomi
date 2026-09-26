@@ -142,7 +142,6 @@ const styles = StyleSheet.create({
     width: FOLDER_CARD_WIDTH,
     height: FOLDER_CARD_HEIGHT,
     position: 'relative',
-    marginRight: 4,
     ...Platform.select({
       ios: {
         shadowOffset: { width: 0, height: 4 },

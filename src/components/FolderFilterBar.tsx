@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from 'expo-router';
+import { useNavigation, useRouter } from 'expo-router';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -62,6 +62,7 @@ export function FolderFilterBar({
 }: FolderFilterBarProps) {
   const { colors } = useTheme();
   const navigation = useNavigation();
+  const router = useRouter();
 
   // Dropdown de 3 puntitos en el header
   const [dropdownVisible, setDropdownVisible] = useState(false);
@@ -73,7 +74,6 @@ export function FolderFilterBar({
 
   // Modales
   const [modalMode, setModalMode] = useState<'create' | 'rename' | null>(null);
-  const [manageModalVisible, setManageModalVisible] = useState(false);
   const [folderToEdit, setFolderToEdit] = useState<Folder | null>(null);
   const [folderNameInput, setFolderNameInput] = useState('');
   const [selectedColor, setSelectedColor] = useState<string>(FOLDER_PALETTE[0]);
@@ -286,7 +286,7 @@ export function FolderFilterBar({
               activeOpacity={0.7}
               onPress={() => {
                 setDropdownVisible(false);
-                setManageModalVisible(true);
+                router.push('/folders');
               }}
             >
               <Ionicons name="settings-outline" size={17} color={colors.textMuted} />
@@ -429,177 +429,6 @@ export function FolderFilterBar({
           </View>
         </KeyboardAvoidingView>
       </Modal>
-
-      {/* Modal: Administrar Carpetas (ordenar, crear otra, eliminar) */}
-      <Modal
-        visible={manageModalVisible}
-        transparent={true}
-        animationType="none"
-        onRequestClose={() => setManageModalVisible(false)}
-      >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.modalOverlay}
-        >
-          <Animated.View
-            entering={FadeIn.duration(180)}
-            exiting={FadeOut.duration(120)}
-            style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]}
-          >
-            <Pressable style={StyleSheet.absoluteFill} onPress={() => setManageModalVisible(false)} />
-          </Animated.View>
-
-          <View style={styles.modalCenterContainer} pointerEvents="box-none">
-            <Animated.View
-              entering={FadeInDown.duration(200)}
-              exiting={FadeOut.duration(120)}
-              style={[
-                styles.manageCard,
-                {
-                  backgroundColor: colors.surface,
-                  borderColor: colors.border,
-                },
-              ]}
-            >
-              {/* Header Administrar */}
-              <View style={styles.manageHeader}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <Ionicons name="folder-open" size={22} color={colors.primary} />
-                  <Text style={[styles.dialogTitle, { color: colors.text }]}>
-                    Administrar Carpetas
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  onPress={() => setManageModalVisible(false)}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <Ionicons name="close" size={22} color={colors.textMuted} />
-                </TouchableOpacity>
-              </View>
-
-              {/* Botón "+ Crear otra carpeta" */}
-              <TouchableOpacity
-                style={[
-                  styles.manageAddBtn,
-                  {
-                    backgroundColor: colors.surfaceHighlight,
-                    borderColor: colors.border,
-                  },
-                ]}
-                activeOpacity={0.7}
-                onPress={() => {
-                  setManageModalVisible(false);
-                  openCreateDialog();
-                }}
-              >
-                <Ionicons name="add-circle" size={18} color={colors.primary} />
-                <Text style={[styles.manageAddBtnText, { color: colors.primary }]}>
-                  Crear otra carpeta
-                </Text>
-              </TouchableOpacity>
-
-              {/* Lista de Carpetas con reordenamiento y acciones */}
-              <ScrollView
-                style={styles.manageList}
-                showsVerticalScrollIndicator={false}
-              >
-                {folders.length === 0 ? (
-                  <View style={styles.manageEmptyBox}>
-                    <Text style={[styles.manageEmptyText, { color: colors.textMuted }]}>
-                      No tienes carpetas creadas aún.
-                    </Text>
-                  </View>
-                ) : (
-                  folders.map((folder, index) => {
-                    const folderColor = folder.color || FOLDER_PALETTE[0];
-                    const isFirst = index === 0;
-                    const isLast = index === folders.length - 1;
-
-                    return (
-                      <View
-                        key={folder.id}
-                        style={[
-                          styles.manageItem,
-                          {
-                            backgroundColor: colors.surfaceHighlight,
-                            borderColor: colors.border,
-                          },
-                        ]}
-                      >
-                        {/* Indicador de carpeta */}
-                        <View style={styles.manageItemLeft}>
-                          <View
-                            style={[
-                              styles.manageFolderIconBox,
-                              { backgroundColor: `${folderColor}25` },
-                            ]}
-                          >
-                            <Ionicons name="folder" size={16} color={folderColor} />
-                          </View>
-                          <Text
-                            style={[styles.manageItemTitle, { color: colors.text }]}
-                            numberOfLines={1}
-                          >
-                            {folder.name}
-                          </Text>
-                        </View>
-
-                        {/* Botones de acción: Subir, Bajar, Editar, Eliminar */}
-                        <View style={styles.manageItemActions}>
-                          <TouchableOpacity
-                            style={[styles.iconActionBtn, isFirst && { opacity: 0.3 }]}
-                            disabled={isFirst}
-                            onPress={() => handleMoveFolder(index, 'up')}
-                            hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
-                          >
-                            <Ionicons name="chevron-up" size={18} color={colors.text} />
-                          </TouchableOpacity>
-
-                          <TouchableOpacity
-                            style={[styles.iconActionBtn, isLast && { opacity: 0.3 }]}
-                            disabled={isLast}
-                            onPress={() => handleMoveFolder(index, 'down')}
-                            hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
-                          >
-                            <Ionicons name="chevron-down" size={18} color={colors.text} />
-                          </TouchableOpacity>
-
-                          <TouchableOpacity
-                            style={styles.iconActionBtn}
-                            onPress={() => {
-                              openRenameDialog(folder);
-                            }}
-                            hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
-                          >
-                            <Ionicons name="pencil-outline" size={16} color={colors.textMuted} />
-                          </TouchableOpacity>
-
-                          <TouchableOpacity
-                            style={styles.iconActionBtn}
-                            onPress={() => handlePromptDelete(folder)}
-                            hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
-                          >
-                            <Ionicons name="trash-outline" size={16} color={colors.danger} />
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    );
-                  })
-                )}
-              </ScrollView>
-
-              {/* Botón Listo en pie */}
-              <TouchableOpacity
-                style={[styles.manageDoneBtn, { backgroundColor: colors.primary }]}
-                activeOpacity={0.8}
-                onPress={() => setManageModalVisible(false)}
-              >
-                <Text style={styles.manageDoneBtnText}>Listo</Text>
-              </TouchableOpacity>
-            </Animated.View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
     </>
   );
 }
@@ -623,7 +452,7 @@ const styles = StyleSheet.create({
   },
   scrollList: {
     paddingHorizontal: Spacing.md,
-    gap: 12,
+    gap: 5,
     alignItems: 'flex-start',
   },
 
@@ -755,102 +584,6 @@ const styles = StyleSheet.create({
   dialogBtnConfirmText: {
     color: '#FFF',
     fontSize: 14,
-    fontWeight: '700',
-  },
-  manageCard: {
-    width: '100%',
-    maxWidth: 360,
-    maxHeight: '80%',
-    borderRadius: 24,
-    padding: Spacing.lg,
-    borderWidth: 1.5,
-    ...Shadows.card,
-    elevation: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
-  },
-  manageHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  manageAddBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    marginBottom: 14,
-  },
-  manageAddBtnText: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  manageList: {
-    maxHeight: 260,
-    marginBottom: 16,
-  },
-  manageEmptyBox: {
-    paddingVertical: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  manageEmptyText: {
-    fontSize: 14,
-  },
-  manageItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 14,
-    borderWidth: 1,
-    marginBottom: 8,
-  },
-  manageItemLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    flex: 1,
-    marginRight: 8,
-  },
-  manageFolderIconBox: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  manageItemTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    flex: 1,
-  },
-  manageItemActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  iconActionBtn: {
-    padding: 5,
-  },
-  manageDoneBtn: {
-    paddingVertical: 12,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 4,
-  },
-  manageDoneBtnText: {
-    color: '#FFF',
-    fontSize: 15,
     fontWeight: '700',
   },
 });
