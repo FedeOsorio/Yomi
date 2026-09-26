@@ -2,10 +2,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
-  FlatList,
   Keyboard,
   Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -35,6 +35,7 @@ import {
   createFolder,
   renameFolder,
   deleteFolder,
+  reorderFolders,
   assignDeckToFolder,
   Folder,
   DeckWithStats,
@@ -162,14 +163,18 @@ export default function HomeScreen() {
     });
   };
 
-  const handleCreateFolder = async (name: string) => {
-    const newId = await createFolder(name);
+  const handleCreateFolder = async (name: string, color?: string | null) => {
+    await createFolder(name, color);
     await fetchFolders();
-    setSelectedFolderId(newId);
   };
 
-  const handleRenameFolder = async (folderId: string, newName: string) => {
-    await renameFolder(folderId, newName);
+  const handleRenameFolder = async (folderId: string, newName: string, color?: string | null) => {
+    await renameFolder(folderId, newName, color);
+    await fetchFolders();
+  };
+
+  const handleReorderFolders = async (orderedIds: string[]) => {
+    await reorderFolders(orderedIds);
     await fetchFolders();
   };
 
@@ -275,6 +280,7 @@ export default function HomeScreen() {
         onCreateFolder={handleCreateFolder}
         onRenameFolder={handleRenameFolder}
         onDeleteFolder={handleDeleteFolder}
+        onReorderFolders={handleReorderFolders}
       />
 
       {displayedDecks.length === 0 ? (
@@ -296,20 +302,23 @@ export default function HomeScreen() {
           </Text>
         </View>
       ) : (
-        <FlatList
-          data={displayedDecks}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={{ paddingBottom: 110 }}
-          renderItem={({ item }) => {
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: Spacing.md, paddingBottom: 110 }}
+          style={{ flex: 1, overflow: 'visible' }}
+        >
+          {displayedDecks.map((item) => {
             const isCustom = item.type === 'custom';
             const langMeta = ALL_LANGUAGES.find((l) => l.code === item.languageCode);
             const folder = folders.find((f) => f.id === item.folderId);
 
             return (
               <Animated.View
-                layout={LinearTransition.springify().damping(15)}
-                entering={FadeIn.duration(160)}
-                exiting={FadeOut.duration(120)}
+                key={item.id}
+                layout={LinearTransition.duration(220)}
+                entering={FadeIn.duration(200)}
+                exiting={FadeOut.duration(160)}
+                style={{ overflow: 'visible' }}
               >
                 <TouchableOpacity
                   style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
@@ -341,11 +350,28 @@ export default function HomeScreen() {
                           <View
                             style={[
                               styles.folderBadge,
-                              { backgroundColor: colors.surfaceHighlight },
+                              {
+                                backgroundColor: folder.color
+                                  ? `${folder.color}22`
+                                  : colors.surfaceHighlight,
+                                borderColor: folder.color
+                                  ? `${folder.color}44`
+                                  : 'transparent',
+                                borderWidth: folder.color ? 1 : 0,
+                              },
                             ]}
                           >
-                            <Ionicons name="folder-outline" size={10} color={colors.primary} />
-                            <Text style={[styles.folderBadgeText, { color: colors.primary }]}>
+                            <Ionicons
+                              name="folder-outline"
+                              size={10}
+                              color={folder.color || colors.primary}
+                            />
+                            <Text
+                              style={[
+                                styles.folderBadgeText,
+                                { color: folder.color || colors.primary },
+                              ]}
+                            >
                               {folder.name}
                             </Text>
                           </View>
@@ -372,8 +398,8 @@ export default function HomeScreen() {
                 </TouchableOpacity>
               </Animated.View>
             );
-          }}
-        />
+          })}
+        </ScrollView>
       )}
 
       {/* Floating Action Button (+) posicionado dinámicamente a 16px sobre el tope real de la barra */}
@@ -661,7 +687,7 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: Spacing.md },
+  container: { flex: 1 },
   card: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -670,7 +696,17 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     marginBottom: Spacing.md,
     borderWidth: 1,
-    ...Shadows.card,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 0,
+      },
+    }),
   },
   cardContent: {
     flexDirection: 'row',
@@ -740,6 +776,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    paddingHorizontal: Spacing.md,
     paddingBottom: 70,
   },
   emptyText: {

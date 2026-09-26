@@ -1,11 +1,12 @@
 import { db } from '../db';
 import { decks, words, srsItems, folders } from '../db/schema';
 import * as crypto from 'expo-crypto';
-import { eq, lte, and } from 'drizzle-orm';
+import { eq, lte, and, sql, asc } from 'drizzle-orm';
 
 export interface Folder {
   id: string;
   name: string;
+  color?: string | null;
   createdAt: Date;
 }
 
@@ -69,29 +70,84 @@ export async function createCustomDeck(name: string, folderId?: string | null): 
 }
 
 export async function getFolders(): Promise<Folder[]> {
-  const result = await db.select().from(folders);
-  return result.map((f) => ({
-    id: f.id,
-    name: f.name,
-    createdAt: f.createdAt,
-  }));
+  try {
+    const result = await db.select().from(folders).orderBy(asc(folders.createdAt));
+    return result.map((f) => ({
+      id: f.id,
+      name: f.name,
+      color: f.color || null,
+      createdAt: f.createdAt,
+    }));
+  } catch (err) {
+    try {
+      await db.run(sql`ALTER TABLE folders ADD COLUMN color text;`);
+      const result = await db.select().from(folders).orderBy(asc(folders.createdAt));
+      return result.map((f) => ({
+        id: f.id,
+        name: f.name,
+        color: f.color || null,
+        createdAt: f.createdAt,
+      }));
+    } catch {
+      return [];
+    }
+  }
 }
 
-export async function createFolder(name: string): Promise<string> {
+export async function reorderFolders(folderIds: string[]): Promise<void> {
+  const baseTime = Date.now() - folderIds.length * 10000;
+  for (let i = 0; i < folderIds.length; i++) {
+    await db
+      .update(folders)
+      .set({ createdAt: new Date(baseTime + i * 1000) })
+      .where(eq(folders.id, folderIds[i]));
+  }
+}
+
+export async function createFolder(name: string, color?: string | null): Promise<string> {
   const id = crypto.randomUUID();
-  await db.insert(folders).values({
-    id,
-    name: name.trim(),
-    createdAt: new Date(),
-  });
-  return id;
+  try {
+    await db.insert(folders).values({
+      id,
+      name: name.trim(),
+      color: color || null,
+      createdAt: new Date(),
+    });
+    return id;
+  } catch (err: any) {
+    console.warn('Error en createFolder, intentando auto-reparar esquema de folders:', err);
+    try {
+      await db.run(sql`ALTER TABLE folders ADD COLUMN color text;`);
+    } catch {}
+    await db.insert(folders).values({
+      id,
+      name: name.trim(),
+      color: color || null,
+      createdAt: new Date(),
+    });
+    return id;
+  }
 }
 
-export async function renameFolder(folderId: string, newName: string): Promise<void> {
-  await db
-    .update(folders)
-    .set({ name: newName.trim() })
-    .where(eq(folders.id, folderId));
+export async function renameFolder(folderId: string, newName: string, color?: string | null): Promise<void> {
+  const updateData: { name: string; color?: string | null } = { name: newName.trim() };
+  if (color !== undefined) {
+    updateData.color = color;
+  }
+  try {
+    await db
+      .update(folders)
+      .set(updateData)
+      .where(eq(folders.id, folderId));
+  } catch (err) {
+    try {
+      await db.run(sql`ALTER TABLE folders ADD COLUMN color text;`);
+    } catch {}
+    await db
+      .update(folders)
+      .set(updateData)
+      .where(eq(folders.id, folderId));
+  }
 }
 
 export async function deleteFolder(folderId: string): Promise<void> {

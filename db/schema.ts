@@ -11,6 +11,7 @@ import { sqliteTable, text, integer, real, index, primaryKey } from 'drizzle-orm
 export const folders = sqliteTable('folders', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
+  color: text('color'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
 

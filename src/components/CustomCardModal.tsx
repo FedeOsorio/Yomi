@@ -121,8 +121,8 @@ export function CustomCardModal({
     const D = travelDistanceShared.value;
     const scale = interpolate(
       swapAnim.value,
-      [0, 0.08, 0.2, 0.65, 1],
-      [1, 1.03, 0.9, 0.9, 1],
+      [0, 0.18, 0.65, 1],
+      [1, 0.94, 0.94, 1],
       Extrapolation.CLAMP
     );
     const translateY = interpolate(
@@ -153,8 +153,8 @@ export function CustomCardModal({
     const D = travelDistanceShared.value;
     const scale = interpolate(
       swapAnim.value,
-      [0, 0.08, 0.2, 0.65, 1],
-      [1, 1.03, 0.9, 0.9, 1],
+      [0, 0.18, 0.65, 1],
+      [1, 0.94, 0.94, 1],
       Extrapolation.CLAMP
     );
     const translateY = interpolate(
@@ -429,7 +429,8 @@ export function CustomCardModal({
               ref={scrollViewRef}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
-              contentContainerStyle={styles.scrollContent}
+              style={{ overflow: 'visible' }}
+              contentContainerStyle={[styles.scrollContent, { overflow: 'visible' }]}
             >
               <View
                 style={styles.swapStage}
