@@ -48,9 +48,14 @@ export interface GoogleDriveState {
   isChecking: boolean;
   hasHydrated: boolean;
 
+  autoBackupEnabled: boolean;
+  lastAutoBackupTime: string | null;
+
   // Acciones
   setGoogleUser: (user: GoogleUserProfile | null) => void;
   setDriveBackupMeta: (meta: GoogleDriveBackupMetadata | null) => void;
+  setAutoBackupEnabled: (enabled: boolean) => Promise<void>;
+  performSilentAutoBackup: () => Promise<boolean>;
   setHasHydrated: (val: boolean) => void;
   init: () => Promise<void>;
   connect: () => Promise<{
@@ -73,7 +78,7 @@ export interface GoogleDriveState {
   }>;
   restoreBackup: (strategy: 'merge' | 'replace', pkg: YomiFullBackupPackage) => Promise<{
     success: boolean;
-    res?: { decksCount: number; wordsCount: number };
+    res?: { foldersCount?: number; decksCount: number; wordsCount: number };
     error?: string;
   }>;
   refreshMeta: (force?: boolean) => Promise<{
@@ -88,6 +93,8 @@ export const useGoogleDriveStore = create<GoogleDriveState>()(
     (set, get) => ({
       googleUser: null,
       driveBackupMeta: null,
+      autoBackupEnabled: true,
+      lastAutoBackupTime: null,
       isConnecting: false,
       isSyncing: false,
       isRestoring: false,
@@ -98,22 +105,41 @@ export const useGoogleDriveStore = create<GoogleDriveState>()(
       setDriveBackupMeta: (meta) => set({ driveBackupMeta: meta }),
       setHasHydrated: (val) => set({ hasHydrated: val }),
 
+      setAutoBackupEnabled: async (enabled) => {
+        set({ autoBackupEnabled: enabled });
+        await setStorageItem('yomi_google_drive_auto_backup_enabled', String(enabled));
+        if (enabled && get().googleUser) {
+          get().performSilentAutoBackup().catch(() => {});
+        }
+      },
+
       init: async () => {
         try {
-          const [storedUser, storedMeta] = await Promise.all([
+          const [storedUser, storedMeta, storedAutoBackup, storedLastAuto] = await Promise.all([
             getStoredGoogleUser(),
             getStoredDriveBackupMeta(),
+            getStorageItem('yomi_google_drive_auto_backup_enabled'),
+            getStorageItem('yomi_google_drive_last_auto_backup_ts'),
           ]);
+
+          const autoEnabled = storedAutoBackup !== null ? storedAutoBackup === 'true' : true;
 
           set({
             googleUser: storedUser ?? get().googleUser,
             driveBackupMeta: storedMeta ?? get().driveBackupMeta,
+            autoBackupEnabled: autoEnabled,
+            lastAutoBackupTime: storedLastAuto,
             hasHydrated: true,
           });
 
           // Si hay usuario vinculado, refrescar metadatos silenciosamente desde Drive
           if (storedUser) {
             get().refreshMeta(false).catch(() => {});
+            if (autoEnabled) {
+              setTimeout(() => {
+                get().performSilentAutoBackup().catch(() => {});
+              }, 3000);
+            }
           }
         } catch (e) {
           console.warn('[GoogleDriveStore] Init warning:', e);
@@ -196,6 +222,7 @@ export const useGoogleDriveStore = create<GoogleDriveState>()(
               name: 'yomi-backup.json',
               modifiedTime: nowIso,
               sizeBytes: new Blob([JSON.stringify(pkg)]).size,
+              foldersCount: pkg.metadata.foldersCount,
               decksCount: pkg.metadata.decksCount,
               wordsCount: pkg.metadata.wordsCount,
               srsCount: pkg.metadata.srsCount,
@@ -207,7 +234,12 @@ export const useGoogleDriveStore = create<GoogleDriveState>()(
 
           // Subida real a Google Drive
           const res = await uploadBackupToGoogleDrive(token);
-          set({ driveBackupMeta: res.metadata });
+          const nowIso = new Date().toISOString();
+          await setStorageItem('yomi_google_drive_last_auto_backup_ts', nowIso);
+          set({
+            driveBackupMeta: res.metadata,
+            lastAutoBackupTime: nowIso,
+          });
           return { success: true, stats: res.stats };
         } catch (e: any) {
           return {
@@ -249,6 +281,7 @@ export const useGoogleDriveStore = create<GoogleDriveState>()(
             name: meta?.name || 'yomi-backup.json',
             modifiedTime: pkg.createdAt,
             sizeBytes: meta?.sizeBytes || new Blob([content]).size,
+            foldersCount: pkg.metadata.foldersCount,
             decksCount: pkg.metadata.decksCount,
             wordsCount: pkg.metadata.wordsCount,
             srsCount: pkg.metadata.srsCount,
@@ -300,6 +333,47 @@ export const useGoogleDriveStore = create<GoogleDriveState>()(
           set({ isChecking: false });
         }
       },
+
+      performSilentAutoBackup: async () => {
+        const { googleUser, autoBackupEnabled, isSyncing } = get();
+        if (!googleUser || !autoBackupEnabled || isSyncing) {
+          return false;
+        }
+
+        try {
+          const lastBackupStr = await getStorageItem('yomi_google_drive_last_auto_backup_ts');
+          const now = Date.now();
+          const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+          if (lastBackupStr) {
+            const lastTime = new Date(lastBackupStr).getTime();
+            if (!isNaN(lastTime) && (now - lastTime < ONE_DAY_MS)) {
+              return false; // Ya se realizó el respaldo en las últimas 24 horas
+            }
+          }
+
+          let token: string | null = null;
+          try {
+            token = await getValidGoogleAccessToken();
+          } catch {
+            return false;
+          }
+
+          if (!token) return false;
+
+          console.log('[GoogleDrive] Ejecutando respaldo automático diario silencioso...');
+          const res = await uploadBackupToGoogleDrive(token);
+          const nowIso = new Date().toISOString();
+          await setStorageItem('yomi_google_drive_last_auto_backup_ts', nowIso);
+          set({
+            driveBackupMeta: res.metadata,
+            lastAutoBackupTime: nowIso,
+          });
+          return true;
+        } catch (err) {
+          console.warn('[GoogleDrive] Auto-respaldo silencioso omitido:', err);
+          return false;
+        }
+      },
     }),
     {
       name: 'yomi-google-drive-store',
@@ -307,6 +381,8 @@ export const useGoogleDriveStore = create<GoogleDriveState>()(
       partialize: (state) => ({
         googleUser: state.googleUser,
         driveBackupMeta: state.driveBackupMeta,
+        autoBackupEnabled: state.autoBackupEnabled,
+        lastAutoBackupTime: state.lastAutoBackupTime,
       }),
       onRehydrateStorage: () => (state) => {
         state?.setHasHydrated(true);

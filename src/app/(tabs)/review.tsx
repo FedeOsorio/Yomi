@@ -1295,60 +1295,30 @@ export default function ReviewScreen() {
         onPress={() => promptStudyMethod(item.id, item.name, hasDue)}
       >
         <View style={styles.gridCardTopRow}>
-          <View
-            style={[
-              styles.gridFlagCircle,
-              {
-                backgroundColor: isCustom
-                  ? 'rgba(16, 185, 129, 0.15)'
-                  : 'rgba(59, 130, 246, 0.15)',
-              },
-            ]}
-          >
-            {isCustom ? (
-              <Ionicons
-                name="layers"
-                size={20}
-                color="#10B981"
-              />
-            ) : (
-              <Text style={styles.gridFlagEmoji}>{langMeta.flag}</Text>
-            )}
-          </View>
+          {isCustom ? (
+            <Ionicons
+              name="layers"
+              size={22}
+              color="#10B981"
+            />
+          ) : (
+            <Text style={styles.gridFlagEmoji}>{langMeta.flag}</Text>
+          )}
 
           {hasDue ? (
-            <View
-              style={[
-                styles.gridDueBadge,
-                {
-                  backgroundColor: 'rgba(245, 158, 11, 0.16)',
-                  borderColor: 'rgba(245, 158, 11, 0.35)',
-                },
-              ]}
+            <Text
+              style={[styles.gridDueText, { color: '#F59E0B' }]}
+              numberOfLines={1}
             >
-              <Text
-                style={[
-                  styles.gridDueBadgeText,
-                  { color: '#F59E0B' },
-                ]}
-              >
-                {dueCount}
-              </Text>
-            </View>
+              {dueCount} {dueCount === 1 ? 'pendiente' : 'pendientes'}
+            </Text>
           ) : (
-            <View
-              style={[
-                styles.gridDueBadge,
-                {
-                  backgroundColor: 'rgba(16, 185, 129, 0.12)',
-                  borderColor: 'rgba(16, 185, 129, 0.25)',
-                },
-              ]}
+            <Text
+              style={[styles.gridDueText, { color: '#10B981' }]}
+              numberOfLines={1}
             >
-              <Text style={[styles.gridDueBadgeText, { color: '#10B981' }]}>
-                Al día
-              </Text>
-            </View>
+              Al día
+            </Text>
           )}
         </View>
 
@@ -2651,7 +2621,9 @@ const styles = StyleSheet.create({
     height: 156,
     borderRadius: 18,
     borderWidth: 1,
-    padding: Spacing.md,
+    paddingHorizontal: Spacing.md,
+    paddingTop: 10,
+    paddingBottom: 8,
     justifyContent: 'space-between',
     ...Shadows.card,
   },
@@ -2660,34 +2632,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  gridFlagCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
   gridFlagEmoji: {
-    fontSize: 20,
-    lineHeight: 24,
-    textAlign: 'center',
-    textAlignVertical: 'center',
+    fontSize: 22,
     includeFontPadding: false,
   },
-  gridDueBadge: {
-    minWidth: 26,
-    height: 22,
-    paddingHorizontal: 7,
-    borderRadius: 11,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-  },
-  gridDueBadgeText: {
+  gridDueText: {
     fontSize: 11,
-    fontWeight: '800',
-    textAlign: 'center',
-    includeFontPadding: false,
+    fontWeight: '700',
   },
   gridCardBody: {
     marginVertical: Spacing.xs,
@@ -2705,7 +2656,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingTop: 6,
+    paddingTop: 8,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   gridCardActionText: {

@@ -112,9 +112,12 @@ export async function processIncomingBackupFile(uri: string): Promise<boolean> {
     console.log('[IncomingFile] File read successfully, length:', fileContent.length);
     const pkg = parseBackupFile(fileContent);
 
+    const foldersBullet = pkg.metadata.foldersCount
+      ? `• ${pkg.metadata.foldersCount} ${pkg.metadata.foldersCount === 1 ? 'carpeta' : 'carpetas'}\n`
+      : '';
     Alert.alert(
       'Copia de seguridad de Yomi',
-      `Se recibió un paquete de respaldo con:\n• ${pkg.metadata.decksCount} mazos\n• ${pkg.metadata.wordsCount} palabras\n• ${pkg.metadata.srsCount} tarjetas SRS\n\n¿Cómo deseás importarlo?`,
+      `Se recibió un paquete de respaldo con:\n${foldersBullet}• ${pkg.metadata.decksCount} mazos\n• ${pkg.metadata.wordsCount} palabras\n• ${pkg.metadata.srsCount} tarjetas SRS\n\n¿Cómo deseás importarlo?`,
       [
         { text: 'Cancelar', style: 'cancel' },
         {
@@ -122,9 +125,10 @@ export async function processIncomingBackupFile(uri: string): Promise<boolean> {
           onPress: async () => {
             try {
               const stats = await restoreBackupPackage(pkg, 'merge');
+              const foldersText = stats.foldersCount ? `${stats.foldersCount} carpetas, ` : '';
               Alert.alert(
                 'Importación Exitosa',
-                `Se combinaron ${stats.decksCount} mazos, ${stats.wordsCount} palabras y ${stats.srsCount} tarjetas SRS en tu colección.`
+                `Se combinaron ${foldersText}${stats.decksCount} mazos, ${stats.wordsCount} palabras y ${stats.srsCount} tarjetas SRS en tu colección.`
               );
             } catch (err: any) {
               Alert.alert('Error al importar', err.message || 'No se pudo combinar la copia.');
@@ -137,9 +141,10 @@ export async function processIncomingBackupFile(uri: string): Promise<boolean> {
           onPress: async () => {
             try {
               const stats = await restoreBackupPackage(pkg, 'replace');
+              const foldersText = stats.foldersCount ? `${stats.foldersCount} carpetas, ` : '';
               Alert.alert(
                 'Restauración Exitosa',
-                `Se restauraron ${stats.decksCount} mazos, ${stats.wordsCount} palabras y ${stats.srsCount} tarjetas SRS.`
+                `Se restauraron ${foldersText}${stats.decksCount} mazos, ${stats.wordsCount} palabras y ${stats.srsCount} tarjetas SRS.`
               );
             } catch (err: any) {
               Alert.alert('Error al restaurar', err.message || 'No se pudo restaurar la copia.');

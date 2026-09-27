@@ -59,6 +59,9 @@ export default function ProfileScreen() {
   const {
     googleUser,
     driveBackupMeta,
+    autoBackupEnabled,
+    lastAutoBackupTime,
+    setAutoBackupEnabled,
     isConnecting: isConnectingGoogle,
     isSyncing: isSyncingDrive,
     isRestoring: isRestoringDrive,
@@ -71,6 +74,35 @@ export default function ProfileScreen() {
     refreshMeta: refreshDriveMeta,
     init: initGoogleDrive,
   } = useGoogleDriveStore();
+
+  const getNextBackupText = () => {
+    if (!autoBackupEnabled) return 'Desactivado';
+    const lastIso = lastAutoBackupTime || driveBackupMeta?.modifiedTime;
+    if (!lastIso) return 'Próximo respaldo: Al usar la app';
+    const lastDate = new Date(lastIso);
+    if (isNaN(lastDate.getTime())) return 'Próximo respaldo: Al usar la app';
+    const nextDate = new Date(lastDate.getTime() + 24 * 60 * 60 * 1000);
+    const now = new Date();
+    if (nextDate <= now) {
+      return 'Próximo respaldo: Pendiente de sincronización';
+    }
+    const timeStr = nextDate.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    const isTomorrow =
+      nextDate.getDate() === new Date(now.getTime() + 86400000).getDate() &&
+      nextDate.getMonth() === new Date(now.getTime() + 86400000).getMonth();
+    const isToday =
+      nextDate.getDate() === now.getDate() &&
+      nextDate.getMonth() === now.getMonth();
+
+    if (isToday) {
+      return `Próximo respaldo: Hoy, ${timeStr}`;
+    } else if (isTomorrow) {
+      return `Próximo respaldo: Mañana, ${timeStr}`;
+    } else {
+      const dateStr = nextDate.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' });
+      return `Próximo respaldo: ${dateStr}, ${timeStr}`;
+    }
+  };
   const [showDriveInfoModal, setShowDriveInfoModal] = useState(false);
 
   const fetchStats = async () => {
@@ -185,9 +217,12 @@ export default function ProfileScreen() {
 
     const res = await backupToDrive();
     if (res.success && res.stats) {
+      const foldersText = res.stats.foldersCount
+        ? `${res.stats.foldersCount} ${res.stats.foldersCount === 1 ? 'carpeta' : 'carpetas'}, `
+        : '';
       Alert.alert(
         'Copia en Google Drive Exitosa',
-        `Se respaldaron ${res.stats.decksCount} mazos, ${res.stats.wordsCount} palabras y ${res.stats.srsCount} tarjetas SRS en tu espacio privado de Google Drive.`
+        `Se respaldaron ${foldersText}${res.stats.decksCount} mazos, ${res.stats.wordsCount} palabras y ${res.stats.srsCount} tarjetas SRS en tu espacio privado de Google Drive.`
       );
     } else if (res.error) {
       Alert.alert('Error al respaldar en Drive', res.error);
@@ -209,10 +244,13 @@ export default function ProfileScreen() {
 
     const pkg = inspection.pkg;
     const formattedDate = new Date(pkg.createdAt).toLocaleString();
+    const foldersBullet = pkg.metadata.foldersCount
+      ? `• ${pkg.metadata.foldersCount} ${pkg.metadata.foldersCount === 1 ? 'carpeta' : 'carpetas'}\n`
+      : '';
 
     Alert.alert(
       'Restaurar desde Google Drive',
-      `Se encontró tu copia del ${formattedDate} con:\n• ${pkg.metadata.decksCount} mazos\n• ${pkg.metadata.wordsCount} palabras\n• ${pkg.metadata.srsCount} tarjetas SRS.\n\n¿Cómo deseás restaurar tus datos en este dispositivo?`,
+      `Se encontró tu copia del ${formattedDate} con:\n${foldersBullet}• ${pkg.metadata.decksCount} mazos\n• ${pkg.metadata.wordsCount} palabras\n• ${pkg.metadata.srsCount} tarjetas SRS.\n\n¿Cómo deseás restaurar tus datos en este dispositivo?`,
       [
         { text: 'Cancelar', style: 'cancel' },
         {
@@ -221,9 +259,10 @@ export default function ProfileScreen() {
             const res = await restoreDriveBackup('merge', pkg);
             if (res.success && res.res) {
               await fetchStats();
+              const foldersText = res.res.foldersCount ? `${res.res.foldersCount} carpetas, ` : '';
               Alert.alert(
                 'Restauración Exitosa',
-                `Se combinaron los datos desde Google Drive: ${res.res.decksCount} mazos y ${res.res.wordsCount} palabras disponibles.`
+                `Se combinaron los datos desde Google Drive: ${foldersText}${res.res.decksCount} mazos y ${res.res.wordsCount} palabras disponibles.`
               );
             } else if (res.error) {
               Alert.alert('Error al restaurar', res.error);
@@ -237,9 +276,10 @@ export default function ProfileScreen() {
             const res = await restoreDriveBackup('replace', pkg);
             if (res.success && res.res) {
               await fetchStats();
+              const foldersText = res.res.foldersCount ? `${res.res.foldersCount} carpetas, ` : '';
               Alert.alert(
                 'Restauración Exitosa',
-                `Se restauró la copia completa desde Google Drive: ${res.res.decksCount} mazos y ${res.res.wordsCount} palabras.`
+                `Se restauró la copia completa desde Google Drive: ${foldersText}${res.res.decksCount} mazos y ${res.res.wordsCount} palabras.`
               );
             } else if (res.error) {
               Alert.alert('Error al restaurar', res.error);
@@ -261,9 +301,12 @@ export default function ProfileScreen() {
       if (res.cancelled) return;
       const nowIso = new Date().toISOString();
       setLastBackupTime(nowIso);
+      const foldersBullet = res.stats.foldersCount
+        ? `• ${res.stats.foldersCount} ${res.stats.foldersCount === 1 ? 'carpeta' : 'carpetas'}\n`
+        : '';
       Alert.alert(
         'Copia guardada con éxito',
-        `Se guardó el archivo en tu teléfono con:\n• ${res.stats.decksCount} mazos\n• ${res.stats.wordsCount} palabras\n• ${res.stats.srsCount} tarjetas de repaso.`
+        `Se guardó el archivo en tu teléfono con:\n${foldersBullet}• ${res.stats.decksCount} mazos\n• ${res.stats.wordsCount} palabras\n• ${res.stats.srsCount} tarjetas de repaso.`
       );
     } catch (e: any) {
       Alert.alert('Error', e.message || 'No se pudo guardar el archivo.');
@@ -293,9 +336,12 @@ export default function ProfileScreen() {
       const pkg = parseBackupFile(content);
 
       const formattedDate = new Date(pkg.createdAt).toLocaleString();
+      const foldersBullet = pkg.metadata.foldersCount
+        ? `• ${pkg.metadata.foldersCount} ${pkg.metadata.foldersCount === 1 ? 'carpeta' : 'carpetas'}\n`
+        : '';
       Alert.alert(
         'Restaurar Copia de Seguridad',
-        `Se encontró una copia del ${formattedDate} con:\n• ${pkg.metadata.decksCount} mazos\n• ${pkg.metadata.wordsCount} palabras\n• ${pkg.metadata.srsCount} tarjetas de repaso.\n\n¿Cómo deseás restaurar tus datos?`,
+        `Se encontró una copia del ${formattedDate} con:\n${foldersBullet}• ${pkg.metadata.decksCount} mazos\n• ${pkg.metadata.wordsCount} palabras\n• ${pkg.metadata.srsCount} tarjetas de repaso.\n\n¿Cómo deseás restaurar tus datos?`,
         [
           { text: 'Cancelar', style: 'cancel', onPress: () => setIsRestoring(false) },
           {
@@ -304,9 +350,10 @@ export default function ProfileScreen() {
               try {
                 const res = await restoreBackupPackage(pkg, 'merge');
                 await fetchStats();
+                const foldersText = res.foldersCount ? `${res.foldersCount} carpetas, ` : '';
                 Alert.alert(
                   'Restauración Exitosa',
-                  `Se combinaron los datos correctamente: ${res.decksCount} mazos y ${res.wordsCount} palabras disponibles.`
+                  `Se combinaron los datos correctamente: ${foldersText}${res.decksCount} mazos y ${res.wordsCount} palabras disponibles.`
                 );
               } catch (err: any) {
                 Alert.alert('Error al restaurar', err.message || 'Error durante la restauración.');
@@ -322,9 +369,10 @@ export default function ProfileScreen() {
               try {
                 const res = await restoreBackupPackage(pkg, 'replace');
                 await fetchStats();
+                const foldersText = res.foldersCount ? `${res.foldersCount} carpetas, ` : '';
                 Alert.alert(
                   'Restauración Exitosa',
-                  `Se restauró la copia completa: ${res.decksCount} mazos y ${res.wordsCount} palabras.`
+                  `Se restauró la copia completa: ${foldersText}${res.decksCount} mazos y ${res.wordsCount} palabras.`
                 );
               } catch (err: any) {
                 Alert.alert('Error al restaurar', err.message || 'Error durante la restauración.');
@@ -544,7 +592,7 @@ export default function ProfileScreen() {
         </View>
 
         <Text style={[styles.settingSub, { color: colors.textMuted, marginBottom: Spacing.md }]}>
-          Respaldá automáticamente tus mazos y progresos SRS en tu espacio privado de Google Drive para tenerlos en todos tus dispositivos.
+          Respalda tus mazos y progresos en tu espacio privado de Google Drive para tenerlos en todos tus dispositivos.
         </Text>
 
         {/* Fila de Cuenta Conectada */}
@@ -598,6 +646,26 @@ export default function ProfileScreen() {
             </View>
           )}
         </View>
+
+        {/* Respaldo automático diario */}
+        {googleUser && (
+          <View style={[styles.settingRow, { marginTop: Spacing.xs, marginBottom: Spacing.sm, paddingHorizontal: 0 }]}>
+            <View style={styles.settingTextGroup}>
+              <Text style={[styles.settingLabel, { color: colors.text, fontSize: 14 }]}>
+                Respaldo automático
+              </Text>
+              <Text style={[styles.settingSub, { color: colors.textMuted, fontSize: 12, marginTop: 2 }]}>
+                {getNextBackupText()}
+              </Text>
+            </View>
+            <Switch
+              value={autoBackupEnabled}
+              onValueChange={setAutoBackupEnabled}
+              trackColor={{ false: colors.border, true: colors.primary }}
+              thumbColor="#FFF"
+            />
+          </View>
+        )}
 
         {/* Estado de la última copia en la nube */}
         <TouchableOpacity

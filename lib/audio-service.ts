@@ -111,42 +111,39 @@ export async function speakText(
     const hasKanji = /[\u4e00-\u9faf]/.test(cleanText);
     const isSingleChar = cleanText.length === 1;
 
-    // Si el texto ya es una palabra completa con Kanji (ej. "飲む", "食べる", "日本人"),
-    // NO reemplazar por hiragana suelto. Google TTS usa MeCab y pronuncia las palabras con kanji con 100% de precisión.
-    // El hiragana puro y suelto (ej. "のむ") carece de límites morfológicos y genera pronunciaciones erráticas en TTS.
-    if (!hasKanji || isSingleChar) {
-      // Solo si es un único kanji aislado (ej. "山", "何", "日", "飲") o no tiene lectura explícita:
-      if (!readingTarget && isSingleChar && hasKanji) {
-        const essential = getKanjiEssentialReading(cleanText);
-        if (essential.essentialReading && essential.essentialReading !== cleanText) {
-          readingTarget = essential.essentialReading;
+    // Si se proporciona una lectura explícita en la tarjeta (furigana/kana) o si es un kanji individual con lectura esencial:
+    // Usar SIEMPRE la lectura limpia en kana para que el sintetizador TTS nativo no adivine lecturas alternativas
+    // (ej. para "五月" con lectura "ごがつ", TTS debe pronunciar "ごがつ" y no "さつき"; para "一日" con "ついたち", "ついたち" y no "いちにち").
+    if (!readingTarget && isSingleChar && hasKanji) {
+      const essential = getKanjiEssentialReading(cleanText);
+      if (essential.essentialReading && essential.essentialReading !== cleanText) {
+        readingTarget = essential.essentialReading;
+      }
+    }
+
+    if (readingTarget) {
+      // Si contiene formato "On: ... • Kun: ..." o similar, priorizar Kun'yomi para vocabulario
+      if (/\b(on|kun)\b/i.test(readingTarget) || readingTarget.includes('•')) {
+        const kunMatch = readingTarget.match(/kun[:：\s]*([^\/\n,、;•|]+)/i);
+        const onMatch = readingTarget.match(/on[:：\s]*([^\/\n,、;•|]+)/i);
+        if (kunMatch && kunMatch[1]) {
+          readingTarget = kunMatch[1];
+        } else if (onMatch && onMatch[1]) {
+          readingTarget = onMatch[1];
         }
       }
 
-      if (readingTarget) {
-        // Si contiene formato "On: ... • Kun: ..." o similar, priorizar Kun'yomi para vocabulario
-        if (/\b(on|kun)\b/i.test(readingTarget) || readingTarget.includes('•')) {
-          const kunMatch = readingTarget.match(/kun[:：\s]*([^\/\n,、;•|]+)/i);
-          const onMatch = readingTarget.match(/on[:：\s]*([^\/\n,、;•|]+)/i);
-          if (kunMatch && kunMatch[1]) {
-            readingTarget = kunMatch[1];
-          } else if (onMatch && onMatch[1]) {
-            readingTarget = onMatch[1];
-          }
-        }
+      // Extraer la primera lectura antes de separadores /, ,, 、, ;, •, | o saltos de línea
+      const primaryPart = readingTarget.split(/[\/\n,、;•|]/)[0] || '';
+      // Quitar etiquetas On/Kun y símbolos auxiliares como puntos (・), guiones, tildes, paréntesis
+      const cleanedKana = primaryPart
+        .replace(/^(on|kun|音|訓)[:：\s]*/i, '')
+        .replace(/[・~～\s\(\)（）\-\.]/g, '')
+        .trim();
 
-        // Extraer la primera lectura antes de separadores /, ,, 、, ;, •, | o saltos de línea
-        const primaryPart = readingTarget.split(/[\/\n,、;•|]/)[0] || '';
-        // Quitar etiquetas On/Kun y símbolos auxiliares como puntos (・), guiones, tildes, paréntesis
-        const cleanedKana = primaryPart
-          .replace(/^(on|kun|音|訓)[:：\s]*/i, '')
-          .replace(/[・~～\s\(\)（）\-\.]/g, '')
-          .trim();
-
-        if (/[\u3040-\u30ff]/.test(cleanedKana)) {
-          // Respetar fielmente la lectura activa seleccionada por el usuario (On'yomi o Kun'yomi)
-          cleanText = cleanedKana;
-        }
+      if (/[\u3040-\u30ff]/.test(cleanedKana)) {
+        // Respetar fielmente la lectura exacta configurada para la tarjeta
+        cleanText = cleanedKana;
       }
     }
   }

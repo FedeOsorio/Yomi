@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { decks, words, sentences, sentenceWords, srsItems } from '../db/schema';
+import { decks, words, sentences, sentenceWords, srsItems, folders } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
@@ -29,11 +29,19 @@ export function notifyDataChanged() {
   });
 }
 
+export interface YomiFolderBackupItem {
+  id: string;
+  name: string;
+  color?: string | null;
+  createdAt: string;
+}
+
 export interface YomiDeckBackupItem {
   id: string;
   languageCode: string;
   name: string;
   type?: 'language' | 'custom';
+  folderId?: string | null;
   createdAt: string;
 }
 
@@ -88,12 +96,14 @@ export interface YomiFullBackupPackage {
   createdAt: string;
   metadata: {
     appVersion: string;
+    foldersCount?: number;
     decksCount: number;
     wordsCount: number;
     sentencesCount: number;
     srsCount: number;
   };
   data: {
+    folders?: YomiFolderBackupItem[];
     decks: YomiDeckBackupItem[];
     words: YomiWordBackupItem[];
     sentences: YomiSentenceBackupItem[];
@@ -106,17 +116,31 @@ export interface YomiFullBackupPackage {
  * Serializa toda la base de datos del usuario en un paquete autocontenido de respaldo.
  */
 export async function createFullBackupPackage(): Promise<YomiFullBackupPackage> {
+  let allFolders: any[] = [];
+  try {
+    allFolders = await db.select().from(folders);
+  } catch (err) {
+    console.warn('[Backup] Error seleccionando folders:', err);
+  }
   const allDecks = await db.select().from(decks);
   const allWords = await db.select().from(words);
   const allSentences = await db.select().from(sentences);
   const allSentenceWords = await db.select().from(sentenceWords);
   const allSrsItems = await db.select().from(srsItems);
 
+  const serializedFolders: YomiFolderBackupItem[] = allFolders.map((f) => ({
+    id: f.id,
+    name: f.name,
+    color: f.color || null,
+    createdAt: f.createdAt instanceof Date ? f.createdAt.toISOString() : new Date(f.createdAt).toISOString(),
+  }));
+
   const serializedDecks: YomiDeckBackupItem[] = allDecks.map((d) => ({
     id: d.id,
     languageCode: d.languageCode,
     name: d.name,
     type: (d.type as 'language' | 'custom') || 'language',
+    folderId: d.folderId || null,
     createdAt: d.createdAt instanceof Date ? d.createdAt.toISOString() : new Date(d.createdAt).toISOString(),
   }));
 
@@ -175,12 +199,14 @@ export async function createFullBackupPackage(): Promise<YomiFullBackupPackage> 
     createdAt: new Date().toISOString(),
     metadata: {
       appVersion: '1.0.0',
+      foldersCount: serializedFolders.length,
       decksCount: serializedDecks.length,
       wordsCount: serializedWords.length,
       sentencesCount: serializedSentences.length,
       srsCount: serializedSrs.length,
     },
     data: {
+      folders: serializedFolders,
       decks: serializedDecks,
       words: serializedWords,
       sentences: serializedSentences,
@@ -339,18 +365,21 @@ export function parseBackupFile(content: string): YomiFullBackupPackage {
 
   // Caso 1: Formato v1 estándar { format: 'yomi-full-backup-v1', data: { decks, words, ... } }
   if (parsed.data && Array.isArray(parsed.data.decks) && Array.isArray(parsed.data.words)) {
+    const foldersList = Array.isArray(parsed.data.folders) ? parsed.data.folders : [];
     return {
       format: 'yomi-full-backup-v1',
       version: 1,
       createdAt: parsed.createdAt || new Date().toISOString(),
       metadata: {
         appVersion: parsed.metadata?.appVersion || '1.0.0',
+        foldersCount: foldersList.length,
         decksCount: parsed.data.decks.length,
         wordsCount: parsed.data.words.length,
         sentencesCount: (parsed.data.sentences || []).length,
         srsCount: (parsed.data.srsItems || []).length,
       },
       data: {
+        folders: foldersList,
         decks: parsed.data.decks,
         words: parsed.data.words,
         sentences: parsed.data.sentences || [],
@@ -363,6 +392,7 @@ export function parseBackupFile(content: string): YomiFullBackupPackage {
   // Caso 2: Formato legado o simplificado con decks y words en la raíz
   const decksList = Array.isArray(parsed.decks) ? parsed.decks : null;
   const wordsList = Array.isArray(parsed.words) ? parsed.words : null;
+  const foldersList = Array.isArray(parsed.folders) ? parsed.folders : [];
 
   if (decksList && wordsList) {
     const sentencesList = Array.isArray(parsed.sentences) ? parsed.sentences : [];
@@ -375,12 +405,14 @@ export function parseBackupFile(content: string): YomiFullBackupPackage {
       createdAt: parsed.createdAt || new Date().toISOString(),
       metadata: {
         appVersion: parsed.metadata?.appVersion || '1.0.0',
+        foldersCount: foldersList.length,
         decksCount: decksList.length,
         wordsCount: wordsList.length,
         sentencesCount: sentencesList.length,
         srsCount: srsList.length,
       },
       data: {
+        folders: foldersList,
         decks: decksList,
         words: wordsList,
         sentences: sentencesList,
@@ -399,34 +431,84 @@ export function parseBackupFile(content: string): YomiFullBackupPackage {
 export async function restoreBackupPackage(
   pkg: YomiFullBackupPackage,
   mode: 'replace' | 'merge' = 'replace'
-): Promise<{ decksCount: number; wordsCount: number; srsCount: number }> {
+): Promise<{ foldersCount: number; decksCount: number; wordsCount: number; srsCount: number }> {
   if (mode === 'replace') {
-    // Limpieza de datos en cascada
+    // Limpieza de datos en cascada: dependencias primero
     await db.delete(sentenceWords);
     await db.delete(sentences);
     await db.delete(srsItems);
     await db.delete(words);
     await db.delete(decks);
+    try {
+      await db.delete(folders);
+    } catch (e) {
+      console.warn('Error al vaciar folders en replace:', e);
+    }
   }
 
-  // 1. Restaurar Decks
+  // 1. Restaurar Folders (primero, para que los mazos puedan referenciarlas)
+  if (Array.isArray(pkg.data.folders)) {
+    for (const f of pkg.data.folders) {
+      if (mode === 'merge') {
+        try {
+          const existing = await db.select().from(folders).where(eq(folders.id, f.id)).limit(1);
+          if (existing.length > 0) {
+            await db
+              .update(folders)
+              .set({ name: f.name, color: f.color || null })
+              .where(eq(folders.id, f.id));
+            continue;
+          }
+        } catch {}
+      }
+      try {
+        await db.insert(folders).values({
+          id: f.id,
+          name: f.name,
+          color: f.color || null,
+          createdAt: new Date(f.createdAt),
+        });
+      } catch (err) {
+        console.warn('Error restaurando carpeta:', f.name, err);
+      }
+    }
+  }
+
+  // 2. Restaurar Decks (con folderId)
   for (const d of pkg.data.decks) {
     const deckType: 'language' | 'custom' = d.type || (d.languageCode === 'es-ES' ? 'custom' : 'language');
+    const folderId = d.folderId || null;
     if (mode === 'merge') {
       const existing = await db.select().from(decks).where(eq(decks.id, d.id)).limit(1);
       if (existing.length > 0) {
-        // Asegurar que el tipo quede configurado correctamente (ej. 'custom' para medicina o es-ES)
-        await db.update(decks).set({ type: deckType }).where(eq(decks.id, d.id));
+        // Asegurar que el tipo y carpeta queden configurados correctamente
+        await db
+          .update(decks)
+          .set({ type: deckType, ...(folderId !== undefined ? { folderId } : {}) })
+          .where(eq(decks.id, d.id));
         continue;
       }
     }
-    await db.insert(decks).values({
-      id: d.id,
-      languageCode: d.languageCode,
-      name: d.name,
-      type: deckType,
-      createdAt: new Date(d.createdAt),
-    });
+    try {
+      await db.insert(decks).values({
+        id: d.id,
+        languageCode: d.languageCode,
+        name: d.name,
+        type: deckType,
+        folderId,
+        createdAt: new Date(d.createdAt),
+      });
+    } catch {
+      // Si la carpeta referenciada no existe, insertar sin carpeta
+      await db.insert(decks).values({
+        id: d.id,
+        languageCode: d.languageCode,
+        name: d.name,
+        type: deckType,
+        folderId: null,
+        createdAt: new Date(d.createdAt),
+      });
+    }
   }
 
   // 2. Restaurar Words
@@ -540,6 +622,7 @@ export async function restoreBackupPackage(
   notifyDataChanged();
 
   return {
+    foldersCount: Array.isArray(pkg.data.folders) ? pkg.data.folders.length : 0,
     decksCount: pkg.data.decks.length,
     wordsCount: pkg.data.words.length,
     srsCount: totalSrs.length,

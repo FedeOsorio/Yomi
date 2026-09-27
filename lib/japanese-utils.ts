@@ -1473,30 +1473,30 @@ const MONTH_DATA = [
 ];
 
 const DAY_DATA = [
-  { day: 1, kanji: '一日', morpheme: '一 日', kana: 'ついたち', altKanji: '1日' },
-  { day: 2, kanji: '二日', morpheme: '二 日', kana: 'ふつか', altKanji: '2日' },
-  { day: 3, kanji: '三日', morpheme: '三 日', kana: 'みっか', altKanji: '3日' },
-  { day: 4, kanji: '四日', morpheme: '四 日', kana: 'よっか', altKanji: '4日' },
-  { day: 5, kanji: '五日', morpheme: '五 日', kana: 'いつか', altKanji: '5日' },
-  { day: 6, kanji: '六日', morpheme: '六 日', kana: 'むいか', altKanji: '6日' },
-  { day: 7, kanji: '七日', morpheme: '七 日', kana: 'なのか', altKanji: '7日' },
-  { day: 8, kanji: '八日', morpheme: '八 日', kana: 'ようか', altKanji: '8日' },
-  { day: 9, kanji: '九日', morpheme: '九 日', kana: 'ここのか', altKanji: '9日' },
-  { day: 10, kanji: '十日', morpheme: '十 日', kana: 'とおか', altKanji: '10日' },
+  { day: 1, kanji: '一日', morpheme: 'ついたち', kana: 'ついたち', altKanji: '1日' },
+  { day: 2, kanji: '二日', morpheme: 'ふつか', kana: 'ふつか', altKanji: '2日' },
+  { day: 3, kanji: '三日', morpheme: 'みっ か', kana: 'みっか', altKanji: '3日' },
+  { day: 4, kanji: '四日', morpheme: 'よっ か', kana: 'よっか', altKanji: '4日' },
+  { day: 5, kanji: '五日', morpheme: 'いつか', kana: 'いつか', altKanji: '5日' },
+  { day: 6, kanji: '六日', morpheme: 'むい か', kana: 'むいか', altKanji: '6日' },
+  { day: 7, kanji: '七日', morpheme: 'なのか', kana: 'なのか', altKanji: '7日' },
+  { day: 8, kanji: '八日', morpheme: 'ようか', kana: 'ようか', altKanji: '8日' },
+  { day: 9, kanji: '九日', morpheme: 'ここの か', kana: 'ここのか', altKanji: '9日' },
+  { day: 10, kanji: '十日', morpheme: 'とお か', kana: 'とおか', altKanji: '10日' },
   { day: 11, kanji: '十一日', morpheme: '十 一 日', kana: 'じゅういちにち', altKanji: '11日' },
   { day: 12, kanji: '十二日', morpheme: '十 二 日', kana: 'じゅうににち', altKanji: '12日' },
   { day: 13, kanji: '十三日', morpheme: '十 三 日', kana: 'じゅうさんにち', altKanji: '13日' },
-  { day: 14, kanji: '十四日', morpheme: '十 四 日', kana: 'じゅうよっか', altKanji: '14日' },
+  { day: 14, kanji: '十四日', morpheme: 'じゅう よっ か', kana: 'じゅうよっか', altKanji: '14日' },
   { day: 15, kanji: '十五日', morpheme: '十 五 日', kana: 'じゅうごにち', altKanji: '15日' },
   { day: 16, kanji: '十六日', morpheme: '十 六 日', kana: 'じゅうろくにち', altKanji: '16日' },
   { day: 17, kanji: '十七日', morpheme: '十 七 日', kana: 'じゅうしちにち', altKanji: '17日' },
   { day: 18, kanji: '十八日', morpheme: '十 八 日', kana: 'じゅうはちにち', altKanji: '18日' },
   { day: 19, kanji: '十九日', morpheme: '十 九 日', kana: 'じゅうくにち', altKanji: '19日' },
-  { day: 20, kanji: '二十日', morpheme: '二 十 日', kana: 'はつか', altKanji: '20日' },
+  { day: 20, kanji: '二十日', morpheme: 'はつか', kana: 'はつか', altKanji: '20日' },
   { day: 21, kanji: '二十一日', morpheme: '二 十 一 日', kana: 'にじゅういちにち', altKanji: '21日' },
   { day: 22, kanji: '二十二日', morpheme: '二 十 二 日', kana: 'にじゅうににち', altKanji: '22日' },
   { day: 23, kanji: '二十三日', morpheme: '二 十 三 日', kana: 'にじゅうさんにち', altKanji: '23日' },
-  { day: 24, kanji: '二十四日', morpheme: '二 十 四 日', kana: 'にじゅうよっか', altKanji: '24日' },
+  { day: 24, kanji: '二十四日', morpheme: 'に じゅう よっ か', kana: 'にじゅうよっか', altKanji: '24日' },
   { day: 25, kanji: '二十五日', morpheme: '二 十 五 日', kana: 'にじゅうごにち', altKanji: '25日' },
   { day: 26, kanji: '二十六日', morpheme: '二 十 六 日', kana: 'にじゅうろくにち', altKanji: '26日' },
   { day: 27, kanji: '二十七日', morpheme: '二 十 七 日', kana: 'にじゅうしちにち', altKanji: '27日' },
@@ -1563,7 +1563,8 @@ export function getJapaneseCalendarExpansions(input: string): string[] {
   // 3. Días del mes (1 a 31)
   for (const d of DAY_DATA) {
     if (clean === d.altKanji || clean === d.kanji || clean === d.kana) {
-      results.add(d.kanji);
+      // Priorizar la fonética exacta de la lectura (d.morpheme y d.kana) para que Vosk
+      // reconozca estrictamente la lectura correcta (ej. "みっ か" para 3日)
       results.add(d.morpheme);
       results.add(d.kana);
     }

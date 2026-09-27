@@ -1,23 +1,23 @@
+import { and, eq, lte } from 'drizzle-orm';
 import * as crypto from 'expo-crypto';
-import { createEmptyCard, fsrs, generatorParameters, Rating, Card, State } from 'ts-fsrs';
+import { Card, createEmptyCard, fsrs, generatorParameters, Rating, State } from 'ts-fsrs';
 import { db } from '../db';
-import { srsItems, words, decks } from '../db/schema';
-import { eq, lte, and } from 'drizzle-orm';
-import { toSearchKey } from './pinyin-utils';
+import { decks, srsItems, words } from '../db/schema';
 import {
-  toNormalizedHiragana,
-  romajiToHiragana,
-  getEffectiveCardLanguage,
-  expandNumberArtifacts,
   deconjugateJapanese,
-  normalizeYouon,
+  expandNumberArtifacts,
+  getEffectiveCardLanguage,
   hiraganaToRomaji,
-  normalizeJapaneseCalendarText,
   JA_NUMBERS,
+  normalizeJapaneseCalendarText,
+  normalizeYouon,
+  romajiToHiragana,
+  toNormalizedHiragana,
   ZH_NUMBERS,
 } from './japanese-utils';
 import { JLPT_KANJI_READINGS } from './jlpt-data';
 import { KANJI_READINGS_MAP } from './kanji-readings-db';
+import { toSearchKey } from './pinyin-utils';
 
 export { JA_NUMBERS, ZH_NUMBERS };
 
@@ -230,7 +230,7 @@ export function checkVoiceMatch(
         if (aux.kanjiReadings) allReadingsStr += ` • ${aux.kanjiReadings}`;
         if (aux.onReading) allReadingsStr += ` • ${aux.onReading}`;
         if (aux.kunReading) allReadingsStr += ` • ${aux.kunReading}`;
-      } catch {}
+      } catch { }
     }
 
     // Catálogo universal de 2.600+ Kanjis (N5 a N1): incorporar todas las lecturas On y Kun canónicas
@@ -263,8 +263,15 @@ export function checkVoiceMatch(
     const cleanNormText = normalizeJapaneseCalendarText(cleanText);
     const cleanNormTranscript = normalizeJapaneseCalendarText(cleanTranscript);
 
-    // Si el reconocedor transcribió el kanji exacto directamente o tras normalización de fechas/calendario (ej. "3日" con "三日", "1月" con "一月")
+    const isIrregularCalendarDay =
+      /^(ついたち|ふつか|みっか|よっか|いつか|むいか|なのか|ようか|ここのか|とおか|じゅうよっか|はつか|にじゅうよっか)$/.test(
+        readingKana
+      );
+
+    // Si el reconocedor transcribió el kanji exacto directamente o tras normalización de fechas/calendario (ej. "1月" con "一月", o palabras regulares)
+    // No permitir este atajo si es un día irregular del calendario donde el kanji oculta si se dijo la lectura regular errónea (ej. "sannichi")
     if (
+      !isIrregularCalendarDay &&
       cleanText.length > 0 &&
       (cleanTranscript === cleanText ||
         cleanNormTranscript === cleanNormText ||
@@ -548,7 +555,7 @@ function toFsrsCard(item: SrsItem): Card {
  * Obtiene todas las tarjetas pendientes de repaso para hoy (due <= ahora).
  */
 export async function getDueCards(deckId?: string): Promise<DueCardWithContext[]> {
-  await healCorruptedSrsIntervals().catch(() => {});
+  await healCorruptedSrsIntervals().catch(() => { });
   const now = new Date();
 
   const query = db

@@ -25,6 +25,7 @@ export interface GoogleDriveBackupMetadata {
   name: string;
   modifiedTime: string;
   sizeBytes?: number;
+  foldersCount?: number;
   decksCount?: number;
   wordsCount?: number;
   srsCount?: number;
@@ -618,6 +619,7 @@ export async function uploadBackupToGoogleDrive(tokenParam?: string): Promise<{
     name: uploadResult.name,
     modifiedTime: uploadResult.modifiedTime || new Date().toISOString(),
     sizeBytes,
+    foldersCount: pkg.metadata.foldersCount,
     decksCount: pkg.metadata.decksCount,
     wordsCount: pkg.metadata.wordsCount,
     srsCount: pkg.metadata.srsCount,
