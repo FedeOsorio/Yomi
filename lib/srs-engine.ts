@@ -12,6 +12,7 @@ import {
   deconjugateJapanese,
   normalizeYouon,
   hiraganaToRomaji,
+  normalizeJapaneseCalendarText,
   JA_NUMBERS,
   ZH_NUMBERS,
 } from './japanese-utils';
@@ -122,8 +123,9 @@ export function checkReadingMatch(expectedReading: string, userInput: string): b
  */
 export function formatSpokenTranscript(transcript: string, lang: string): string {
   if (!transcript) return '';
-  const trimmed = transcript.trim();
-  const isJapanese = (lang || '').toLowerCase().startsWith('ja') || /[\u3040-\u30ff]/.test(transcript);
+  const trimmed = transcript.replace(/\[unk\]/gi, '').trim();
+  if (!trimmed) return '';
+  const isJapanese = (lang || '').toLowerCase().startsWith('ja') || /[\u3040-\u30ff]/.test(trimmed);
   const isChinese = (lang || '').toLowerCase().startsWith('zh');
 
   if (isJapanese) {
@@ -258,8 +260,17 @@ export function checkVoiceMatch(
       new Set([cleanReading, readingKana, textKana, ...validReadings].filter(Boolean))
     );
 
-    // Si Google transcribió el kanji exacto directamente (ej. "日" o "東" o "百")
-    if (cleanText.length > 0 && cleanTranscript === cleanText) {
+    const cleanNormText = normalizeJapaneseCalendarText(cleanText);
+    const cleanNormTranscript = normalizeJapaneseCalendarText(cleanTranscript);
+
+    // Si el reconocedor transcribió el kanji exacto directamente o tras normalización de fechas/calendario (ej. "3日" con "三日", "1月" con "一月")
+    if (
+      cleanText.length > 0 &&
+      (cleanTranscript === cleanText ||
+        cleanNormTranscript === cleanNormText ||
+        cleanTranscript === cleanNormText ||
+        cleanNormTranscript === cleanText)
+    ) {
       const bestKana = validReadings[0] || readingKana || cleanReading || cleanText;
       return { isMatch: true, matchedReading: bestKana };
     }

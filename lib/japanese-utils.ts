@@ -1447,4 +1447,129 @@ export function formatJapaneseReading(reading: string): string {
   return clean;
 }
 
+const DOW_DATA = [
+  { kanji: '月曜日', short: '月曜', kana: 'げつようび' },
+  { kanji: '火曜日', short: '火曜', kana: 'かようび' },
+  { kanji: '水曜日', short: '水曜', kana: 'すいようび' },
+  { kanji: '木曜日', short: '木曜', kana: 'もくようび' },
+  { kanji: '金曜日', short: '金曜', kana: 'きんようび' },
+  { kanji: '土曜日', short: '土曜', kana: 'どようび' },
+  { kanji: '日曜日', short: '日曜', kana: 'にちようび' },
+];
+
+const MONTH_DATA = [
+  { num: 1, kanji: '一月', kana: 'いちがつ' },
+  { num: 2, kanji: '二月', kana: 'にがつ' },
+  { num: 3, kanji: '三月', kana: 'さんがつ' },
+  { num: 4, kanji: '四月', kana: 'しがつ' },
+  { num: 5, kanji: '五月', kana: 'ごがつ' },
+  { num: 6, kanji: '六月', kana: 'ろくがつ' },
+  { num: 7, kanji: '七月', kana: 'しちがつ', altKana: 'なながつ' },
+  { num: 8, kanji: '八月', kana: 'はちがつ' },
+  { num: 9, kanji: '九月', kana: 'くがつ' },
+  { num: 10, kanji: '十月', kana: 'じゅうがつ' },
+  { num: 11, kanji: '十一月', kana: 'じゅういちがつ' },
+  { num: 12, kanji: '十二月', kana: 'じゅうにがつ' },
+];
+
+const DAY_DATA = [
+  { day: 1, kanji: '一日', morpheme: '一 日', kana: 'ついたち', altKanji: '1日' },
+  { day: 2, kanji: '二日', morpheme: '二 日', kana: 'ふつか', altKanji: '2日' },
+  { day: 3, kanji: '三日', morpheme: '三 日', kana: 'みっか', altKanji: '3日' },
+  { day: 4, kanji: '四日', morpheme: '四 日', kana: 'よっか', altKanji: '4日' },
+  { day: 5, kanji: '五日', morpheme: '五 日', kana: 'いつか', altKanji: '5日' },
+  { day: 6, kanji: '六日', morpheme: '六 日', kana: 'むいか', altKanji: '6日' },
+  { day: 7, kanji: '七日', morpheme: '七 日', kana: 'なのか', altKanji: '7日' },
+  { day: 8, kanji: '八日', morpheme: '八 日', kana: 'ようか', altKanji: '8日' },
+  { day: 9, kanji: '九日', morpheme: '九 日', kana: 'ここのか', altKanji: '9日' },
+  { day: 10, kanji: '十日', morpheme: '十 日', kana: 'とおか', altKanji: '10日' },
+  { day: 11, kanji: '十一日', morpheme: '十 一 日', kana: 'じゅういちにち', altKanji: '11日' },
+  { day: 12, kanji: '十二日', morpheme: '十 二 日', kana: 'じゅうににち', altKanji: '12日' },
+  { day: 13, kanji: '十三日', morpheme: '十 三 日', kana: 'じゅうさんにち', altKanji: '13日' },
+  { day: 14, kanji: '十四日', morpheme: '十 四 日', kana: 'じゅうよっか', altKanji: '14日' },
+  { day: 15, kanji: '十五日', morpheme: '十 五 日', kana: 'じゅうごにち', altKanji: '15日' },
+  { day: 16, kanji: '十六日', morpheme: '十 六 日', kana: 'じゅうろくにち', altKanji: '16日' },
+  { day: 17, kanji: '十七日', morpheme: '十 七 日', kana: 'じゅうしちにち', altKanji: '17日' },
+  { day: 18, kanji: '十八日', morpheme: '十 八 日', kana: 'じゅうはちにち', altKanji: '18日' },
+  { day: 19, kanji: '十九日', morpheme: '十 九 日', kana: 'じゅうくにち', altKanji: '19日' },
+  { day: 20, kanji: '二十日', morpheme: '二 十 日', kana: 'はつか', altKanji: '20日' },
+  { day: 21, kanji: '二十一日', morpheme: '二 十 一 日', kana: 'にじゅういちにち', altKanji: '21日' },
+  { day: 22, kanji: '二十二日', morpheme: '二 十 二 日', kana: 'にじゅうににち', altKanji: '22日' },
+  { day: 23, kanji: '二十三日', morpheme: '二 十 三 日', kana: 'にじゅうさんにち', altKanji: '23日' },
+  { day: 24, kanji: '二十四日', morpheme: '二 十 四 日', kana: 'にじゅうよっか', altKanji: '24日' },
+  { day: 25, kanji: '二十五日', morpheme: '二 十 五 日', kana: 'にじゅうごにち', altKanji: '25日' },
+  { day: 26, kanji: '二十六日', morpheme: '二 十 六 日', kana: 'にじゅうろくにち', altKanji: '26日' },
+  { day: 27, kanji: '二十七日', morpheme: '二 十 七 日', kana: 'にじゅうしちにち', altKanji: '27日' },
+  { day: 28, kanji: '二十八日', morpheme: '二 十 八 日', kana: 'にじゅうはちにち', altKanji: '28日' },
+  { day: 29, kanji: '二十九日', morpheme: '二 十 九 日', kana: 'にじゅうくにち', altKanji: '29日' },
+  { day: 30, kanji: '三十日', morpheme: '三 十 日', kana: 'さんじゅうにち', altKanji: '30日' },
+  { day: 31, kanji: '三十一日', morpheme: '三 十 一 日', kana: 'さんじゅういちにち', altKanji: '31日' },
+];
+
+/**
+ * Normaliza números arábigos a kanji en expresiones de tiempo/calendario japonesas
+ * (ej. "3日" -> "三日", "1月" -> "一月", "14日" -> "十四日").
+ */
+export function normalizeJapaneseCalendarText(text: string): string {
+  if (!text) return '';
+  let res = text;
+  res = res.replace(/(1[0-2]|[1-9])月/g, (_, num) => {
+    const k = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二'][parseInt(num, 10) - 1];
+    return `${k}月`;
+  });
+  res = res.replace(/(3[0-1]|[1-2][0-9]|[1-9])日/g, (_, num) => {
+    const n = parseInt(num, 10);
+    const kanjiDigits = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
+    let k = '';
+    if (n <= 10) k = kanjiDigits[n - 1];
+    else if (n < 20) k = '十' + (n === 10 ? '' : kanjiDigits[(n % 10) - 1]);
+    else if (n === 20) k = '二十';
+    else if (n < 30) k = '二十' + kanjiDigits[(n % 10) - 1];
+    else if (n === 30) k = '三十';
+    else if (n === 31) k = '三十一';
+    return `${k}日`;
+  });
+  return res;
+}
+
+/**
+ * Expande dinámicamente un término de calendario japonés (días de semana, meses o días del mes)
+ * a todas sus formas equivalentes: Kanji, morfemas separados para Kaldi/Vosk, y lecturas Kana.
+ */
+export function getJapaneseCalendarExpansions(input: string): string[] {
+  const clean = (input || '').trim();
+  if (!clean) return [];
+  const results = new Set<string>();
+
+  // 1. Días de la semana
+  for (const dow of DOW_DATA) {
+    if (clean === dow.kanji || clean === dow.short || clean === dow.kana) {
+      results.add(dow.kanji);
+      results.add(dow.short);
+      results.add(dow.kana);
+    }
+  }
+
+  // 2. Meses
+  for (const m of MONTH_DATA) {
+    const arabic = `${m.num}月`;
+    if (clean === arabic || clean === m.kanji || clean === m.kana || (m.altKana && clean === m.altKana)) {
+      results.add(m.kanji);
+      results.add(m.kana);
+      if (m.altKana) results.add(m.altKana);
+    }
+  }
+
+  // 3. Días del mes (1 a 31)
+  for (const d of DAY_DATA) {
+    if (clean === d.altKanji || clean === d.kanji || clean === d.kana) {
+      results.add(d.kanji);
+      results.add(d.morpheme);
+      results.add(d.kana);
+    }
+  }
+
+  return Array.from(results);
+}
+
 

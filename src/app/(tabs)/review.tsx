@@ -1519,9 +1519,9 @@ export default function ReviewScreen() {
     currentCard?.deckType === 'custom' ||
     currentCard?.languageCode === 'custom' ||
     (currentCard?.deckType !== 'language' && currentCard?.languageCode === 'es-ES');
-  const lang = isCustomCard ? 'es-ES' : getEffectiveCardLanguage(currentCard);
-  const isIdeographic = !isCustomCard && (lang.startsWith('zh') || lang.startsWith('ja'));
-  const isJapanese = !isCustomCard && lang.startsWith('ja');
+  const lang = getEffectiveCardLanguage(currentCard);
+  const isIdeographic = lang.startsWith('zh') || lang.startsWith('ja');
+  const isJapanese = lang.startsWith('ja');
 
   // El motor nativo cubre cualquier idioma: solo el japonés necesita el modelo offline de Vosk.
   // Si Vosk no está presente en el binario, el servicio recurre al motor nativo y la voz sigue disponible.
@@ -1584,7 +1584,7 @@ export default function ReviewScreen() {
           showsVerticalScrollIndicator={false}
         >
           {/* Lo que el usuario pronuncia con altura fija de 60px para que nunca salte */}
-          {studyMethod === 'voice' && !isCustomCard && (
+          {studyMethod === 'voice' && (
             <VoiceTranscriptArea
               card={currentCard}
               isChecked={isChecked}

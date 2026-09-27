@@ -1,7 +1,10 @@
 import {
   conjugateJapanese,
   getEffectiveCardLanguage,
+  getJapaneseCalendarExpansions,
+  JA_NUMBERS,
   JapaneseConjugationForm,
+  normalizeJapaneseCalendarText,
   toNormalizedHiragana,
 } from './japanese-utils';
 import { KANJI_READINGS_MAP } from './kanji-readings-db';
@@ -272,7 +275,28 @@ class VoskVoiceService {
     });
 
     if (isJapanese) {
-      // 1. Extraer lecturas canónicas directas de la tarjeta
+      // 1. Detección y expansión automática de calendario (días de semana, meses, 1 a 31 días)
+      // Genera las formas kanji, los morfemas separados para Kaldi/Vosk (ej. "三 日") y kana
+      rawTokens.forEach((tok) => {
+        const calExp = getJapaneseCalendarExpansions(tok);
+        calExp.forEach((exp) => grammarSet.add(exp));
+
+        // Normalizar números arábigos a kanji en el token (ej. "3日" -> "三日")
+        const normCal = normalizeJapaneseCalendarText(tok);
+        if (normCal && normCal !== tok) {
+          grammarSet.add(normCal);
+          const normExp = getJapaneseCalendarExpansions(normCal);
+          normExp.forEach((exp) => grammarSet.add(exp));
+        }
+
+        // Si coincide con números generales JA_NUMBERS
+        if (JA_NUMBERS[tok]) {
+          grammarSet.add(JA_NUMBERS[tok].kanji);
+          grammarSet.add(JA_NUMBERS[tok].kana);
+        }
+      });
+
+      // 2. Extraer lecturas canónicas directas de la tarjeta
       const directReadings: string[] = [];
       if (card.displayReading) {
         card.displayReading.split(/[\/\n,、;•|]/).forEach((p) => {
@@ -313,7 +337,7 @@ class VoskVoiceService {
         });
       }
 
-      // 2. Expandir EXCLUSIVAMENTE para estas lecturas directas: Hiragana, Katakana y variantes prolongadas
+      // 3. Expandir EXCLUSIVAMENTE para estas lecturas directas: Hiragana, Katakana y variantes prolongadas
       directReadings.forEach((r) => {
         const hira = toNormalizedHiragana(r);
         if (hira) {
@@ -338,13 +362,10 @@ class VoskVoiceService {
       });
     }
 
-    // Filtrar caracteres vacíos o duplicados
+    // Filtrar caracteres vacíos o duplicados (NUNCA incluir '[unk]' para evitar el bloqueo destructivo de Kaldi)
     const validWords = Array.from(grammarSet)
       .map((w) => w.trim())
       .filter((w) => w.length > 0 && w !== '[unk]');
-
-    // Esencial: Token de descarte '[unk]' para rechazar cualquier pronunciación que no sea de esta tarjeta
-    validWords.push('[unk]');
 
     return validWords;
   }
@@ -453,9 +474,6 @@ class VoskVoiceService {
     const validWords = Array.from(grammarSet)
       .map((w) => w.trim())
       .filter((w) => w.length > 0 && w !== '[unk]');
-
-    // Token de descarte para ruidos externos ajenos a esta palabra
-    validWords.push('[unk]');
 
     return validWords;
   }

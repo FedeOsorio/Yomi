@@ -187,11 +187,12 @@ class SpeechRecognitionService {
           {
             onResult: (hypothesis, isFinal) => {
               if (this.generation !== gen) return;
-              if (hypothesis === '[unk]') {
-                // Sonido no reconocido dentro de la gramática cerrada
+              // Limpiar de raíz cualquier token [unk] (incluso si viene repetido como "[unk] [unk]")
+              const cleaned = (hypothesis || '').replace(/\[unk\]/gi, '').trim();
+              if (!cleaned) {
                 return;
               }
-              callbacks.onResult(hypothesis, isFinal, [hypothesis]);
+              callbacks.onResult(cleaned, isFinal, [cleaned]);
             },
             onError: (errorMessage) => {
               if (this.generation !== gen) return;
