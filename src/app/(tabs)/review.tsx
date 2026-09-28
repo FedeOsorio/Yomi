@@ -665,11 +665,12 @@ export default function ReviewScreen() {
             setSpeechTranscript(formatted);
           }
 
-          // En chino el reconocedor entrega hipótesis parciales carácter a carácter: aceptarlas
-          // aprobaría la tarjeta con solo el primer carácter de la palabra.
-          if (isChinese && !isFinal) return;
+          // NUNCA evaluar acierto o fallo mientras el usuario todavía esté hablando (!isFinal).
+          // Durante hipótesis parciales solo mostramos la transcripción en vivo en pantalla.
+          // La evaluación fonética se ejecuta únicamente cuando el usuario terminó de pronunciar (isFinal === true).
+          if (!isFinal) return;
 
-          // Recolectar todas las hipótesis candidatas para evaluación en tiempo real
+          // Recolectar todas las hipótesis candidatas para evaluación final
           const candidateHypotheses = [
             currentTrimmed,
             ...(alternatives || []),
@@ -691,7 +692,7 @@ export default function ReviewScreen() {
           console.log('[ReviewVoice] isMatch:', isMatch, 'matchedHypo:', matchedHypo, 'matchedReading:', matchedReading, 'for card:', card.displayText, card.displayReading);
 
           if (isMatch) {
-            // Cortar el micrófono inmediatamente en cuanto se detecta la coincidencia
+            // Cortar el micrófono inmediatamente en cuanto se detecta la coincidencia final
             isCardEvaluatedRef.current = true;
             speechService.abort().catch(() => { });
             setIsListening(false);
@@ -701,6 +702,19 @@ export default function ReviewScreen() {
             setTimeout(() => {
               handleVoiceEvaluation(card, true, matchedReading || matchedHypo || currentTrimmed);
             }, 150);
+          } else {
+            // Si terminó de hablar (isFinal: true) y la pronunciación no coincide, evaluar como fallo inmediato
+            isCardEvaluatedRef.current = true;
+            speechService.abort().catch(() => { });
+            setIsListening(false);
+            setSpeechStatus('evaluating');
+            const wrongFormatted = formatSpokenTranscript(currentTrimmed, lang);
+            if (wrongFormatted) {
+              setSpeechTranscript(wrongFormatted);
+            }
+            setTimeout(() => {
+              handleVoiceEvaluation(card, false, currentTrimmed);
+            }, 200);
           }
         },
         onError: (err) => {
@@ -1817,7 +1831,7 @@ export default function ReviewScreen() {
                   micPulseAnim={micPulseAnim}
                   colors={colors}
                   onPress={() => {
-                    if (speechStatus === 'starting') return;
+                    if (speechStatus === 'starting' || !isVoiceEngineReadyForCard) return;
                     if (isListening) {
                       speechService.stop();
                       setIsListening(false);

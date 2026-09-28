@@ -362,10 +362,13 @@ class VoskVoiceService {
       });
     }
 
-    // Filtrar caracteres vacíos o duplicados (NUNCA incluir '[unk]' para evitar el bloqueo destructivo de Kaldi)
+    // Filtrar caracteres vacíos o duplicados
     const validWords = Array.from(grammarSet)
       .map((w) => w.trim())
       .filter((w) => w.length > 0 && w !== '[unk]');
+
+    // Añadir '[unk]' para que Kaldi pueda discriminar y rechazar pronunciaciones erróneas (OOV)
+    validWords.push('[unk]');
 
     return validWords;
   }

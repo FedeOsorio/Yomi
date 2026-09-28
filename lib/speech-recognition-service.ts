@@ -190,6 +190,11 @@ class SpeechRecognitionService {
               // Limpiar de raíz cualquier token [unk] (incluso si viene repetido como "[unk] [unk]")
               const cleaned = (hypothesis || '').replace(/\[unk\]/gi, '').trim();
               if (!cleaned) {
+                // Si es un parcial con solo [unk], no ensuciar la pantalla mientras el usuario habla
+                if (!isFinal) return;
+                // Si es el resultado FINAL y hubo hipótesis (ej. [unk]), significa que el usuario habló
+                // pero Vosk no encontró coincidencia con la tarjeta (palabra desconocida o errónea).
+                callbacks.onResult('[unk]', true, ['[unk]']);
                 return;
               }
               callbacks.onResult(cleaned, isFinal, [cleaned]);
