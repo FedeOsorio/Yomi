@@ -634,7 +634,7 @@ export default function ImportDeckScreen() {
                 )}
               </View>
 
-              {/* Banner Ayudante de Prompt para IA (en modo personalizado) */}
+              {/* Banner Ayudante de Formato e IA (en modo personalizado) */}
               {isCustomMode && (
                 <View
                   style={[
@@ -642,9 +642,26 @@ export default function ImportDeckScreen() {
                     { backgroundColor: 'rgba(16, 185, 129, 0.08)', borderColor: 'rgba(16, 185, 129, 0.25)' },
                   ]}
                 >
-                  <Text style={[styles.aiHelperDesc, { color: colors.textMuted }]}>
-                    Copia la plantilla, pásala a tu IA y pega el resultado aquí.
+                  <Text style={[styles.aiHelperDesc, { color: colors.text }]}>
+                    Pega el texto generado por tu IA o tus notas usando este formato:
                   </Text>
+
+                  <View
+                    style={[
+                      styles.qaFormatPill,
+                      { backgroundColor: colors.surfaceHighlight, borderColor: colors.border },
+                    ]}
+                  >
+                    <Text style={[styles.qaFormatCode, { color: colors.text }]}>
+                      <Text style={{ color: '#10B981', fontWeight: 'bold' }}>Pregunta:</Text> [tu pregunta]{'\n'}
+                      <Text style={{ color: '#10B981', fontWeight: 'bold' }}>Respuesta:</Text> [tu respuesta]
+                    </Text>
+                  </View>
+
+                  <Text style={[styles.aiHelperSub, { color: colors.textMuted }]}>
+                    O copia nuestra plantilla lista para enviársela a tu IA junto con tus apuntes:
+                  </Text>
+
                   <TouchableOpacity
                     style={[styles.aiPromptBtn, { backgroundColor: '#10B981' }]}
                     onPress={async () => {
@@ -1197,8 +1214,26 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   aiHelperDesc: {
-    fontSize: 12,
+    fontSize: 12.5,
     lineHeight: 18,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  qaFormatPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginVertical: 6,
+  },
+  qaFormatCode: {
+    fontSize: 12.5,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    lineHeight: 18,
+  },
+  aiHelperSub: {
+    fontSize: 11.5,
+    lineHeight: 16,
     marginBottom: Spacing.sm,
   },
   aiPromptBtn: {
