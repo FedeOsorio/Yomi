@@ -459,9 +459,9 @@ export default function HomeScreen() {
                 <Ionicons name="cloud-download-outline" size={24} color="#FFF" />
               </View>
               <View style={styles.menuTextContainer}>
-                <Text style={[styles.menuOptionTitle, { color: colors.text }]}>Importar (Anki / Yomi)</Text>
+                <Text style={[styles.menuOptionTitle, { color: colors.text }]}>Importar</Text>
                 <Text style={[styles.menuOptionSub, { color: colors.textMuted }]}>
-                  Pega o carga listas de vocabulario externas o paquetes Yomi
+                  Pega notas de texto, listas de vocabulario o paquetes Anki/Yomi
                 </Text>
               </View>
             </TouchableOpacity>

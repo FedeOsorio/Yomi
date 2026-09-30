@@ -10,6 +10,8 @@ import {
   Alert,
   Platform,
   KeyboardAvoidingView,
+  Modal,
+  Pressable,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -32,13 +34,20 @@ import {
   ParseResult,
   ColumnMapping,
 } from '../../../lib/anki-importer';
-import { saveBatchWords } from '../../../lib/word-service';
+import {
+  parseCustomQaText,
+  isLikelyQaFormat,
+  copyOrShareAiPrompt,
+  AI_STUDY_PROMPT_TEMPLATE,
+  CustomCardImportItem,
+} from '../../../lib/qa-importer';
+import { saveBatchWords, saveBatchCustomCards } from '../../../lib/word-service';
 import { notifyDataChanged } from '../../../lib/backup-service';
 
 export default function ImportDeckScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ deckId?: string }>();
+  const params = useLocalSearchParams<{ deckId?: string; type?: string }>();
   const router = useRouter();
 
   // Estados de mazos
@@ -47,9 +56,11 @@ export default function ImportDeckScreen() {
   const [targetMode, setTargetMode] = useState<'existing' | 'new'>(params.deckId ? 'existing' : 'new');
   const [newDeckName, setNewDeckName] = useState('');
   const [selectedLang, setSelectedLang] = useState('ja-JP');
-  const [importedDeckType, setImportedDeckType] = useState<'language' | 'custom'>('language');
+  const [importedDeckType, setImportedDeckType] = useState<'language' | 'custom'>(
+    params.type === 'custom' ? 'custom' : 'language'
+  );
 
-  // Entrada de datos (Texto plano / CSV / TSV)
+  // Entrada de datos
   const [rawText, setRawText] = useState('');
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
   const [customMapping, setCustomMapping] = useState<ColumnMapping>({
@@ -57,9 +68,25 @@ export default function ImportDeckScreen() {
     meaningColumnIndex: 1,
   });
 
+  // Estados específicos para Importación Q&A (IA)
+  const [qaItems, setQaItems] = useState<CustomCardImportItem[]>([]);
+  const [qaWarnings, setQaWarnings] = useState<string[]>([]);
+  const [showPromptModal, setShowPromptModal] = useState(false);
+  const [editingQaItem, setEditingQaItem] = useState<CustomCardImportItem | null>(null);
+  const [editQ, setEditQ] = useState('');
+  const [editA, setEditA] = useState('');
+
   // Estado de procesamiento
   const [isProcessing, setIsProcessing] = useState(false);
   const [step, setStep] = useState<'input' | 'preview'>('input');
+
+  const selectedDeck = decks.find((d) => d.id === selectedDeckId);
+  const isCustomMode =
+    targetMode === 'existing'
+      ? selectedDeck?.type === 'custom'
+      : importedDeckType === 'custom';
+
+  const accentColor = isCustomMode ? '#10B981' : colors.primary;
 
   useEffect(() => {
     fetchDecks();
@@ -69,11 +96,30 @@ export default function ImportDeckScreen() {
     try {
       const allDecks = await getDecksWithStats();
       setDecks(allDecks);
-      if (!selectedDeckId && allDecks.length > 0 && targetMode === 'existing') {
+      if (params.deckId) {
+        setSelectedDeckId(params.deckId);
+        setTargetMode('existing');
+        const matched = allDecks.find((d) => d.id === params.deckId);
+        if (matched?.type === 'custom') {
+          setImportedDeckType('custom');
+        }
+      } else if (!selectedDeckId && allDecks.length > 0 && targetMode === 'existing') {
         setSelectedDeckId(allDecks[0].id);
+        if (allDecks[0].type === 'custom') {
+          setImportedDeckType('custom');
+        }
       }
     } catch (e) {
       console.warn('Error al cargar mazos:', e);
+    }
+  };
+
+  const handleSelectDeck = (deck: DeckWithStats) => {
+    setSelectedDeckId(deck.id);
+    if (deck.type === 'custom') {
+      setImportedDeckType('custom');
+    } else {
+      setImportedDeckType('language');
     }
   };
 
@@ -83,6 +129,28 @@ export default function ImportDeckScreen() {
       return;
     }
 
+    // Modo 1: Importación de Preguntas y Respuestas (IA)
+    if (isCustomMode || isLikelyQaFormat(rawText)) {
+      const result = parseCustomQaText(rawText);
+      if (result.items.length === 0) {
+        Alert.alert(
+          'No se detectaron tarjetas',
+          'Asegúrate de incluir "Pregunta:" y "Respuesta:" para cada tarjeta, o separarlas con tabulación o barra vertical (|).'
+        );
+        return;
+      }
+
+      setQaItems(result.items);
+      setQaWarnings(result.warnings);
+      setParseResult(null);
+      if (targetMode === 'new') {
+        setImportedDeckType('custom');
+      }
+      setStep('preview');
+      return;
+    }
+
+    // Modo 2: Importación estándar de vocabulario (CSV / TSV)
     const result = parseVocabularyFile(rawText.trim());
     if (result.items.length === 0) {
       Alert.alert('Error', 'No se detectaron filas válidas de vocabulario en el texto ingresado.');
@@ -91,6 +159,7 @@ export default function ImportDeckScreen() {
 
     setParseResult(result);
     setCustomMapping(result.suggestedMapping);
+    setQaItems([]);
     setStep('preview');
   };
 
@@ -151,6 +220,7 @@ export default function ImportDeckScreen() {
           meaningColumnIndex: 2,
           levelColumnIndex: 3,
         });
+        setQaItems([]);
         setStep('preview');
       } else {
         const content = await FileSystem.readAsStringAsync(file.uri);
@@ -160,6 +230,33 @@ export default function ImportDeckScreen() {
         }
 
         setRawText(content);
+
+        // Si es mazo custom o tiene formato Q&A:
+        if (isCustomMode || isLikelyQaFormat(content)) {
+          const result = parseCustomQaText(content);
+          if (result.items.length === 0) {
+            Alert.alert(
+              'No se detectaron preguntas y respuestas',
+              'El archivo no contiene el formato esperado "Pregunta: ... Respuesta: ...".'
+            );
+            return;
+          }
+
+          if (!newDeckName) {
+            setNewDeckName(filename.replace(/\.[^/.]+$/, ''));
+          }
+
+          setQaItems(result.items);
+          setQaWarnings(result.warnings);
+          setParseResult(null);
+          if (targetMode === 'new') {
+            setImportedDeckType('custom');
+          }
+          setStep('preview');
+          return;
+        }
+
+        // De lo contrario, archivo de vocabulario tabular
         const result = parseVocabularyFile(content.trim());
         if (result.items.length === 0) {
           Alert.alert('Error', 'No se detectaron filas válidas de vocabulario en el archivo.');
@@ -172,6 +269,7 @@ export default function ImportDeckScreen() {
 
         setParseResult(result);
         setCustomMapping(result.suggestedMapping);
+        setQaItems([]);
         setStep('preview');
       }
     } catch (e: any) {
@@ -182,9 +280,41 @@ export default function ImportDeckScreen() {
     }
   };
 
-  const handleExecuteImport = async () => {
-    if (!parseResult) return;
+  const handleDeleteQaItem = (itemId: string) => {
+    const updated = qaItems.filter((it) => it.id !== itemId);
+    if (updated.length === 0) {
+      Alert.alert('Sin tarjetas', 'Has descartado todas las tarjetas. Volviendo a la pantalla de entrada.');
+      setQaItems([]);
+      setStep('input');
+      return;
+    }
+    setQaItems(updated);
+  };
 
+  const handleStartEditQaItem = (item: CustomCardImportItem) => {
+    setEditingQaItem(item);
+    setEditQ(item.question);
+    setEditA(item.answer);
+  };
+
+  const handleSaveEditQaItem = () => {
+    if (!editingQaItem) return;
+    const cleanQ = editQ.trim();
+    const cleanA = editA.trim();
+    if (!cleanQ || !cleanA) {
+      Alert.alert('Atención', 'La pregunta y la respuesta no pueden quedar vacías.');
+      return;
+    }
+
+    setQaItems((prev) =>
+      prev.map((it) =>
+        it.id === editingQaItem.id ? { ...it, question: cleanQ, answer: cleanA } : it
+      )
+    );
+    setEditingQaItem(null);
+  };
+
+  const handleExecuteImport = async () => {
     let targetDeckId = selectedDeckId;
 
     if (targetMode === 'new') {
@@ -194,7 +324,11 @@ export default function ImportDeckScreen() {
       }
       setIsProcessing(true);
       try {
-        targetDeckId = await createDeck(newDeckName.trim(), selectedLang, importedDeckType);
+        targetDeckId = await createDeck(
+          newDeckName.trim(),
+          isCustomMode ? 'es-ES' : selectedLang,
+          importedDeckType
+        );
       } catch (e) {
         setIsProcessing(false);
         Alert.alert('Error', 'No se pudo crear el nuevo mazo.');
@@ -209,28 +343,49 @@ export default function ImportDeckScreen() {
 
     setIsProcessing(true);
     try {
-      // Usar los ítems con el mapeo actual
-      const itemsToSave = parseResult.hasHeader
-        ? parseResult.items
-        : parseResult.items;
+      // Caso 1: Importación de Preguntas y Respuestas (IA)
+      if (qaItems.length > 0) {
+        const { inserted, skipped } = await saveBatchCustomCards(targetDeckId, qaItems);
+        notifyDataChanged();
 
-      const { inserted, skipped } = await saveBatchWords(targetDeckId, itemsToSave);
-      notifyDataChanged();
-
-      Alert.alert(
-        '¡Importación Exitosa!',
-        `Se importaron ${inserted} palabras correctamente al mazo.${
-          skipped > 0 ? ` (${skipped} repetidas se omitieron)` : ''
-        }`,
-        [
-          {
-            text: 'Ver Mazo',
-            onPress: () => {
-              router.replace(`/deck/${targetDeckId}`);
+        Alert.alert(
+          '¡Importación Exitosa!',
+          `Se importaron ${inserted} tarjetas correctamente al mazo.${
+            skipped > 0 ? ` (${skipped} repetidas se omitieron)` : ''
+          }`,
+          [
+            {
+              text: 'Ver Mazo',
+              onPress: () => {
+                router.replace(`/deck/${targetDeckId}`);
+              },
             },
-          },
-        ]
-      );
+          ]
+        );
+        return;
+      }
+
+      // Caso 2: Importación de Vocabulario CSV / TSV / Anki
+      if (parseResult) {
+        const itemsToSave = parseResult.items;
+        const { inserted, skipped } = await saveBatchWords(targetDeckId, itemsToSave);
+        notifyDataChanged();
+
+        Alert.alert(
+          '¡Importación Exitosa!',
+          `Se importaron ${inserted} palabras correctamente al mazo.${
+            skipped > 0 ? ` (${skipped} repetidas se omitieron)` : ''
+          }`,
+          [
+            {
+              text: 'Ver Mazo',
+              onPress: () => {
+                router.replace(`/deck/${targetDeckId}`);
+              },
+            },
+          ]
+        );
+      }
     } catch (e) {
       Alert.alert('Error', 'Ocurrió un error al guardar las tarjetas en la base de datos.');
     } finally {
@@ -249,9 +404,11 @@ export default function ImportDeckScreen() {
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <View style={styles.brandTitleContainer}>
-          <Text style={[styles.brandText, { color: colors.primary }]}>Yomi</Text>
+          <Text style={[styles.brandText, { color: accentColor }]}>Yomi</Text>
           <Text style={[styles.brandSep, { color: colors.textMuted }]}> • </Text>
-          <Text style={[styles.title, { color: colors.text }]}>Importar (Anki / Yomi)</Text>
+          <Text style={[styles.title, { color: colors.text }]}>
+            Importar
+          </Text>
         </View>
       </View>
 
@@ -271,7 +428,7 @@ export default function ImportDeckScreen() {
                 <TouchableOpacity
                   style={[
                     styles.modeToggleBtn,
-                    targetMode === 'new' && { backgroundColor: colors.primary },
+                    targetMode === 'new' && { backgroundColor: accentColor },
                   ]}
                   onPress={() => setTargetMode('new')}
                 >
@@ -288,7 +445,7 @@ export default function ImportDeckScreen() {
                 <TouchableOpacity
                   style={[
                     styles.modeToggleBtn,
-                    targetMode === 'existing' && { backgroundColor: colors.primary },
+                    targetMode === 'existing' && { backgroundColor: accentColor },
                     decks.length === 0 && { opacity: 0.5 },
                   ]}
                   disabled={decks.length === 0}
@@ -307,71 +464,150 @@ export default function ImportDeckScreen() {
 
               {targetMode === 'new' ? (
                 <View style={styles.newDeckFields}>
+                  {/* Selector de Tipo de Mazo para Crear */}
+                  <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Tipo de mazo:</Text>
+                  <View style={styles.deckTypeToggleRow}>
+                    <TouchableOpacity
+                      style={[
+                        styles.deckTypeOptionBtn,
+                        { borderColor: colors.border, backgroundColor: colors.surfaceHighlight },
+                        importedDeckType === 'custom' && {
+                          borderColor: '#10B981',
+                          backgroundColor: 'rgba(16, 185, 129, 0.12)',
+                        },
+                      ]}
+                      onPress={() => setImportedDeckType('custom')}
+                    >
+                      <Ionicons
+                        name="layers-outline"
+                        size={16}
+                        color={importedDeckType === 'custom' ? '#10B981' : colors.textMuted}
+                        style={{ marginRight: 6 }}
+                      />
+                      <Text
+                        style={[
+                          styles.deckTypeOptionText,
+                          { color: importedDeckType === 'custom' ? '#10B981' : colors.text },
+                        ]}
+                      >
+                        Estudio (Q&A)
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.deckTypeOptionBtn,
+                        { borderColor: colors.border, backgroundColor: colors.surfaceHighlight },
+                        importedDeckType === 'language' && {
+                          borderColor: colors.primary,
+                          backgroundColor: colors.primary + '18',
+                        },
+                      ]}
+                      onPress={() => setImportedDeckType('language')}
+                    >
+                      <Ionicons
+                        name="language-outline"
+                        size={16}
+                        color={importedDeckType === 'language' ? colors.primary : colors.textMuted}
+                        style={{ marginRight: 6 }}
+                      />
+                      <Text
+                        style={[
+                          styles.deckTypeOptionText,
+                          { color: importedDeckType === 'language' ? colors.primary : colors.text },
+                        ]}
+                      >
+                        Idioma (Vocabulario)
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
                   <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Nombre del mazo:</Text>
                   <TextInput
-                    style={[styles.input, { backgroundColor: colors.surfaceHighlight, color: colors.text, borderColor: colors.border }]}
-                    placeholder="Ej. Vocabulario Anki N5"
+                    style={[
+                      styles.input,
+                      { backgroundColor: colors.surfaceHighlight, color: colors.text, borderColor: colors.border },
+                    ]}
+                    placeholder={
+                      isCustomMode
+                        ? 'Ej. Farmacología, Derecho Constitucional'
+                        : 'Ej. Vocabulario Anki N5'
+                    }
                     placeholderTextColor={colors.textMuted}
                     value={newDeckName}
                     onChangeText={setNewDeckName}
                   />
 
-                  <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Idioma de las tarjetas:</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.langScroll}>
-                    {SUPPORTED_LANGUAGES.map((lang) => {
-                      const isSel = selectedLang === lang.code;
-                      return (
-                        <TouchableOpacity
-                          key={lang.code}
-                          style={[
-                            styles.langChip,
-                            {
-                              backgroundColor: isSel ? colors.primary : colors.surfaceHighlight,
-                              borderColor: isSel ? colors.primary : colors.border,
-                            },
-                          ]}
-                          onPress={() => setSelectedLang(lang.code)}
-                        >
-                          <Text style={styles.langEmoji}>{lang.flag}</Text>
-                          <Text
-                            style={[
-                              styles.langChipText,
-                              { color: isSel ? '#FFF' : colors.text },
-                            ]}
-                          >
-                            {lang.label}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </ScrollView>
+                  {!isCustomMode && (
+                    <>
+                      <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Idioma de las tarjetas:</Text>
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.langScroll}>
+                        {SUPPORTED_LANGUAGES.map((lang) => {
+                          const isSel = selectedLang === lang.code;
+                          return (
+                            <TouchableOpacity
+                              key={lang.code}
+                              style={[
+                                styles.langChip,
+                                {
+                                  backgroundColor: isSel ? colors.primary : colors.surfaceHighlight,
+                                  borderColor: isSel ? colors.primary : colors.border,
+                                },
+                              ]}
+                              onPress={() => setSelectedLang(lang.code)}
+                            >
+                              <Text style={styles.langEmoji}>{lang.flag}</Text>
+                              <Text
+                                style={[
+                                  styles.langChipText,
+                                  { color: isSel ? '#FFF' : colors.text },
+                                ]}
+                              >
+                                {lang.label}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ScrollView>
+                    </>
+                  )}
                 </View>
               ) : (
                 <View style={styles.existingDeckSection}>
                   <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Seleccionar mazo:</Text>
                   {decks.map((d) => {
                     const isSelected = selectedDeckId === d.id;
+                    const isCustom = d.type === 'custom';
                     const langMeta = ALL_LANGUAGES.find((l) => l.code === d.languageCode) || SUPPORTED_LANGUAGES[0];
+                    const activeColor = isCustom ? '#10B981' : colors.primary;
+
                     return (
                       <TouchableOpacity
                         key={d.id}
                         style={[
                           styles.deckSelectCard,
                           {
-                            backgroundColor: isSelected ? colors.primary + '18' : colors.surfaceHighlight,
-                            borderColor: isSelected ? colors.primary : colors.border,
+                            backgroundColor: isSelected ? activeColor + '18' : colors.surfaceHighlight,
+                            borderColor: isSelected ? activeColor : colors.border,
                           },
                         ]}
-                        onPress={() => setSelectedDeckId(d.id)}
+                        onPress={() => handleSelectDeck(d)}
                       >
-                        <Text style={styles.deckSelectEmoji}>{langMeta?.flag || '📚'}</Text>
+                        <Text style={styles.deckSelectEmoji}>{isCustom ? '📝' : langMeta?.flag || '📚'}</Text>
                         <View style={styles.deckSelectTextCol}>
-                          <Text style={[styles.deckSelectTitle, { color: colors.text }]}>{d.name}</Text>
+                          <View style={styles.deckRowTop}>
+                            <Text style={[styles.deckSelectTitle, { color: colors.text }]}>{d.name}</Text>
+                            {isCustom && (
+                              <View style={[styles.deckTypeTag, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}>
+                                <Text style={[styles.deckTypeTagText, { color: '#10B981' }]}>Q&A</Text>
+                              </View>
+                            )}
+                          </View>
                           <Text style={[styles.deckSelectSub, { color: colors.textMuted }]}>
-                            {d.wordCount} {d.wordCount === 1 ? 'palabra' : 'palabras'}
+                            {d.wordCount} {isCustom ? 'tarjetas' : d.wordCount === 1 ? 'palabra' : 'palabras'}
                           </Text>
                         </View>
-                        {isSelected && <Ionicons name="checkmark-circle" size={20} color={colors.primary} />}
+                        {isSelected && <Ionicons name="checkmark-circle" size={20} color={activeColor} />}
                       </TouchableOpacity>
                     );
                   })}
@@ -379,15 +615,55 @@ export default function ImportDeckScreen() {
               )}
             </View>
 
-            {/* Entrada de Contenido Anki/CSV */}
+            {/* Entrada de Contenido: Q&A con IA vs Anki/CSV */}
             <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <View style={styles.contentHeaderRow}>
-                <Text style={[styles.sectionTitle, { color: colors.text }]}>2. Elige un Archivo o Pega Texto</Text>
-                <View style={[styles.badgeHint, { backgroundColor: colors.surfaceHighlight }]}>
-                  <Text style={[styles.badgeHintText, { color: colors.primary }]}>.apkg, CSV, TSV</Text>
+                <Text style={[styles.sectionTitle, { color: colors.text }]}>
+                  {isCustomMode ? '2. Pega tus Preguntas o Carga Archivo' : '2. Elige un Archivo o Pega Texto'}
+                </Text>
+                <View
+                  style={[
+                    styles.badgeHint,
+                    { backgroundColor: isCustomMode ? 'rgba(16, 185, 129, 0.12)' : colors.surfaceHighlight },
+                  ]}
+                >
+                  <Text style={[styles.badgeHintText, { color: accentColor }]}>
+                    {isCustomMode ? 'IA / Preguntas y Respuestas' : '.apkg, CSV, TSV'}
+                  </Text>
                 </View>
               </View>
 
+              {/* Banner Ayudante de Prompt para IA (en modo personalizado) */}
+              {isCustomMode && (
+                <View
+                  style={[
+                    styles.aiHelperBox,
+                    { backgroundColor: 'rgba(16, 185, 129, 0.08)', borderColor: 'rgba(16, 185, 129, 0.25)' },
+                  ]}
+                >
+                  <View style={styles.aiHelperHeader}>
+                    <Ionicons name="bulb-outline" size={18} color="#10B981" />
+                    <Text style={[styles.aiHelperTitle, { color: colors.text }]}>
+                      Genera tus tarjetas con IA
+                    </Text>
+                  </View>
+                  <Text style={[styles.aiHelperDesc, { color: colors.textMuted }]}>
+                    Pasa tus apuntes o PDF a tu IA personal y pídele que devuelva el contenido en formato{' '}
+                    <Text style={{ fontWeight: '700', color: colors.text }}>Pregunta: ...</Text> y{' '}
+                    <Text style={{ fontWeight: '700', color: colors.text }}>Respuesta: ...</Text>
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.aiPromptBtn, { backgroundColor: '#10B981' }]}
+                    onPress={() => setShowPromptModal(true)}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="copy-outline" size={16} color="#FFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.aiPromptBtnText}>Ver / Copiar plantilla de prompt para IA</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* Selector de Archivo */}
               <TouchableOpacity
                 style={[
                   styles.filePickerCard,
@@ -397,19 +673,32 @@ export default function ImportDeckScreen() {
                 disabled={isProcessing}
                 activeOpacity={0.8}
               >
-                <View style={[styles.filePickerIconBox, { backgroundColor: colors.primary + '18' }]}>
+                <View
+                  style={[
+                    styles.filePickerIconBox,
+                    { backgroundColor: isCustomMode ? 'rgba(16, 185, 129, 0.15)' : colors.primary + '18' },
+                  ]}
+                >
                   {isProcessing ? (
-                    <ActivityIndicator size="small" color={colors.primary} />
+                    <ActivityIndicator size="small" color={accentColor} />
                   ) : (
-                    <Ionicons name="folder-open-outline" size={22} color={colors.primary} />
+                    <Ionicons
+                      name={isCustomMode ? 'document-text-outline' : 'folder-open-outline'}
+                      size={22}
+                      color={accentColor}
+                    />
                   )}
                 </View>
                 <View style={styles.filePickerTextCol}>
                   <Text style={[styles.filePickerTitle, { color: colors.text }]}>
-                    Seleccionar archivo (.apkg, .txt, .csv, .yomi)
+                    {isCustomMode
+                      ? 'Seleccionar archivo de texto (.txt, .md, .csv)'
+                      : 'Seleccionar archivo (.apkg, .txt, .csv, .yomi)'}
                   </Text>
                   <Text style={[styles.filePickerSub, { color: colors.textMuted }]}>
-                    Importa directamente paquetes de Anki o exportaciones de texto
+                    {isCustomMode
+                      ? 'Importa notas exportadas o respuestas de tu IA'
+                      : 'Importa paquetes de Anki o exportaciones de texto'}
                   </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
@@ -417,7 +706,9 @@ export default function ImportDeckScreen() {
 
               <View style={styles.dividerRow}>
                 <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
-                <Text style={[styles.dividerText, { color: colors.textMuted }]}>O PEGA NOTAS EN TEXTO PLANO</Text>
+                <Text style={[styles.dividerText, { color: colors.textMuted }]}>
+                  {isCustomMode ? 'O PEGA AQUÍ EL TEXTO DE TU IA' : 'O PEGA NOTAS EN TEXTO PLANO'}
+                </Text>
                 <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
               </View>
 
@@ -426,35 +717,168 @@ export default function ImportDeckScreen() {
                   styles.textArea,
                   { backgroundColor: colors.surfaceHighlight, color: colors.text, borderColor: colors.border },
                 ]}
-                placeholder={`Ejemplo:\n会う\tあう\tto meet\n青い\tao\tblue\n食べる\tたべる\tcomer`}
+                placeholder={
+                  isCustomMode
+                    ? `Pregunta: ¿Cuáles son las tres leyes de Newton?\nRespuesta: 1. Inercia, 2. Fuerza (F=m*a), 3. Acción y reacción.\n\nPregunta: ¿Qué es el principio de Arquímedes?\nRespuesta: Todo cuerpo sumergido en un fluido experimenta un empuje vertical hacia arriba igual al peso del fluido desalojado.`
+                    : `Ejemplo:\n会う\tあう\tto meet\n青い\tao\tblue\n食べる\tたべる\tcomer`
+                }
                 placeholderTextColor={colors.textMuted}
                 multiline
-                numberOfLines={6}
+                numberOfLines={8}
                 value={rawText}
                 onChangeText={setRawText}
                 textAlignVertical="top"
               />
 
               <TouchableOpacity
-                style={[styles.primaryActionBtn, { backgroundColor: colors.primary }]}
+                style={[styles.primaryActionBtn, { backgroundColor: accentColor }]}
                 onPress={handleAnalyzeText}
                 disabled={isProcessing}
+                activeOpacity={0.8}
               >
-                <Ionicons name="sparkles-outline" size={18} color="#FFF" style={{ marginRight: 6 }} />
-                <Text style={styles.primaryActionBtnText}>Analizar Texto Pegado</Text>
+                <Ionicons name="document-text-outline" size={18} color="#FFF" style={{ marginRight: 6 }} />
+                <Text style={styles.primaryActionBtnText}>
+                  {isCustomMode ? 'Analizar Preguntas y Respuestas' : 'Analizar Texto Pegado'}
+                </Text>
               </TouchableOpacity>
             </View>
           </>
         ) : (
           /* PASO 2: Previsualización y Confirmación */
-          parseResult && (
-            <>
+          <>
+            {/* VISTA PREVIA Q&A (IA) */}
+            {qaItems.length > 0 && (
+              <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <View style={styles.previewHeaderRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.sectionTitle, { color: colors.text }]}>Vista Previa de Tarjetas</Text>
+                    <Text style={[styles.previewSub, { color: colors.textMuted }]}>
+                      {qaItems.length} {qaItems.length === 1 ? 'tarjeta lista' : 'tarjetas listas'} para agregar al mazo
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={[styles.editBtn, { backgroundColor: colors.surfaceHighlight }]}
+                    onPress={() => setStep('input')}
+                  >
+                    <Ionicons name="create-outline" size={16} color="#10B981" />
+                    <Text style={[styles.editBtnText, { color: '#10B981' }]}>Modificar</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Resumen */}
+                <View style={[styles.summaryBox, { backgroundColor: colors.surfaceHighlight }]}>
+                  <Text style={[styles.summaryLabel, { color: colors.textMuted }]}>
+                    Mazo de destino:{' '}
+                    <Text style={{ color: colors.text, fontWeight: 'bold' }}>
+                      {targetMode === 'new'
+                        ? newDeckName.trim() || 'Nuevo Mazo'
+                        : selectedDeck?.name || 'Mazo seleccionado'}
+                    </Text>
+                  </Text>
+                  <Text style={[styles.summaryLabel, { color: colors.textMuted }]}>
+                    Formato detectado:{' '}
+                    <Text style={{ color: '#10B981', fontWeight: 'bold' }}>
+                      Preguntas y Respuestas (IA / Texto)
+                    </Text>
+                  </Text>
+                </View>
+
+                {/* Advertencias si las hay */}
+                {qaWarnings.length > 0 && (
+                  <View
+                    style={[
+                      styles.warningBox,
+                      { backgroundColor: 'rgba(239, 68, 68, 0.1)', borderColor: 'rgba(239, 68, 68, 0.3)' },
+                    ]}
+                  >
+                    <Ionicons name="alert-circle-outline" size={18} color="#EF4444" style={{ marginRight: 6 }} />
+                    <View style={{ flex: 1 }}>
+                      {qaWarnings.map((w, i) => (
+                        <Text key={i} style={[styles.warningText, { color: '#EF4444' }]}>
+                          {w}
+                        </Text>
+                      ))}
+                    </View>
+                  </View>
+                )}
+
+                <Text style={[styles.previewSampleTitle, { color: colors.text, marginTop: Spacing.xs }]}>
+                  Tarjetas detectadas (puedes editar o descartar):
+                </Text>
+
+                {/* Lista interactiva de tarjetas parsed */}
+                {qaItems.map((item, idx) => (
+                  <View
+                    key={item.id}
+                    style={[
+                      styles.qaCardItem,
+                      { backgroundColor: colors.surfaceHighlight, borderColor: colors.border },
+                    ]}
+                  >
+                    <View style={styles.qaCardHeader}>
+                      <View style={[styles.qaBadge, { backgroundColor: '#10B981' }]}>
+                        <Text style={styles.qaBadgeText}>#{idx + 1}</Text>
+                      </View>
+                      <View style={styles.qaCardActions}>
+                        <TouchableOpacity
+                          onPress={() => handleStartEditQaItem(item)}
+                          style={styles.qaActionBtn}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <Ionicons name="pencil-outline" size={17} color={colors.textMuted} />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={() => handleDeleteQaItem(item.id)}
+                          style={styles.qaActionBtn}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <Ionicons name="trash-outline" size={17} color={colors.danger} />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    {/* Pregunta */}
+                    <View style={styles.qaSection}>
+                      <Text style={[styles.qaFieldLabel, { color: '#10B981' }]}>PREGUNTA (FRENTE):</Text>
+                      <Text style={[styles.qaQuestionText, { color: colors.text }]}>{item.question}</Text>
+                    </View>
+
+                    {/* Respuesta */}
+                    <View style={styles.qaSection}>
+                      <Text style={[styles.qaFieldLabel, { color: colors.textMuted }]}>RESPUESTA (REVERSO):</Text>
+                      <Text style={[styles.qaAnswerText, { color: colors.text }]}>{item.answer}</Text>
+                    </View>
+                  </View>
+                ))}
+
+                <TouchableOpacity
+                  style={[styles.primaryActionBtn, { backgroundColor: '#10B981', marginTop: Spacing.md }]}
+                  onPress={handleExecuteImport}
+                  disabled={isProcessing}
+                  activeOpacity={0.8}
+                >
+                  {isProcessing ? (
+                    <ActivityIndicator color="#FFF" />
+                  ) : (
+                    <>
+                      <Ionicons name="cloud-download-outline" size={20} color="#FFF" style={{ marginRight: 6 }} />
+                      <Text style={styles.primaryActionBtnText}>
+                        Importar {qaItems.length} {qaItems.length === 1 ? 'Tarjeta' : 'Tarjetas'} al Mazo
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* VISTA PREVIA VOCABULARIO (Anki / CSV) */}
+            {parseResult && (
               <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                 <View style={styles.previewHeaderRow}>
                   <View>
                     <Text style={[styles.sectionTitle, { color: colors.text }]}>Vista Previa de Importación</Text>
                     <Text style={[styles.previewSub, { color: colors.textMuted }]}>
-                      {parseResult.totalParsed} tarjetas listas para agregar
+                      {parseResult.totalParsed} palabras listas para agregar
                     </Text>
                   </View>
                   <TouchableOpacity
@@ -514,16 +938,138 @@ export default function ImportDeckScreen() {
                     <>
                       <Ionicons name="cloud-download-outline" size={20} color="#FFF" style={{ marginRight: 6 }} />
                       <Text style={styles.primaryActionBtnText}>
-                        Importar {parseResult.totalParsed} Tarjetas a Yomi
+                        Importar {parseResult.totalParsed} Palabras a Yomi
                       </Text>
                     </>
                   )}
                 </TouchableOpacity>
               </View>
-            </>
-          )
+            )}
+          </>
         )}
       </ScrollView>
+
+      {/* MODAL: Plantilla de Prompt para IA */}
+      <Modal
+        visible={showPromptModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowPromptModal(false)}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={() => setShowPromptModal(false)}>
+          <Pressable
+            style={[styles.promptModalContent, { backgroundColor: colors.surface, borderColor: colors.border }]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <View style={styles.promptModalHeader}>
+              <View style={styles.promptModalHeaderTitleRow}>
+                <Ionicons name="document-text-outline" size={20} color="#10B981" style={{ marginRight: 8 }} />
+                <Text style={[styles.promptModalTitle, { color: colors.text }]}>Plantilla de Prompt para IA</Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowPromptModal(false)}>
+                <Ionicons name="close" size={22} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={[styles.promptModalDesc, { color: colors.textMuted }]}>
+              Copia este prompt y pégalo en tu IA (ChatGPT, Claude, Gemini, etc.) junto con tus notas o PDF:
+            </Text>
+
+            <ScrollView
+              style={[styles.promptBox, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}
+              showsVerticalScrollIndicator
+            >
+              <Text selectable style={[styles.promptText, { color: colors.text }]}>
+                {AI_STUDY_PROMPT_TEMPLATE}
+              </Text>
+            </ScrollView>
+
+            <TouchableOpacity
+              style={[styles.promptCopyActionBtn, { backgroundColor: '#10B981' }]}
+              onPress={async () => {
+                await copyOrShareAiPrompt();
+              }}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="copy-outline" size={18} color="#FFF" style={{ marginRight: 8 }} />
+              <Text style={styles.promptCopyActionText}>Copiar / Compartir Prompt</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* MODAL: Editar Tarjeta Q&A en Previsualización */}
+      <Modal
+        visible={Boolean(editingQaItem)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setEditingQaItem(null)}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={() => setEditingQaItem(null)}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={{ width: '100%', alignItems: 'center' }}
+          >
+            <Pressable
+              style={[styles.editQaModalContent, { backgroundColor: colors.surface, borderColor: colors.border }]}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <View style={styles.promptModalHeader}>
+                <Text style={[styles.promptModalTitle, { color: colors.text }]}>Editar Tarjeta</Text>
+                <TouchableOpacity onPress={() => setEditingQaItem(null)}>
+                  <Ionicons name="close" size={22} color={colors.textMuted} />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={[styles.fieldLabel, { color: '#10B981', marginTop: Spacing.xs }]}>
+                Pregunta (Frente):
+              </Text>
+              <TextInput
+                style={[
+                  styles.editInput,
+                  { backgroundColor: colors.surfaceHighlight, color: colors.text, borderColor: colors.border },
+                ]}
+                value={editQ}
+                onChangeText={setEditQ}
+                multiline
+                numberOfLines={3}
+                textAlignVertical="top"
+              />
+
+              <Text style={[styles.fieldLabel, { color: colors.textMuted, marginTop: Spacing.xs }]}>
+                Respuesta (Reverso):
+              </Text>
+              <TextInput
+                style={[
+                  styles.editInput,
+                  { backgroundColor: colors.surfaceHighlight, color: colors.text, borderColor: colors.border, minHeight: 90 },
+                ]}
+                value={editA}
+                onChangeText={setEditA}
+                multiline
+                numberOfLines={5}
+                textAlignVertical="top"
+              />
+
+              <View style={styles.editModalButtonsRow}>
+                <TouchableOpacity
+                  style={[styles.cancelBtn, { borderColor: colors.border }]}
+                  onPress={() => setEditingQaItem(null)}
+                >
+                  <Text style={[styles.cancelBtnText, { color: colors.textMuted }]}>Cancelar</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.saveBtn, { backgroundColor: '#10B981' }]}
+                  onPress={handleSaveEditQaItem}
+                >
+                  <Text style={styles.saveBtnText}>Guardar</Text>
+                </TouchableOpacity>
+              </View>
+            </Pressable>
+          </KeyboardAvoidingView>
+        </Pressable>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -558,7 +1104,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   title: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: 'bold',
   },
   scrollContent: {
@@ -594,6 +1140,25 @@ const styles = StyleSheet.create({
   },
   newDeckFields: {
     marginTop: Spacing.xs,
+  },
+  deckTypeToggleRow: {
+    flexDirection: 'row',
+    gap: Spacing.xs,
+    marginBottom: Spacing.md,
+  },
+  deckTypeOptionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    borderWidth: 1.5,
+  },
+  deckTypeOptionText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
   fieldLabel: {
     fontSize: 12,
@@ -646,12 +1211,27 @@ const styles = StyleSheet.create({
   deckSelectTextCol: {
     flex: 1,
   },
+  deckRowTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   deckSelectTitle: {
     fontSize: 15,
     fontWeight: '700',
   },
+  deckTypeTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  deckTypeTagText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
   deckSelectSub: {
     fontSize: 12,
+    marginTop: 2,
   },
   contentHeaderRow: {
     flexDirection: 'row',
@@ -668,19 +1248,51 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
   },
-  helperText: {
+  aiHelperBox: {
+    borderRadius: 14,
+    padding: Spacing.md,
+    borderWidth: 1,
+    marginBottom: Spacing.md,
+    marginTop: 4,
+  },
+  aiHelperHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+    gap: 6,
+  },
+  aiHelperTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  aiHelperDesc: {
     fontSize: 12,
     lineHeight: 18,
-    marginBottom: Spacing.md,
+    marginBottom: Spacing.sm,
+  },
+  aiPromptBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    alignSelf: 'flex-start',
+  },
+  aiPromptBtnText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: '700',
   },
   textArea: {
     borderRadius: 14,
     padding: Spacing.md,
     fontSize: 14,
     borderWidth: 1,
-    minHeight: 160,
+    minHeight: 180,
     marginBottom: Spacing.lg,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    lineHeight: 20,
   },
   primaryActionBtn: {
     flexDirection: 'row',
@@ -703,6 +1315,7 @@ const styles = StyleSheet.create({
   },
   previewSub: {
     fontSize: 13,
+    marginTop: 2,
   },
   editBtn: {
     flexDirection: 'row',
@@ -717,7 +1330,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   summaryBox: {
-    padding: Spacing.sm,
+    padding: Spacing.sm + 2,
     borderRadius: 12,
     marginBottom: Spacing.md,
     gap: 4,
@@ -725,10 +1338,69 @@ const styles = StyleSheet.create({
   summaryLabel: {
     fontSize: 12,
   },
+  warningBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: Spacing.sm + 2,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: Spacing.md,
+  },
+  warningText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
   previewSampleTitle: {
     fontSize: 13,
     fontWeight: '700',
     marginBottom: Spacing.xs,
+  },
+  qaCardItem: {
+    borderRadius: 14,
+    padding: Spacing.md,
+    borderWidth: 1,
+    marginBottom: Spacing.sm,
+  },
+  qaCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  qaBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  qaBadgeText: {
+    color: '#FFF',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  qaCardActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  qaActionBtn: {
+    padding: 2,
+  },
+  qaSection: {
+    marginBottom: 6,
+  },
+  qaFieldLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  qaQuestionText: {
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 20,
+  },
+  qaAnswerText: {
+    fontSize: 13,
+    lineHeight: 19,
   },
   sampleItemCard: {
     padding: Spacing.sm,
@@ -800,5 +1472,104 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     letterSpacing: 0.5,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Spacing.lg,
+  },
+  promptModalContent: {
+    width: '100%',
+    maxHeight: '85%',
+    borderRadius: 20,
+    padding: Spacing.lg,
+    borderWidth: 1,
+    ...Shadows.card,
+  },
+  promptModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
+  promptModalHeaderTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  promptModalTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  promptModalDesc: {
+    fontSize: 12,
+    lineHeight: 17,
+    marginBottom: Spacing.sm,
+  },
+  promptBox: {
+    maxHeight: 280,
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  promptText: {
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  promptCopyActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  promptCopyActionText: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  editQaModalContent: {
+    width: '100%',
+    borderRadius: 20,
+    padding: Spacing.lg,
+    borderWidth: 1,
+    ...Shadows.card,
+  },
+  editInput: {
+    borderRadius: 12,
+    padding: Spacing.sm,
+    fontSize: 14,
+    borderWidth: 1,
+    marginBottom: Spacing.sm,
+  },
+  editModalButtonsRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    marginTop: Spacing.xs,
+  },
+  cancelBtn: {
+    flex: 1,
+    paddingVertical: 11,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+  },
+  cancelBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  saveBtn: {
+    flex: 1,
+    paddingVertical: 11,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  saveBtnText: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: 'bold',
   },
 });

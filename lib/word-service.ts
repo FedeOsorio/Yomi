@@ -420,6 +420,67 @@ export async function updateCustomCard(
 }
 
 /**
+ * Guarda en lote múltiples tarjetas de preguntas y respuestas para un mazo personalizado,
+ * deduplicando automáticamente contra preguntas ya existentes en el mazo.
+ */
+export async function saveBatchCustomCards(
+  deckId: string,
+  cards: Array<{ question: string; answer: string }>
+): Promise<{ inserted: number; skipped: number }> {
+  let inserted = 0;
+  let skipped = 0;
+
+  // Obtener preguntas existentes en el mazo para evitar duplicados exactos
+  const existingRows = await db
+    .select({ simplified: words.simplified })
+    .from(words)
+    .where(eq(words.deckId, deckId));
+
+  const existingSet = new Set(
+    existingRows.map((r) => r.simplified.trim().toLowerCase())
+  );
+
+  for (const card of cards) {
+    const cleanQ = card.question.trim();
+    const cleanA = card.answer.trim();
+    if (!cleanQ || !cleanA) continue;
+
+    const key = cleanQ.toLowerCase();
+    if (existingSet.has(key)) {
+      skipped++;
+      continue;
+    }
+
+    const wordId = generateUUID();
+    const meaningsJson = JSON.stringify([cleanA]);
+
+    await db.insert(words).values({
+      id: wordId,
+      deckId,
+      simplified: cleanQ,
+      traditional: cleanQ,
+      pinyinDisplay: '',
+      pinyinNumeric: '',
+      meanings: meaningsJson,
+      auxiliaryInfo: null,
+      createdAt: new Date(),
+    });
+
+    const srsInsert = createNewSrsItem('word', wordId, {
+      displayText: cleanQ,
+      displayReading: '',
+      displayMeaning: meaningsJson,
+    });
+
+    await db.insert(srsItems).values(srsInsert);
+    existingSet.add(key);
+    inserted++;
+  }
+
+  return { inserted, skipped };
+}
+
+/**
  * Agrega o reactiva una tarjeta de palabra en el repaso SRS.
  */
 export async function addCardToReview(wordId: string): Promise<void> {

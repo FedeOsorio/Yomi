@@ -534,7 +534,18 @@ export default function DeckDetailScreen() {
               </TouchableOpacity>
             )}
 
-            {!isCustomDeck && (
+            {isCustomDeck ? (
+              <TouchableOpacity
+                style={[styles.menuDropdownItem, { borderBottomColor: colors.border }]}
+                onPress={() => {
+                  setMenuVisible(false);
+                  router.push(`/deck/import?deckId=${id}&type=custom`);
+                }}
+              >
+                <Ionicons name="cloud-download-outline" size={20} color="#10B981" style={{ marginRight: 10 }} />
+                <Text style={[styles.menuDropdownText, { color: colors.text }]}>Importar</Text>
+              </TouchableOpacity>
+            ) : (
               <TouchableOpacity
                 style={[styles.menuDropdownItem, { borderBottomColor: colors.border }]}
                 onPress={() => {
@@ -572,15 +583,32 @@ export default function DeckDetailScreen() {
           <Text style={[styles.emptyText, { color: colors.textMuted }]}>
             {isCustomDeck ? 'Este mazo no tiene tarjetas aún.' : 'Este mazo no tiene palabras aún.'}
           </Text>
-          <TouchableOpacity
-            style={[styles.emptyAddBtn, { backgroundColor: isCustomDeck ? '#10B981' : colors.primary }]}
-            onPress={() => (isCustomDeck ? setCustomCardModalVisible(true) : router.push(`/search?deckId=${id}`))}
-          >
-            <Ionicons name="add" size={18} color="#FFF" style={{ marginRight: 4 }} />
-            <Text style={styles.emptyAddBtnText}>
-              {isCustomDeck ? 'Agregar primera tarjeta' : 'Agregar primera palabra'}
-            </Text>
-          </TouchableOpacity>
+          <View style={styles.emptyActionsRow}>
+            <TouchableOpacity
+              style={[styles.emptyAddBtn, { backgroundColor: isCustomDeck ? '#10B981' : colors.primary }]}
+              onPress={() => (isCustomDeck ? setCustomCardModalVisible(true) : router.push(`/search?deckId=${id}`))}
+            >
+              <Ionicons name="add" size={18} color="#FFF" style={{ marginRight: 4 }} />
+              <Text style={styles.emptyAddBtnText}>
+                {isCustomDeck ? 'Agregar tarjeta' : 'Agregar primera palabra'}
+              </Text>
+            </TouchableOpacity>
+
+            {isCustomDeck && (
+              <TouchableOpacity
+                style={[
+                  styles.emptyImportBtn,
+                  { borderColor: '#10B981', backgroundColor: 'rgba(16, 185, 129, 0.08)' },
+                ]}
+                onPress={() => router.push(`/deck/import?deckId=${id}&type=custom`)}
+              >
+                <Ionicons name="cloud-download-outline" size={16} color="#10B981" style={{ marginRight: 6 }} />
+                <Text style={[styles.emptyImportBtnText, { color: '#10B981' }]}>
+                  Importar
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
       ) : (
         <FlatList
@@ -882,16 +910,36 @@ const styles = StyleSheet.create({
     marginTop: Spacing.md,
     marginBottom: Spacing.md,
   },
+  emptyActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+  },
   emptyAddBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md + 4,
+    paddingVertical: Spacing.sm + 2,
     borderRadius: 12,
   },
   emptyAddBtnText: {
     color: '#FFF',
     fontWeight: 'bold',
+    fontSize: 14,
+  },
+  emptyImportBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.md + 4,
+    paddingVertical: Spacing.sm + 2,
+    borderRadius: 12,
+    borderWidth: 1.5,
+  },
+  emptyImportBtnText: {
+    fontWeight: 'bold',
+    fontSize: 14,
   },
   fabExtended: {
     position: 'absolute',
