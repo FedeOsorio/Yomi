@@ -38,7 +38,6 @@ import {
   parseCustomQaText,
   isLikelyQaFormat,
   copyOrShareAiPrompt,
-  AI_STUDY_PROMPT_TEMPLATE,
   CustomCardImportItem,
 } from '../../../lib/qa-importer';
 import { saveBatchWords, saveBatchCustomCards } from '../../../lib/word-service';
@@ -68,10 +67,9 @@ export default function ImportDeckScreen() {
     meaningColumnIndex: 1,
   });
 
-  // Estados específicos para Importación Q&A (IA)
+  // Estados específicos para Importación Custom (IA)
   const [qaItems, setQaItems] = useState<CustomCardImportItem[]>([]);
   const [qaWarnings, setQaWarnings] = useState<string[]>([]);
-  const [showPromptModal, setShowPromptModal] = useState(false);
   const [editingQaItem, setEditingQaItem] = useState<CustomCardImportItem | null>(null);
   const [editQ, setEditQ] = useState('');
   const [editA, setEditA] = useState('');
@@ -413,7 +411,7 @@ export default function ImportDeckScreen() {
       </View>
 
       <ScrollView
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 40 }]}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 20 }]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
@@ -490,7 +488,7 @@ export default function ImportDeckScreen() {
                           { color: importedDeckType === 'custom' ? '#10B981' : colors.text },
                         ]}
                       >
-                        Estudio (Q&A)
+                        Personalizado
                       </Text>
                     </TouchableOpacity>
 
@@ -593,16 +591,24 @@ export default function ImportDeckScreen() {
                         ]}
                         onPress={() => handleSelectDeck(d)}
                       >
-                        <Text style={styles.deckSelectEmoji}>{isCustom ? '📝' : langMeta?.flag || '📚'}</Text>
+                        <View
+                          style={[
+                            styles.deckSelectIconBox,
+                            {
+                              backgroundColor: isCustom
+                                ? 'rgba(16, 185, 129, 0.15)'
+                                : 'rgba(59, 130, 246, 0.15)',
+                            },
+                          ]}
+                        >
+                          {isCustom ? (
+                            <Ionicons name="layers" size={20} color="#10B981" />
+                          ) : (
+                            <Text style={styles.deckSelectEmojiText}>{langMeta?.flag || '📚'}</Text>
+                          )}
+                        </View>
                         <View style={styles.deckSelectTextCol}>
-                          <View style={styles.deckRowTop}>
-                            <Text style={[styles.deckSelectTitle, { color: colors.text }]}>{d.name}</Text>
-                            {isCustom && (
-                              <View style={[styles.deckTypeTag, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}>
-                                <Text style={[styles.deckTypeTagText, { color: '#10B981' }]}>Q&A</Text>
-                              </View>
-                            )}
-                          </View>
+                          <Text style={[styles.deckSelectTitle, { color: colors.text }]}>{d.name}</Text>
                           <Text style={[styles.deckSelectSub, { color: colors.textMuted }]}>
                             {d.wordCount} {isCustom ? 'tarjetas' : d.wordCount === 1 ? 'palabra' : 'palabras'}
                           </Text>
@@ -615,22 +621,17 @@ export default function ImportDeckScreen() {
               )}
             </View>
 
-            {/* Entrada de Contenido: Q&A con IA vs Anki/CSV */}
+            {/* Entrada de Contenido: Tarjetas vs Anki/CSV */}
             <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <View style={styles.contentHeaderRow}>
                 <Text style={[styles.sectionTitle, { color: colors.text }]}>
-                  {isCustomMode ? '2. Pega tus Preguntas o Carga Archivo' : '2. Elige un Archivo o Pega Texto'}
+                  {isCustomMode ? '2. Tarjetas' : '2. Elige un Archivo o Pega Texto'}
                 </Text>
-                <View
-                  style={[
-                    styles.badgeHint,
-                    { backgroundColor: isCustomMode ? 'rgba(16, 185, 129, 0.12)' : colors.surfaceHighlight },
-                  ]}
-                >
-                  <Text style={[styles.badgeHintText, { color: accentColor }]}>
-                    {isCustomMode ? 'IA / Preguntas y Respuestas' : '.apkg, CSV, TSV'}
-                  </Text>
-                </View>
+                {!isCustomMode && (
+                  <View style={[styles.badgeHint, { backgroundColor: colors.surfaceHighlight }]}>
+                    <Text style={[styles.badgeHintText, { color: accentColor }]}>.apkg, CSV, TSV</Text>
+                  </View>
+                )}
               </View>
 
               {/* Banner Ayudante de Prompt para IA (en modo personalizado) */}
@@ -641,76 +642,61 @@ export default function ImportDeckScreen() {
                     { backgroundColor: 'rgba(16, 185, 129, 0.08)', borderColor: 'rgba(16, 185, 129, 0.25)' },
                   ]}
                 >
-                  <View style={styles.aiHelperHeader}>
-                    <Ionicons name="bulb-outline" size={18} color="#10B981" />
-                    <Text style={[styles.aiHelperTitle, { color: colors.text }]}>
-                      Genera tus tarjetas con IA
-                    </Text>
-                  </View>
                   <Text style={[styles.aiHelperDesc, { color: colors.textMuted }]}>
-                    Pasa tus apuntes o PDF a tu IA personal y pídele que devuelva el contenido en formato{' '}
-                    <Text style={{ fontWeight: '700', color: colors.text }}>Pregunta: ...</Text> y{' '}
-                    <Text style={{ fontWeight: '700', color: colors.text }}>Respuesta: ...</Text>
+                    Copia la plantilla, pásala a tu IA y pega el resultado aquí.
                   </Text>
                   <TouchableOpacity
                     style={[styles.aiPromptBtn, { backgroundColor: '#10B981' }]}
-                    onPress={() => setShowPromptModal(true)}
+                    onPress={async () => {
+                      await copyOrShareAiPrompt();
+                    }}
                     activeOpacity={0.8}
                   >
                     <Ionicons name="copy-outline" size={16} color="#FFF" style={{ marginRight: 6 }} />
-                    <Text style={styles.aiPromptBtnText}>Ver / Copiar plantilla de prompt para IA</Text>
+                    <Text style={styles.aiPromptBtnText}>Copiar plantilla para IA</Text>
                   </TouchableOpacity>
                 </View>
               )}
 
-              {/* Selector de Archivo */}
-              <TouchableOpacity
-                style={[
-                  styles.filePickerCard,
-                  { backgroundColor: colors.surfaceHighlight, borderColor: colors.border },
-                ]}
-                onPress={handlePickFile}
-                disabled={isProcessing}
-                activeOpacity={0.8}
-              >
-                <View
-                  style={[
-                    styles.filePickerIconBox,
-                    { backgroundColor: isCustomMode ? 'rgba(16, 185, 129, 0.15)' : colors.primary + '18' },
-                  ]}
-                >
-                  {isProcessing ? (
-                    <ActivityIndicator size="small" color={accentColor} />
-                  ) : (
-                    <Ionicons
-                      name={isCustomMode ? 'document-text-outline' : 'folder-open-outline'}
-                      size={22}
-                      color={accentColor}
-                    />
-                  )}
-                </View>
-                <View style={styles.filePickerTextCol}>
-                  <Text style={[styles.filePickerTitle, { color: colors.text }]}>
-                    {isCustomMode
-                      ? 'Seleccionar archivo de texto (.txt, .md, .csv)'
-                      : 'Seleccionar archivo (.apkg, .txt, .csv, .yomi)'}
-                  </Text>
-                  <Text style={[styles.filePickerSub, { color: colors.textMuted }]}>
-                    {isCustomMode
-                      ? 'Importa notas exportadas o respuestas de tu IA'
-                      : 'Importa paquetes de Anki o exportaciones de texto'}
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-              </TouchableOpacity>
+              {/* Selector de Archivo (solo para mazos de idioma) */}
+              {!isCustomMode && (
+                <>
+                  <TouchableOpacity
+                    style={[
+                      styles.filePickerCard,
+                      { backgroundColor: colors.surfaceHighlight, borderColor: colors.border },
+                    ]}
+                    onPress={handlePickFile}
+                    disabled={isProcessing}
+                    activeOpacity={0.8}
+                  >
+                    <View style={[styles.filePickerIconBox, { backgroundColor: colors.primary + '18' }]}>
+                      {isProcessing ? (
+                        <ActivityIndicator size="small" color={accentColor} />
+                      ) : (
+                        <Ionicons name="folder-open-outline" size={22} color={accentColor} />
+                      )}
+                    </View>
+                    <View style={styles.filePickerTextCol}>
+                      <Text style={[styles.filePickerTitle, { color: colors.text }]}>
+                        Seleccionar archivo (.apkg, .txt, .csv, .yomi)
+                      </Text>
+                      <Text style={[styles.filePickerSub, { color: colors.textMuted }]}>
+                        Importa paquetes de Anki o exportaciones de texto
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+                  </TouchableOpacity>
 
-              <View style={styles.dividerRow}>
-                <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
-                <Text style={[styles.dividerText, { color: colors.textMuted }]}>
-                  {isCustomMode ? 'O PEGA AQUÍ EL TEXTO DE TU IA' : 'O PEGA NOTAS EN TEXTO PLANO'}
-                </Text>
-                <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
-              </View>
+                  <View style={styles.dividerRow}>
+                    <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+                    <Text style={[styles.dividerText, { color: colors.textMuted }]}>
+                      O PEGA NOTAS EN TEXTO PLANO
+                    </Text>
+                    <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+                  </View>
+                </>
+              )}
 
               <TextInput
                 style={[
@@ -719,12 +705,12 @@ export default function ImportDeckScreen() {
                 ]}
                 placeholder={
                   isCustomMode
-                    ? `Pregunta: ¿Cuáles son las tres leyes de Newton?\nRespuesta: 1. Inercia, 2. Fuerza (F=m*a), 3. Acción y reacción.\n\nPregunta: ¿Qué es el principio de Arquímedes?\nRespuesta: Todo cuerpo sumergido en un fluido experimenta un empuje vertical hacia arriba igual al peso del fluido desalojado.`
+                    ? `Pregunta: ¿Cuáles son las tres leyes de Newton?\nRespuesta: 1. Inercia, 2. Fuerza (F=m*a), 3. Acción y reacción.`
                     : `Ejemplo:\n会う\tあう\tto meet\n青い\tao\tblue\n食べる\tたべる\tcomer`
                 }
                 placeholderTextColor={colors.textMuted}
                 multiline
-                numberOfLines={8}
+                numberOfLines={isCustomMode ? 6 : 8}
                 value={rawText}
                 onChangeText={setRawText}
                 textAlignVertical="top"
@@ -738,7 +724,7 @@ export default function ImportDeckScreen() {
               >
                 <Ionicons name="document-text-outline" size={18} color="#FFF" style={{ marginRight: 6 }} />
                 <Text style={styles.primaryActionBtnText}>
-                  {isCustomMode ? 'Analizar Preguntas y Respuestas' : 'Analizar Texto Pegado'}
+                  {isCustomMode ? 'Analizar Tarjetas' : 'Analizar Texto Pegado'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -778,7 +764,7 @@ export default function ImportDeckScreen() {
                   <Text style={[styles.summaryLabel, { color: colors.textMuted }]}>
                     Formato detectado:{' '}
                     <Text style={{ color: '#10B981', fontWeight: 'bold' }}>
-                      Preguntas y Respuestas (IA / Texto)
+                      Personalizado (IA / Texto)
                     </Text>
                   </Text>
                 </View>
@@ -949,56 +935,7 @@ export default function ImportDeckScreen() {
         )}
       </ScrollView>
 
-      {/* MODAL: Plantilla de Prompt para IA */}
-      <Modal
-        visible={showPromptModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowPromptModal(false)}
-      >
-        <Pressable style={styles.modalBackdrop} onPress={() => setShowPromptModal(false)}>
-          <Pressable
-            style={[styles.promptModalContent, { backgroundColor: colors.surface, borderColor: colors.border }]}
-            onPress={(e) => e.stopPropagation()}
-          >
-            <View style={styles.promptModalHeader}>
-              <View style={styles.promptModalHeaderTitleRow}>
-                <Ionicons name="document-text-outline" size={20} color="#10B981" style={{ marginRight: 8 }} />
-                <Text style={[styles.promptModalTitle, { color: colors.text }]}>Plantilla de Prompt para IA</Text>
-              </View>
-              <TouchableOpacity onPress={() => setShowPromptModal(false)}>
-                <Ionicons name="close" size={22} color={colors.textMuted} />
-              </TouchableOpacity>
-            </View>
-
-            <Text style={[styles.promptModalDesc, { color: colors.textMuted }]}>
-              Copia este prompt y pégalo en tu IA (ChatGPT, Claude, Gemini, etc.) junto con tus notas o PDF:
-            </Text>
-
-            <ScrollView
-              style={[styles.promptBox, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}
-              showsVerticalScrollIndicator
-            >
-              <Text selectable style={[styles.promptText, { color: colors.text }]}>
-                {AI_STUDY_PROMPT_TEMPLATE}
-              </Text>
-            </ScrollView>
-
-            <TouchableOpacity
-              style={[styles.promptCopyActionBtn, { backgroundColor: '#10B981' }]}
-              onPress={async () => {
-                await copyOrShareAiPrompt();
-              }}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="copy-outline" size={18} color="#FFF" style={{ marginRight: 8 }} />
-              <Text style={styles.promptCopyActionText}>Copiar / Compartir Prompt</Text>
-            </TouchableOpacity>
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      {/* MODAL: Editar Tarjeta Q&A en Previsualización */}
+      {/* MODAL: Editar Tarjeta en Previsualización */}
       <Modal
         visible={Boolean(editingQaItem)}
         transparent
@@ -1204,30 +1141,24 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1.5,
   },
-  deckSelectEmoji: {
-    fontSize: 22,
+  deckSelectIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
     marginRight: Spacing.sm,
+  },
+  deckSelectEmojiText: {
+    fontSize: 20,
+    textAlign: 'center',
   },
   deckSelectTextCol: {
     flex: 1,
   },
-  deckRowTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
   deckSelectTitle: {
     fontSize: 15,
     fontWeight: '700',
-  },
-  deckTypeTag: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  deckTypeTagText: {
-    fontSize: 10,
-    fontWeight: '800',
   },
   deckSelectSub: {
     fontSize: 12,
@@ -1480,55 +1411,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: Spacing.lg,
   },
-  promptModalContent: {
-    width: '100%',
-    maxHeight: '85%',
-    borderRadius: 20,
-    padding: Spacing.lg,
-    borderWidth: 1,
-    ...Shadows.card,
-  },
   promptModalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: Spacing.sm,
   },
-  promptModalHeaderTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
   promptModalTitle: {
     fontSize: 16,
-    fontWeight: 'bold',
-  },
-  promptModalDesc: {
-    fontSize: 12,
-    lineHeight: 17,
-    marginBottom: Spacing.sm,
-  },
-  promptBox: {
-    maxHeight: 280,
-    borderRadius: 12,
-    borderWidth: 1,
-    padding: Spacing.md,
-    marginBottom: Spacing.md,
-  },
-  promptText: {
-    fontSize: 12,
-    lineHeight: 18,
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-  },
-  promptCopyActionBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    borderRadius: 12,
-  },
-  promptCopyActionText: {
-    color: '#FFF',
-    fontSize: 14,
     fontWeight: 'bold',
   },
   editQaModalContent: {

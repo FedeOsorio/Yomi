@@ -14,7 +14,7 @@
       "package": "com.kuyi.yomi",
       "versionCode": 19,
       "adaptiveIcon": {
-        "backgroundColor": "#2d74b2",
+        "backgroundColor": "#2b75bb",
         "foregroundImage": "./assets/images/icon.png"
       },
       "predictiveBackGestureEnabled": false,
@@ -72,7 +72,7 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#2d74b2",
+          "backgroundColor": "#2b75bb",
           "image": "./assets/images/splash-icon.png",
           "resizeMode": "contain"
         }

@@ -298,13 +298,17 @@ export default function HomeScreen() {
           <Text style={[styles.emptySubtext, { color: colors.textMuted }]}>
             {selectedFolderId
               ? 'Toca + para crear un mazo aquí o mantén presionado un mazo para moverlo.'
-              : 'Toca el botón + para crear un mazo de estudio.'}
+              : 'Toca el botón + para crear un mazo.'}
           </Text>
         </View>
       ) : (
         <ScrollView
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: Spacing.md, paddingBottom: 110 }}
+          contentContainerStyle={{
+            paddingHorizontal: Spacing.md,
+            paddingTop: folders.length > 0 ? 0 : Spacing.md,
+            paddingBottom: Math.max(tabBottomMargin + 64, 80),
+          }}
           style={{ flex: 1, overflow: 'visible' }}
         >
           {displayedDecks.map((item) => {
