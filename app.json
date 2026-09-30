@@ -10,12 +10,22 @@
     ],
     "icon": "./assets/images/icon.png",
     "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/images/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#2d76bc"
+    },
     "android": {
       "package": "com.kuyi.yomi",
       "versionCode": 20,
       "adaptiveIcon": {
         "backgroundColor": "#2d76bc",
         "foregroundImage": "./assets/images/icon.png"
+      },
+      "splash": {
+        "backgroundColor": "#2d76bc",
+        "image": "./assets/images/splash-icon.png",
+        "resizeMode": "contain"
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
@@ -74,7 +84,10 @@
         {
           "backgroundColor": "#2d76bc",
           "image": "./assets/images/splash-icon.png",
-          "resizeMode": "contain"
+          "resizeMode": "contain",
+          "dark": {
+            "backgroundColor": "#2d76bc"
+          }
         }
       ],
       "expo-image",
