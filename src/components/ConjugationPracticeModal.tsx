@@ -761,6 +761,7 @@ export function ConjugationPracticeModal({
         preferredEngine: 'vosk',
         continuous: true,
         maxAlternatives: 5,
+        voskGrammar,
       }
     );
 

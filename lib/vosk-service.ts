@@ -136,6 +136,84 @@ function getMoraPrefixes(hira: string): string[] {
   return prefixes;
 }
 
+/**
+ * Descompone un compuesto kanji y su lectura kana en morfemas segmentados separados por espacio para Kaldi/Vosk.
+ * Por ejemplo:
+ * - displayText: '千円', displayReading: 'せんえん' -> ['千 円', 'せん えん']
+ * - displayText: '学生', displayReading: 'がくせい' -> ['学 生', 'がく せい']
+ * - displayText: '日本語', displayReading: 'にほんご' -> ['日 本 語', 'にほん ご']
+ */
+function getKaldiMorphemePhrases(kanjiText: string, kanaReading: string): string[] {
+  const phrases: string[] = [];
+  const cleanK = (kanjiText || '').replace(/[^\u4e00-\u9faf]/g, '').trim();
+  const cleanR = toNormalizedHiragana(kanaReading || '');
+
+  // 1. Descomposición kanji carácter por carácter separados por espacio
+  if (cleanK.length >= 2) {
+    phrases.push([...cleanK].join(' '));
+  }
+
+  // 2. Descomposición de la lectura kana usando el mapa de lecturas canónicas
+  if (cleanK.length >= 2 && cleanR) {
+    const chars = [...cleanK];
+    if (chars.length === 2) {
+      const c1Readings = KANJI_READINGS_MAP[chars[0]] || [];
+      const c2Readings = KANJI_READINGS_MAP[chars[1]] || [];
+      let foundExact = false;
+      for (const r1 of c1Readings) {
+        const normR1 = toNormalizedHiragana(r1);
+        if (normR1 && cleanR.startsWith(normR1) && normR1.length < cleanR.length) {
+          const rem = cleanR.slice(normR1.length);
+          for (const r2 of c2Readings) {
+            const normR2 = toNormalizedHiragana(r2);
+            if (rem === normR2) {
+              phrases.push(`${normR1} ${normR2}`);
+              foundExact = true;
+              break;
+            }
+          }
+          if (foundExact) break;
+        }
+      }
+      if (!foundExact && cleanR.length >= 3) {
+        const mid = Math.floor(cleanR.length / 2);
+        phrases.push(`${cleanR.slice(0, mid)} ${cleanR.slice(mid)}`);
+      }
+    } else if (chars.length === 3 && cleanR.length >= 3) {
+      const c3 = chars[2];
+      const c3Readings = KANJI_READINGS_MAP[c3] || [];
+      let found3 = false;
+      for (const r3 of c3Readings) {
+        const normR3 = toNormalizedHiragana(r3);
+        if (normR3 && cleanR.endsWith(normR3) && cleanR.length > normR3.length) {
+          const prefix = cleanR.slice(0, cleanR.length - normR3.length);
+          phrases.push(`${prefix} ${normR3}`);
+          found3 = true;
+          break;
+        }
+      }
+      if (!found3) {
+        phrases.push(`${cleanR.slice(0, 2)} ${cleanR.slice(2)}`);
+      }
+    }
+  }
+
+  // 3. Si la lectura kana tiene terminaciones verbales comunes (ej. たべます -> たべ ます)
+  if (cleanR.length >= 3) {
+    if (cleanR.endsWith('ます')) {
+      phrases.push(`${cleanR.slice(0, -2)} ます`);
+    } else if (cleanR.endsWith('ない')) {
+      phrases.push(`${cleanR.slice(0, -2)} ない`);
+    } else if (cleanR.endsWith('た')) {
+      phrases.push(`${cleanR.slice(0, -1)} た`);
+    } else if (cleanR.endsWith('て')) {
+      phrases.push(`${cleanR.slice(0, -1)} て`);
+    }
+  }
+
+  return phrases;
+}
+
 class VoskVoiceService {
   private isModelLoaded = false;
   private modelLoadPromise: Promise<boolean> | null = null;
@@ -355,7 +433,12 @@ class VoskVoiceService {
         });
       }
 
-      // 3. Expandir EXCLUSIVAMENTE para estas lecturas directas: Hiragana, Katakana y variantes prolongadas
+      // 3. Expandir EXCLUSIVAMENTE para estas lecturas directas: Hiragana, Katakana, morfemas y variantes prolongadas
+      if (card.displayText) {
+        const textMorphemes = getKaldiMorphemePhrases(card.displayText, card.displayReading || '');
+        textMorphemes.forEach((m) => grammarSet.add(m));
+      }
+
       directReadings.forEach((r) => {
         const hira = toNormalizedHiragana(r);
         if (hira) {
@@ -364,6 +447,10 @@ class VoskVoiceService {
             String.fromCharCode(ch.charCodeAt(0) + 0x60)
           );
           if (kata) grammarSet.add(kata);
+
+          // Descomposición de morfemas para Kaldi (ej. 'せん えん', 'がく せい', etc.)
+          const morphemes = getKaldiMorphemePhrases(card.displayText || '', hira);
+          morphemes.forEach((m) => grammarSet.add(m));
 
           // Si es un monosílabo (ej. じ, き, ひ, て, め), incorporar sus variantes acústicas
           // prolongadas que representan la duración natural de una persona al hablar (250-400ms).
@@ -415,11 +502,29 @@ class VoskVoiceService {
       const cleanR = (r || '').trim();
       if (cleanK && !/^[a-zA-Z\s]+$/.test(cleanK)) {
         grammarSet.add(cleanK);
+        if (cleanK.length >= 2) {
+          if (cleanK.endsWith('ます')) grammarSet.add(`${cleanK.slice(0, -2)} ます`);
+          if (cleanK.endsWith('ました')) grammarSet.add(`${cleanK.slice(0, -3)} ました`);
+          if (cleanK.endsWith('ません')) grammarSet.add(`${cleanK.slice(0, -3)} ません`);
+          if (cleanK.endsWith('ない')) grammarSet.add(`${cleanK.slice(0, -2)} ない`);
+          if (cleanK.endsWith('た')) grammarSet.add(`${cleanK.slice(0, -1)} た`);
+          if (cleanK.endsWith('て')) grammarSet.add(`${cleanK.slice(0, -1)} て`);
+          if (cleanK.endsWith('です')) grammarSet.add(`${cleanK.slice(0, -2)} です`);
+          if (cleanK.endsWith('でした')) grammarSet.add(`${cleanK.slice(0, -3)} でした`);
+        }
       }
       if (cleanR && !/^[a-zA-Z\s]+$/.test(cleanR)) {
         const hira = toNormalizedHiragana(cleanR);
         if (hira) {
           grammarSet.add(hira);
+          if (hira.endsWith('ます')) grammarSet.add(`${hira.slice(0, -2)} ます`);
+          if (hira.endsWith('ました')) grammarSet.add(`${hira.slice(0, -3)} ました`);
+          if (hira.endsWith('ません')) grammarSet.add(`${hira.slice(0, -3)} ません`);
+          if (hira.endsWith('ない')) grammarSet.add(`${hira.slice(0, -2)} ない`);
+          if (hira.endsWith('た')) grammarSet.add(`${hira.slice(0, -1)} た`);
+          if (hira.endsWith('て')) grammarSet.add(`${hira.slice(0, -1)} て`);
+          if (hira.endsWith('です')) grammarSet.add(`${hira.slice(0, -2)} です`);
+          if (hira.endsWith('でした')) grammarSet.add(`${hira.slice(0, -3)} でした`);
           const kata = hira.replace(/[\u3041-\u3096]/g, (ch) =>
             String.fromCharCode(ch.charCodeAt(0) + 0x60)
           );
@@ -496,6 +601,9 @@ class VoskVoiceService {
       .map((w) => w.trim())
       .filter((w) => w.length > 0 && w !== '[unk]');
 
+    // Añadir '[unk]' para rechazar ruido ambiental y silencio
+    validWords.push('[unk]');
+
     return validWords;
   }
 
@@ -520,19 +628,19 @@ class VoskVoiceService {
       }
     }
 
-    // Solo detener escucha previa si estaba efectivamente activo
-    if (this.isListeningActive) {
-      await this.stop();
-    }
+    // Detener incondicionalmente cualquier sesión previa y permitir que AudioRecord se libere
+    await this.stop();
 
     this.generation++;
     const currentGen = this.generation;
+    const startTimestamp = Date.now();
 
     try {
       console.log('[VoskService] Starting recognizer with grammar size:', options?.grammar?.length ?? 'none');
 
       const resultSub = vosk.onResult((hypothesis: string) => {
         if (this.generation !== currentGen) return;
+        if (Date.now() - startTimestamp < 200) return;
         const trimmed = (hypothesis || '').trim();
         console.log('[VoskService] onResult:', trimmed);
         callbacks.onResult(trimmed, true);
@@ -540,6 +648,7 @@ class VoskVoiceService {
 
       const finalResultSub = vosk.onFinalResult((hypothesis: string) => {
         if (this.generation !== currentGen) return;
+        if (Date.now() - startTimestamp < 200) return;
         const trimmed = (hypothesis || '').trim();
         console.log('[VoskService] onFinalResult:', trimmed);
         callbacks.onResult(trimmed, true);
@@ -547,6 +656,7 @@ class VoskVoiceService {
 
       const partialSub = vosk.onPartialResult((hypothesis: string) => {
         if (this.generation !== currentGen) return;
+        if (Date.now() - startTimestamp < 200) return;
         const trimmed = (hypothesis || '').trim();
         if (trimmed) {
           console.log('[VoskService] onPartialResult:', trimmed);
@@ -645,6 +755,9 @@ class VoskVoiceService {
     } catch {
       // Ignorar errores benignos si el recognizer no estaba activo
     }
+
+    // Permitir que el thread de AudioRecord nativo de Android termine de drenar sus buffers
+    await new Promise((resolve) => setTimeout(resolve, 80));
   }
 
   /**

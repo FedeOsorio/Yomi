@@ -291,6 +291,7 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
         evaluation: null,
         speechTranscript: '',
         speechStatus: 'idle',
+        isListening: false,
         currentCompoundWords: [],
         isProcessing: false,
       });
@@ -299,6 +300,9 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       set({
         sessionCompleted: true,
         sessionCount: nextCount,
+        isListening: false,
+        speechStatus: 'idle',
+        speechTranscript: '',
         isProcessing: false,
       });
       return false;

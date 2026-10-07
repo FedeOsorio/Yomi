@@ -642,6 +642,8 @@ export default function ReviewScreen() {
     const contextualStrings = getCardContextualStrings(card, lang);
     const isJapanese = lang.toLowerCase().startsWith('ja');
     const isChinese = lang.toLowerCase().startsWith('zh');
+    const voskGrammar = isJapanese ? voskVoiceService.buildGrammarForCard(card) : undefined;
+    console.log('[ReviewVoice] Starting speech with voskGrammar size:', voskGrammar?.length, 'for card:', card.displayText);
 
     const started = await speechService.start(
       lang,
@@ -656,25 +658,32 @@ export default function ReviewScreen() {
         onResult: (transcript, isFinal, alternatives) => {
           if (isStale()) return;
           console.log('[ReviewVoice] onResult received:', transcript, 'isFinal:', isFinal, 'alternatives:', alternatives);
-          const currentTrimmed = transcript.trim();
+          const currentTrimmed = (transcript || '').replace(/\[unk\]/gi, '').trim();
           if (!currentTrimmed && (!alternatives || alternatives.length === 0)) return;
 
+          // Acumular fragmentos de pronunciación
+          if (currentTrimmed) {
+            accumulatedSpeechRef.current = accumulatedSpeechRef.current
+              ? `${accumulatedSpeechRef.current} ${currentTrimmed}`.trim()
+              : currentTrimmed;
+          }
+
           // Formatear y mostrar de inmediato exactamente lo que se está diciendo en este intento
-          const formatted = formatSpokenTranscript(currentTrimmed, lang) || (currentTrimmed === '[unk]' ? '...' : currentTrimmed);
+          const formatted = formatSpokenTranscript(currentTrimmed, lang);
           if (formatted) {
             setSpeechTranscript(formatted);
           }
 
-          // NUNCA evaluar acierto o fallo mientras el usuario todavía esté hablando (!isFinal).
-          // Durante hipótesis parciales solo mostramos la transcripción en vivo en pantalla.
-          // La evaluación fonética se ejecuta únicamente cuando el usuario terminó de pronunciar (isFinal === true).
-          if (!isFinal) return;
-
-          // Recolectar todas las hipótesis candidatas para evaluación final
+          // Recolectar todas las hipótesis candidatas para evaluación
           const candidateHypotheses = [
             currentTrimmed,
+            accumulatedSpeechRef.current,
             ...(alternatives || []),
-          ].filter(Boolean);
+          ]
+            .map((h) => (h || '').replace(/\[unk\]/gi, '').trim())
+            .filter(Boolean);
+
+          if (candidateHypotheses.length === 0) return;
 
           // Validación de acierto fonético
           let matchedHypo = '';
@@ -702,19 +711,11 @@ export default function ReviewScreen() {
             setTimeout(() => {
               handleVoiceEvaluation(card, true, matchedReading || matchedHypo || currentTrimmed);
             }, 150);
-          } else {
-            // Si terminó de hablar (isFinal: true) y la pronunciación no coincide, evaluar como fallo inmediato
-            isCardEvaluatedRef.current = true;
-            speechService.abort().catch(() => { });
-            setIsListening(false);
-            setSpeechStatus('evaluating');
-            const wrongFormatted = formatSpokenTranscript(currentTrimmed, lang) || (currentTrimmed === '[unk]' ? '...' : currentTrimmed);
-            if (wrongFormatted) {
-              setSpeechTranscript(wrongFormatted);
-            }
-            setTimeout(() => {
-              handleVoiceEvaluation(card, false, currentTrimmed);
-            }, 200);
+          } else if (isFinal) {
+            // Si la pronunciación no coincide todavía, el micrófono continúa abierto para permitir
+            // reintentar o completar la palabra durante los 15 segundos.
+            // Si el temporizador de 15s finaliza sin coincidencia, ejecutará el fallo automáticamente.
+            console.log('[ReviewVoice] Non-matching attempt, mic remains open for retry:', currentTrimmed);
           }
         },
         onError: (err) => {
@@ -734,6 +735,7 @@ export default function ReviewScreen() {
         initialPrompt: card.displayReading || card.displayText || contextualStrings[0],
         preferredEngine: isJapanese ? 'vosk' : 'native',
         continuous: true,
+        voskGrammar,
       }
     );
 
@@ -903,7 +905,20 @@ export default function ReviewScreen() {
     // tardío de la tarjeta anterior se descarte automáticamente.
     isCardEvaluatedRef.current = true;
     speechService.invalidate();
-    speechService.abort().catch(() => { });
+    await speechService.abort().catch(() => { });
+
+    let cardAdvanced = false;
+    const doAdvance = () => {
+      if (!cardAdvanced) {
+        cardAdvanced = true;
+        advanceCard();
+      }
+    };
+
+    // En el punto medio de la rotación (150ms, cuando está de perfil e invisible), actualizar el contenido
+    setTimeout(() => {
+      doAdvance();
+    }, 150);
 
     // Rotar la tarjeta suavemente de regreso al frente a 60 FPS
     Animated.timing(cardFlipAnim, {
@@ -911,33 +926,27 @@ export default function ReviewScreen() {
       duration: 300,
       easing: Easing.inOut(Easing.ease),
       useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished) {
-        const state = useReviewStore.getState();
-        // advanceCard() no mueve el índice en la última tarjeta: sin esta guarda el
-        // micrófono volvería a abrirse sobre la tarjeta que ya se completó.
-        if (state.sessionCompleted) {
-          speechService.abort().catch(() => { });
-          setIsListening(false);
-          setSpeechStatus('idle');
-          return;
-        }
-        const nextCard = state.getCurrentCard();
-        if (nextCard) {
-          const nextLang = getEffectiveCardLanguage(nextCard);
-          startVoiceListeningForCard(nextCard, nextLang);
-        } else {
-          speechService.abort().catch(() => { });
-          setIsListening(false);
-          setSpeechStatus('idle');
-        }
+    }).start(() => {
+      doAdvance();
+      const state = useReviewStore.getState();
+      // advanceCard() no mueve el índice en la última tarjeta: sin esta guarda el
+      // micrófono volvería a abrirse sobre la tarjeta que ya se completó.
+      if (state.sessionCompleted) {
+        speechService.abort().catch(() => { });
+        setIsListening(false);
+        setSpeechStatus('idle');
+        return;
+      }
+      const nextCard = state.getCurrentCard();
+      if (nextCard) {
+        const nextLang = getEffectiveCardLanguage(nextCard);
+        startVoiceListeningForCard(nextCard, nextLang);
+      } else {
+        speechService.abort().catch(() => { });
+        setIsListening(false);
+        setSpeechStatus('idle');
       }
     });
-
-    // En el punto medio de la rotación (150ms, cuando está de perfil e invisible), actualizar el contenido
-    setTimeout(() => {
-      advanceCard();
-    }, 150);
   };
 
   // Salir de la sesión actual y volver al selector de mazos
