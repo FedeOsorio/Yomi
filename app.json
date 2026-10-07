@@ -2,7 +2,7 @@
   "expo": {
     "name": "Yomi",
     "slug": "Yomi",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "orientation": "default",
     "scheme": [
       "yomi",
@@ -10,22 +10,12 @@
     ],
     "icon": "./assets/images/icon.png",
     "userInterfaceStyle": "automatic",
-    "splash": {
-      "image": "./assets/images/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#2d76bc"
-    },
     "android": {
       "package": "com.kuyi.yomi",
       "versionCode": 20,
       "adaptiveIcon": {
-        "backgroundColor": "#2d76bc",
+        "backgroundColor": "#2c76bc",
         "foregroundImage": "./assets/images/icon.png"
-      },
-      "splash": {
-        "backgroundColor": "#2d76bc",
-        "image": "./assets/images/splash-icon.png",
-        "resizeMode": "contain"
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
@@ -82,11 +72,11 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#2d76bc",
+          "backgroundColor": "#2c76bc",
           "image": "./assets/images/splash-icon.png",
           "resizeMode": "contain",
           "dark": {
-            "backgroundColor": "#2d76bc"
+            "backgroundColor": "#2c76bc"
           }
         }
       ],
@@ -103,14 +93,24 @@
       "expo-localization",
       "expo-video",
       [
-        "react-native-vosk",
+        "./plugins/withVosk",
         {
           "models": [
             "assets/model-ja-jp"
           ]
         }
       ],
-      "./plugins/withAndroidSigning"
+      "./plugins/withAndroidSigning",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableMinifyInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true,
+            "extraProguardRules": "-keep class com.facebook.react.turbomodule.** { *; }\n-keepclassmembers class * {\n    @com.facebook.react.uimanager.annotations.ReactProp <methods>;\n    @com.facebook.react.uimanager.annotations.ReactPropGroup <methods>;\n}\n-dontwarn com.facebook.react.**\n\n-keep class com.swmansion.reanimated.** { *; }\n-keep class com.swmansion.gesturehandler.** { *; }\n-keep class com.swmansion.rnscreens.** { *; }\n-keep class com.swmansion.worklets.** { *; }\n\n-keep class expo.modules.** { *; }\n-dontwarn expo.modules.**\n\n-dontwarn java.awt.**\n\n-keep class org.vosk.** { *; }\n-keep class com.alphacephei.vosk.** { *; }\n-keep class com.vosk.** { *; }\n-keep class com.sun.jna.** { *; }\n-keep class * extends com.sun.jna.** { *; }\n-keepclassmembers class * extends com.sun.jna.** { public *; }\n-dontwarn com.sun.jna.**\n-dontwarn org.vosk.**\n-dontwarn com.alphacephei.vosk.**\n\n-keep class com.imxiqi.audiopcmstream.** { *; }\n\n-keep class com.google.android.play.core.** { *; }\n-keep class com.sudoplz.rninappupdates.** { *; }\n\n-keep class com.learnium.RNDeviceInfo.** { *; }\n-keep class com.horcrux.svg.** { *; }"
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
