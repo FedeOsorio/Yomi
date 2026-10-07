@@ -124,6 +124,25 @@ export const JA_NUMBERS: Record<string, { kana: string; kanji: string }> = {
   '1000000': { kana: 'ひゃくまん', kanji: '百万' },
 };
 
+export const JA_CURRENCY_MAP: Record<string, { kanji: string; kana: string; romaji: string }> = {
+  '1円': { kanji: '一円', kana: 'いちえん', romaji: 'ichien' },
+  '5円': { kanji: '五円', kana: 'ごえん', romaji: 'goen' },
+  '10円': { kanji: '十円', kana: 'じゅうえん', romaji: 'juuen' },
+  '50円': { kanji: '五十円', kana: 'ごじゅうえん', romaji: 'gojuuen' },
+  '100円': { kanji: '百円', kana: 'ひゃくえん', romaji: 'hyakuen' },
+  '500円': { kanji: '五百円', kana: 'ごひゃくえん', romaji: 'gohyakuen' },
+  '1000円': { kanji: '千円', kana: 'せんえん', romaji: 'senen' },
+  '2000円': { kanji: '二千円', kana: 'にせんえん', romaji: 'nisenen' },
+  '5000円': { kanji: '五千円', kana: 'ごせんえん', romaji: 'gosenen' },
+  '10000円': { kanji: '一万円', kana: 'いちまんえん', romaji: 'ichimanen' },
+  '1万円': { kanji: '一万円', kana: 'いちまんえん', romaji: 'ichimanen' },
+  '千円': { kanji: '千円', kana: 'せんえん', romaji: 'senen' },
+  '百円': { kanji: '百円', kana: 'ひゃくえん', romaji: 'hyakuen' },
+  '一万円': { kanji: '一万円', kana: 'いちまんえん', romaji: 'ichimanen' },
+  '五百円': { kanji: '五百円', kana: 'ごひゃくえん', romaji: 'gohyakuen' },
+  '五千円': { kanji: '五千円', kana: 'ごせんえん', romaji: 'gosenen' },
+};
+
 export const ZH_NUMBERS: Record<string, { pinyin: string; hanzi: string }> = {
   '0': { pinyin: 'ling2', hanzi: '零' },
   '1': { pinyin: 'yi1', hanzi: '一' },
@@ -204,6 +223,16 @@ export function romajiToHiragana(romaji: string): string {
   // y eliminar cualquier guión remanente porque en Hiragana no se usan guiones
   text = text.replace(/([aiueo])-/g, '$1$1').replace(/[-_]/g, '');
 
+  // Normalizar casos comunes donde 'n' precede a una vocal en compuestos léxicos (ej. senen -> sen'en -> せんえん)
+  text = text
+    .replace(/\bsen([aeiou])/g, "sen'$1")
+    .replace(/\bman([aeiou])/g, "man'$1")
+    .replace(/\bkan([aeiou])/g, "kan'$1")
+    .replace(/\bshin([aeiou])/g, "shin'$1")
+    .replace(/\bren([aeiou])/g, "ren'$1")
+    .replace(/\bzen([aeiou])/g, "zen'$1")
+    .replace(/\bkin([aeiou])/g, "kin'$1");
+
   let result = '';
   let i = 0;
 
@@ -221,7 +250,12 @@ export function romajiToHiragana(romaji: string): string {
 
     // Manejo especial de 'n' antes de vocal o consonante
     if (text[i] === 'n') {
-      if (i + 1 === text.length || (!['a', 'i', 'u', 'e', 'o', 'y'].includes(text[i + 1]) && text[i + 1] !== "'")) {
+      if (text[i + 1] === "'" || text[i + 1] === '-') {
+        result += 'ん';
+        i += 2;
+        continue;
+      }
+      if (i + 1 === text.length || !['a', 'i', 'u', 'e', 'o', 'y'].includes(text[i + 1])) {
         result += 'ん';
         i++;
         continue;

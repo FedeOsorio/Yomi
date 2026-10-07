@@ -758,7 +758,6 @@ export function ConjugationPracticeModal({
       {
         contextualStrings,
         initialPrompt,
-        voskGrammar,
         preferredEngine: 'vosk',
         continuous: true,
         maxAlternatives: 5,

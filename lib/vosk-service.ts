@@ -2,6 +2,7 @@ import {
   conjugateJapanese,
   getEffectiveCardLanguage,
   getJapaneseCalendarExpansions,
+  JA_CURRENCY_MAP,
   JA_NUMBERS,
   JapaneseConjugationForm,
   normalizeJapaneseCalendarText,
@@ -271,6 +272,10 @@ class VoskVoiceService {
       const cleanTok = tok.trim();
       if (cleanTok && (!isJapanese || !/^[a-zA-Z\s]+$/.test(cleanTok))) {
         grammarSet.add(cleanTok);
+        // Si es un compuesto de kanjis de 2 o más caracteres, añadir también sus morfemas separados para Kaldi
+        if (isJapanese && /^[\u4e00-\u9faf]{2,}$/.test(cleanTok)) {
+          grammarSet.add([...cleanTok].join(' '));
+        }
       }
     });
 
@@ -293,6 +298,19 @@ class VoskVoiceService {
         if (JA_NUMBERS[tok]) {
           grammarSet.add(JA_NUMBERS[tok].kanji);
           grammarSet.add(JA_NUMBERS[tok].kana);
+        }
+
+        // Si coincide con montos de moneda japonesa JA_CURRENCY_MAP (ej. "千円", "1000円")
+        if (JA_CURRENCY_MAP[tok]) {
+          const c = JA_CURRENCY_MAP[tok];
+          grammarSet.add(c.kanji);
+          grammarSet.add(c.kana);
+          grammarSet.add([...c.kanji].join(' '));
+          if (c.kanji === '千円') grammarSet.add('せん えん');
+          if (c.kanji === '百円') grammarSet.add('ひゃく えん');
+          if (c.kanji === '一万円') grammarSet.add('いち まん えん');
+          if (c.kanji === '五百円') grammarSet.add('ご ひゃく えん');
+          if (c.kanji === '五千円') grammarSet.add('ご せん えん');
         }
       });
 
@@ -520,6 +538,13 @@ class VoskVoiceService {
         callbacks.onResult(trimmed, true);
       });
 
+      const finalResultSub = vosk.onFinalResult((hypothesis: string) => {
+        if (this.generation !== currentGen) return;
+        const trimmed = (hypothesis || '').trim();
+        console.log('[VoskService] onFinalResult:', trimmed);
+        callbacks.onResult(trimmed, true);
+      });
+
       const partialSub = vosk.onPartialResult((hypothesis: string) => {
         if (this.generation !== currentGen) return;
         const trimmed = (hypothesis || '').trim();
@@ -544,7 +569,7 @@ class VoskVoiceService {
         callbacks.onEnd?.();
       });
 
-      this.activeSubscriptions = [resultSub, partialSub, errorSub, timeoutSub];
+      this.activeSubscriptions = [resultSub, finalResultSub, partialSub, errorSub, timeoutSub];
 
       const startOptions: any = {};
       if (options?.grammar && options.grammar.length > 0) {

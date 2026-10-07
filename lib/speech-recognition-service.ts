@@ -169,11 +169,11 @@ class SpeechRecognitionService {
     // Capturar la generación actual para guardar con los callbacks
     const gen = this.generation;
 
-    // 1. Intentar reconocimiento con Vosk Offline con gramática cerrada de la tarjeta
+    // 1. Intentar reconocimiento con Vosk Offline (modo vocabulario abierto o con gramática)
     const isJapanese = languageCode.toLowerCase().startsWith('ja');
     const wantsVosk =
       options?.preferredEngine === 'vosk' ||
-      (options?.preferredEngine !== 'native' && isJapanese && Boolean(options?.voskGrammar && options.voskGrammar.length > 0));
+      (options?.preferredEngine !== 'native' && isJapanese);
 
     if (wantsVosk && voskVoiceService.checkNativeModule()) {
       if (!voskVoiceService.isReady()) {
@@ -182,7 +182,8 @@ class SpeechRecognitionService {
       }
 
       if (voskVoiceService.isReady()) {
-        console.log('[SpeechRecognition] Starting Vosk recognition with grammar');
+        const hasGrammar = Boolean(options?.voskGrammar && options.voskGrammar.length > 0);
+        console.log(`[SpeechRecognition] Starting Vosk recognition ${hasGrammar ? 'with grammar' : 'in open-vocabulary mode'}`);
         const started = await voskVoiceService.start(
           {
             onResult: (hypothesis, isFinal) => {
@@ -221,7 +222,7 @@ class SpeechRecognitionService {
             },
           },
           {
-            grammar: options?.voskGrammar,
+            grammar: options?.voskGrammar && options.voskGrammar.length > 0 ? options.voskGrammar : undefined,
           }
         );
 

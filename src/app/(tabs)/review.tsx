@@ -660,7 +660,7 @@ export default function ReviewScreen() {
           if (!currentTrimmed && (!alternatives || alternatives.length === 0)) return;
 
           // Formatear y mostrar de inmediato exactamente lo que se está diciendo en este intento
-          const formatted = formatSpokenTranscript(currentTrimmed, lang);
+          const formatted = formatSpokenTranscript(currentTrimmed, lang) || (currentTrimmed === '[unk]' ? '...' : currentTrimmed);
           if (formatted) {
             setSpeechTranscript(formatted);
           }
@@ -708,7 +708,7 @@ export default function ReviewScreen() {
             speechService.abort().catch(() => { });
             setIsListening(false);
             setSpeechStatus('evaluating');
-            const wrongFormatted = formatSpokenTranscript(currentTrimmed, lang);
+            const wrongFormatted = formatSpokenTranscript(currentTrimmed, lang) || (currentTrimmed === '[unk]' ? '...' : currentTrimmed);
             if (wrongFormatted) {
               setSpeechTranscript(wrongFormatted);
             }
@@ -732,7 +732,6 @@ export default function ReviewScreen() {
         contextualStrings,
         maxAlternatives: 10,
         initialPrompt: card.displayReading || card.displayText || contextualStrings[0],
-        voskGrammar: isJapanese ? voskVoiceService.buildGrammarForCard(card) : undefined,
         preferredEngine: isJapanese ? 'vosk' : 'native',
         continuous: true,
       }

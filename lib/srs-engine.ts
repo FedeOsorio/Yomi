@@ -8,6 +8,7 @@ import {
   expandNumberArtifacts,
   getEffectiveCardLanguage,
   hiraganaToRomaji,
+  JA_CURRENCY_MAP,
   JA_NUMBERS,
   normalizeJapaneseCalendarText,
   normalizeYouon,
@@ -19,7 +20,7 @@ import { JLPT_KANJI_READINGS } from './jlpt-data';
 import { KANJI_READINGS_MAP } from './kanji-readings-db';
 import { toSearchKey } from './pinyin-utils';
 
-export { JA_NUMBERS, ZH_NUMBERS };
+export { JA_CURRENCY_MAP, JA_NUMBERS, ZH_NUMBERS };
 
 // Inicializar motor FSRS con intervalos diarios (sin pasos de minutos intra-día)
 let _fsrsInstance: ReturnType<typeof fsrs> | null = null;
@@ -292,10 +293,41 @@ export function checkVoiceMatch(
       }
     }
 
+    const jaCurrEntry = JA_CURRENCY_MAP[cleanTranscript];
+    if (jaCurrEntry) {
+      if (cleanText === jaCurrEntry.kanji || cleanText === cleanTranscript) {
+        return { isMatch: true, matchedReading: toNormalizedHiragana(jaCurrEntry.kana) };
+      }
+      const currKana = toNormalizedHiragana(jaCurrEntry.kana);
+      if (readingKana === currKana || validReadings.includes(currKana)) {
+        return { isMatch: true, matchedReading: currKana };
+      }
+    }
+
+    // Coincidencia inversa si la tarjeta es un monto monetario (ej. displayText: '千円' o '1000円')
+    const cardCurr = Object.values(JA_CURRENCY_MAP).find(
+      (c) => c.kanji === cleanText || c.kana === cleanReading || c.kana === readingKana
+    );
+    if (cardCurr) {
+      const cardCurrKana = toNormalizedHiragana(cardCurr.kana);
+      if (
+        cleanTranscript === cardCurr.kana ||
+        cleanTranscript === cardCurr.kanji ||
+        effectiveTranscriptKana === cardCurrKana ||
+        cleanTranscript === '1000' ||
+        cleanTranscript === '千'
+      ) {
+        return { isMatch: true, matchedReading: cardCurrKana };
+      }
+    }
+
     // Recolectar transcripciones candidatas en kana
     const transcriptKanaCandidates = new Set<string>();
     if (effectiveTranscriptKana.length > 0) {
       transcriptKanaCandidates.add(effectiveTranscriptKana);
+    }
+    if (jaCurrEntry) {
+      transcriptKanaCandidates.add(toNormalizedHiragana(jaCurrEntry.kana));
     }
 
     // Variantes sin prolongación vocálica ASR (ej. 'てー' -> 'て', 'めー' -> 'め')
