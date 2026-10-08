@@ -1,4 +1,4 @@
-import { toNormalizedHiragana, normalizeYouon } from './japanese-utils';
+import { toNormalizedHiragana, normalizeYouon, normalizeJapaneseCalendarText, DAY_DATA } from './japanese-utils';
 import { KANJI_READINGS_MAP } from './kanji-readings-db';
 import type { DueCardWithContext } from './srs-engine';
 
@@ -129,28 +129,10 @@ export function getReadingsForWord(wordText: string): string[] {
     });
   }
 
-  // 3. Si es un compuesto de kanjis de 2 o más caracteres, generar combinaciones
-  // únicamente a partir de sus caracteres constituyentes
-  if (/^[\u4e00-\u9faf]{2,}$/.test(clean)) {
-    const chars = [...clean];
-    if (chars.every((c) => KANJI_READINGS_MAP[c])) {
-      let combs = [''];
-      for (const c of chars) {
-        const readings = KANJI_READINGS_MAP[c].map(toNormalizedHiragana).filter(Boolean);
-        const next: string[] = [];
-        for (const prefix of combs) {
-          for (const r of readings) {
-            if (next.length < 50) next.push(prefix + r);
-          }
-        }
-        combs = next;
-      }
-      combs.forEach((c) => results.add(c));
-    }
-  }
-
   return Array.from(results);
 }
+
+
 
 export interface MorphemeDecomposition {
   /** Indica si la lectura corresponde morfológicamente a la composición regular de sus kanjis */
@@ -159,6 +141,39 @@ export interface MorphemeDecomposition {
   kanjiMorphemes?: string;
   /** Frase kana con morfemas separados para Kaldi (ej. 'せん えん', 'がく せい') */
   kanaMorphemes?: string;
+}
+
+/**
+ * Segmenta expresiones que contienen partículas gramaticales como 'の'.
+ * Ejemplo:
+ * - displayText: '男の人', displayReading: 'おとこのひと' -> { kanjiMorphemes: '男 の 人', kanaMorphemes: 'おとこ の ひと' }
+ * - displayText: '女の人', displayReading: 'おんなのひと' -> { kanjiMorphemes: '女 の 人', kanaMorphemes: 'おんな の ひと' }
+ */
+export function segmentParticlePhrase(
+  kanjiText: string,
+  kanaReading: string
+): { kanjiMorphemes?: string; kanaMorphemes?: string } | null {
+  const cleanK = (kanjiText || '').trim();
+  const cleanR = toNormalizedHiragana(kanaReading || '');
+  if (!cleanK || !cleanR) return null;
+
+  const particles = ['の', 'から', 'まで', 'より', 'と', 'に', 'で', 'を', 'が', 'は', 'へ', 'な', 'や'];
+  for (const p of particles) {
+    if (cleanK.includes(p) && cleanR.includes(p)) {
+      const kParts = cleanK.split(p);
+      const rParts = cleanR.split(p);
+      if (kParts.length === rParts.length && kParts.length >= 2) {
+        if (kParts.every((x) => x.trim().length > 0) && rParts.every((x) => x.trim().length > 0)) {
+          return {
+            kanjiMorphemes: kParts.map((x) => x.trim()).join(` ${p} `),
+            kanaMorphemes: rParts.map((x) => x.trim()).join(` ${p} `),
+          };
+        }
+      }
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -182,9 +197,15 @@ export function decomposeCompoundForKaldi(
     return { isRegular: false };
   }
 
+  // Si es un día del calendario con lectura irregular (ej. 六日 / むいか), NO segmentar en kanjis sueltos
+  const rawK = (kanjiText || '').trim();
+  if (rawK.endsWith('日') && (cleanR.endsWith('か') || cleanR === 'ついたち')) {
+    return { isRegular: false };
+  }
+
   const chars = [...cleanK];
 
-  // Caso 1: Compuesto de 2 kanjis (ej. 千円, 学生, 日本, 先生, 二十)
+  // Caso 1: Compuesto de 2 kanjis (ej. 千円, 学生, 日本, 先生)
   if (chars.length === 2) {
     const c1 = chars[0];
     const c2 = chars[1];
@@ -196,7 +217,6 @@ export function decomposeCompoundForKaldi(
         const remainder = cleanR.slice(r1.length);
         for (const r2 of r2List) {
           if (remainder === r2) {
-            // Coincidencia exacta confirmada por el diccionario de kanjis
             return {
               isRegular: true,
               kanjiMorphemes: `${c1} ${c2}`,
@@ -206,9 +226,6 @@ export function decomposeCompoundForKaldi(
         }
       }
     }
-
-    // Si ninguna lectura de los kanjis individuales forma la lectura esperada,
-    // es ateji / jukujikun (como '二十' / 'はたち'). NO es regular.
     return { isRegular: false };
   }
 
@@ -246,8 +263,10 @@ export function decomposeCompoundForKaldi(
 }
 
 /**
- * Convierte un texto transcrito por el ASR (que puede venir en Kanji o mixto)
- * a todas sus posibles lecturas fonéticas en kana registradas en la app y diccionario.
+ * Convierte un texto transcrito por el ASR a todas sus posibles lecturas fonéticas en kana.
+ * IMPORTANTE: NUNCA mapea kanjis de días especiales (como '六日') a su lectura kana ('むいか')
+ * porque eso permitiría que pronunciar erróneamente 'ろくにち' (que el ASR transcribe como '六日')
+ * se evalúe fraudulentamente como 'むいか'.
  */
 export function convertAsrTranscriptToKanaReadings(transcriptText: string): string[] {
   const clean = (transcriptText || '')
@@ -259,143 +278,167 @@ export function convertAsrTranscriptToKanaReadings(transcriptText: string): stri
 
   const candidates = new Set<string>();
 
-  // 1. Si ya es o contiene Kana / Romaji normalizado
+  // 1. Directo normalizado a hiragana
   const directHira = toNormalizedHiragana(clean);
   if (directHira) candidates.add(directHira);
 
-  // 2. Si el texto contiene caracteres Kanji, buscar en el diccionario
-  if (/[\u4e00-\u9faf]/.test(clean)) {
-    const readings = getReadingsForWord(clean);
-    readings.forEach((r) => candidates.add(r));
+  // 2. Consultar lecturas canónicas registradas en la DB (solo para palabras regulares de vocabulario)
+  const dbReadings = wordToReadingsMap.get(clean);
+  if (dbReadings) {
+    dbReadings.forEach((r) => candidates.add(r));
+  }
+
+  // 3. Si es un único kanji aislado
+  if (clean.length === 1 && KANJI_READINGS_MAP[clean]) {
+    KANJI_READINGS_MAP[clean].forEach((r) => {
+      const hira = toNormalizedHiragana(r);
+      if (hira) candidates.add(hira);
+    });
   }
 
   return Array.from(candidates);
 }
 
 /**
- * Construye la gramática de Vosk para una tarjeta o sesión de forma robusta:
- * - Incluye la lectura fonética de la tarjeta
- * - Si la palabra es regular según el diccionario, descompone en morfemas de Kaldi
- * - Si es irregular (ej. 二十 / はたち), SOLO incluye la lectura legítima de la palabra y NO sus kanjis por separado
- * - Añade un conjunto de palabras contextuales de la sesión / mazo como distractores acústicos
- *   para evitar que Kaldi colapse a la única palabra disponible y adivine con cualquier sonido.
+ * Construye la gramática cerrada de Vosk EXCLUSIVA para la tarjeta actual.
+ * Aplica segmentación morfológica por espacios obligatoria para Kaldi:
+ * - Días irregulares de calendario (ej. 6日 / 六日 -> SOLO 'むい か', NUNCA '六 日')
+ * - Expresiones con partícula (ej. 男の人 -> 'おとこ の ひと', '男 の 人')
+ * - Compuestos regulares (ej. 千円 -> '千 円', 'せん えん')
+ * - Compuestos irregulares (ej. 二十 -> 'はたち')
+ * - Filtro de [unk]
+ *
+ * PROHIBIDO inyectar palabras de otras tarjetas de la sesión: genera combinaciones acústicas
+ * erróneas (ej. 'dannoshi' para '男の人'). La gramática debe ser 100% aislada por tarjeta.
  */
 export function buildVoskGrammarForCardWithContext(
   card: DueCardWithContext,
-  allSessionCards?: DueCardWithContext[]
+  _allSessionCards?: DueCardWithContext[]
 ): string[] {
   const grammarSet = new Set<string>();
-
-  // 1. Extraer lectura esperada de la tarjeta
-  const expectedReadings: string[] = [];
-  if (card.displayReading) {
-    card.displayReading.split(/[\/\n,、;•|]/).forEach((p) => {
-      const clean = toNormalizedHiragana(
-        p.replace(/^(on|kun|音|訓)[:：\s]*/i, '').replace(/[・~～\s\(\)（）\-\.]/g, '').trim()
-      );
-      if (clean) expectedReadings.push(clean);
-    });
-  }
-
-  if (card.auxiliaryInfo) {
-    try {
-      const aux = JSON.parse(card.auxiliaryInfo);
-      if (aux.kanjiReadings) {
-        aux.kanjiReadings.split(/[\/\n,、;•|]/).forEach((p: string) => {
-          const clean = toNormalizedHiragana(
-            p.replace(/^(on|kun|音|訓)[:：\s]*/i, '').replace(/[・~～\s\(\)（）\-\.]/g, '').trim()
-          );
-          if (clean) expectedReadings.push(clean);
-        });
-      }
-      if (aux.onReading) {
-        aux.onReading.split(/[,、\s]+/).forEach((p: string) => {
-          const clean = toNormalizedHiragana(p.replace(/[・~～\s\(\)（）\-\.]/g, '').trim());
-          if (clean) expectedReadings.push(clean);
-        });
-      }
-      if (aux.kunReading) {
-        aux.kunReading.split(/[,、\s]+/).forEach((p: string) => {
-          const clean = toNormalizedHiragana(p.replace(/[・~～\s\(\)（）\-\.]/g, '').trim());
-          if (clean) expectedReadings.push(clean);
-        });
-      }
-    } catch { }
-  }
-
   const displayText = (card.displayText || '').trim();
+  const displayReading = toNormalizedHiragana(card.displayReading || '');
 
-  // Si es un kanji individual sin lectura explícita, incorporar sus lecturas de KANJI_READINGS_MAP
-  if (expectedReadings.length === 0 && displayText.length === 1 && KANJI_READINGS_MAP[displayText]) {
-    KANJI_READINGS_MAP[displayText].forEach((r) => {
-      const hira = toNormalizedHiragana(r);
-      if (hira) expectedReadings.push(hira);
-    });
+  // 1. Días del calendario (1日〜31日 o 一日〜三十一日):
+  for (const d of DAY_DATA) {
+    if (displayText === d.altKanji || displayText === d.kanji) {
+      grammarSet.add(d.morpheme);
+      if (d.kana !== d.morpheme && ['ついたち', 'ふつか', 'いつか', 'なのか', 'ようか', 'はつか'].includes(d.kana)) {
+        grammarSet.add(d.kana);
+      }
+      grammarSet.add('[unk]');
+      return Array.from(grammarSet);
+    }
   }
 
-  // 2. Incorporar las lecturas legítimas de la tarjeta actual en Kana y Katakana
-  expectedReadings.forEach((r) => {
-    grammarSet.add(r);
-    const kata = r.replace(/[\u3041-\u3096]/g, (ch) =>
-      String.fromCharCode(ch.charCodeAt(0) + 0x60)
-    );
-    if (kata) grammarSet.add(kata);
+  // 2. Expresiones con partícula (ej. 男の人 -> 'おとこ の ひと', '男 の 人')
+  const particleSeg = segmentParticlePhrase(displayText, displayReading);
+  if (particleSeg) {
+    if (particleSeg.kanaMorphemes) {
+      grammarSet.add(particleSeg.kanaMorphemes);
+    }
+    if (particleSeg.kanjiMorphemes) {
+      grammarSet.add(particleSeg.kanjiMorphemes);
+    }
+  }
 
-    // Descomposición morfológica basada en diccionario:
-    // SOLO si el término kanji es regular se agregan los morfemas de Kaldi
-    if (displayText) {
-      const decomp = decomposeCompoundForKaldi(displayText, r);
-      if (decomp.isRegular) {
-        if (decomp.kanjiMorphemes) grammarSet.add(decomp.kanjiMorphemes);
-        if (decomp.kanaMorphemes) grammarSet.add(decomp.kanaMorphemes);
-        grammarSet.add(displayText);
+  // 3. Compuestos kanji regulares (ej. 千円 -> '千 円', 'せん えん')
+  let isRegularCompound = false;
+  if (displayText && displayReading) {
+    const decomp = decomposeCompoundForKaldi(displayText, displayReading);
+    if (decomp.isRegular) {
+      isRegularCompound = true;
+      if (decomp.kanaMorphemes) {
+        grammarSet.add(decomp.kanaMorphemes);
+      }
+      if (decomp.kanjiMorphemes) {
+        grammarSet.add(decomp.kanjiMorphemes);
       }
     }
-  });
-
-  // Si es una sola palabra o kanji directo, añadir displayText
-  if (displayText && !grammarSet.has(displayText)) {
-    // Si NO es compuesto irregular con lectura diferente
-    const isIrregular = expectedReadings.some(
-      (r) => !decomposeCompoundForKaldi(displayText, r).isRegular && displayText.length >= 2
-    );
-    if (!isIrregular) {
-      grammarSet.add(displayText);
-    }
   }
 
-  // 3. Vocabulario contextual de discriminación acústica:
-  // Añadir palabras de las demás tarjetas de la sesión para que Kaldi tenga un espacio
-  // de hipótesis realista y NO colapse acústicamente con el primer ruido hacia la única palabra.
-  if (allSessionCards && allSessionCards.length > 0) {
-    const distractors = allSessionCards
-      .filter((c) => c.displayText !== card.displayText)
-      .slice(0, 30); // Limitar a un conjunto manejable de 30 palabras
+  // 4. Lecturas canónicas directas de la tarjeta:
+  // Si la palabra ya fue descompuesta en morfemas separados por espacios (partículas o compuestos regulares como '男の人' o '千円'),
+  // NO inyectar la lectura unida 'おとこのひと' o 'せんえん' porque no existen en words.txt de Kaldi.
+  // Solo inyectar la lectura directa si NO es una frase con partículas ni compuesto regular descompuesto.
+  if (!particleSeg && !isRegularCompound) {
+    const expectedReadings: string[] = [];
+    if (card.displayReading) {
+      card.displayReading.split(/[\/\n,、;•|]/).forEach((p) => {
+        const clean = toNormalizedHiragana(
+          p.replace(/^(on|kun|音|訓)[:：\s]*/i, '').replace(/[・~～\s\(\)（）\-\.]/g, '').trim()
+        );
+        if (clean) expectedReadings.push(clean);
+      });
+    }
 
-    distractors.forEach((d) => {
-      if (d.displayReading) {
-        const dHira = toNormalizedHiragana(d.displayReading.split(/[\/\n,、;•|]/)[0]);
-        if (dHira) {
-          grammarSet.add(dHira);
-          const dKata = dHira.replace(/[\u3041-\u3096]/g, (ch) =>
-            String.fromCharCode(ch.charCodeAt(0) + 0x60)
-          );
-          if (dKata) grammarSet.add(dKata);
+    expectedReadings.forEach((r) => {
+      grammarSet.add(r);
+
+      // Terminaciones verbales / adjetivales frecuentes separadas para Kaldi
+      if (r.length >= 3) {
+        if (r.endsWith('ます')) grammarSet.add(`${r.slice(0, -2)} ます`);
+        else if (r.endsWith('ました')) grammarSet.add(`${r.slice(0, -3)} ました`);
+        else if (r.endsWith('ません')) grammarSet.add(`${r.slice(0, -3)} ません`);
+        else if (r.endsWith('ない')) grammarSet.add(`${r.slice(0, -2)} ない`);
+        else if (r.endsWith('た')) grammarSet.add(`${r.slice(0, -1)} た`);
+        else if (r.endsWith('て')) grammarSet.add(`${r.slice(0, -1)} て`);
+        else if (r.endsWith('です')) grammarSet.add(`${r.slice(0, -2)} です`);
+        else if (r.endsWith('でした')) grammarSet.add(`${r.slice(0, -3)} でした`);
+      }
+
+      // Monosílabos: variantes de duración natural
+      if (r.length <= 2) {
+        const prolongations = [r + 'ー'];
+        prolongations.forEach((p) => grammarSet.add(p));
+      }
+    });
+
+    // 5. Añadir displayText si es una palabra única / no descompuesta sin partículas
+    if (
+      displayText &&
+      displayText.length <= 5 &&
+      !displayText.includes('日') &&
+      !grammarSet.has(displayText)
+    ) {
+      const isIrregular = expectedReadings.some(
+        (r) => !decomposeCompoundForKaldi(displayText, r).isRegular && displayText.length >= 2
+      );
+      if (!isIrregular) {
+        grammarSet.add(displayText);
+
+        if (displayText.length >= 3) {
+          if (displayText.endsWith('ます')) grammarSet.add(`${displayText.slice(0, -2)} ます`);
+          else if (displayText.endsWith('ました')) grammarSet.add(`${displayText.slice(0, -3)} ました`);
+          else if (displayText.endsWith('ません')) grammarSet.add(`${displayText.slice(0, -3)} ません`);
+          else if (displayText.endsWith('ない')) grammarSet.add(`${displayText.slice(0, -2)} ない`);
+          else if (displayText.endsWith('た')) grammarSet.add(`${displayText.slice(0, -1)} た`);
+          else if (displayText.endsWith('て')) grammarSet.add(`${displayText.slice(0, -1)} て`);
+          else if (displayText.endsWith('です')) grammarSet.add(`${displayText.slice(0, -2)} です`);
+          else if (displayText.endsWith('でした')) grammarSet.add(`${displayText.slice(0, -3)} でした`);
         }
       }
-      if (d.displayText && d.displayText.length <= 4) {
-        grammarSet.add(d.displayText);
-      }
-    });
+    }
+
+    // 6. Si la tarjeta es un único kanji aislado sin lectura registrada, consultar diccionario universal
+    if (expectedReadings.length === 0 && displayText.length === 1 && KANJI_READINGS_MAP[displayText]) {
+      KANJI_READINGS_MAP[displayText].forEach((r) => {
+        const clean = toNormalizedHiragana(r.replace(/[・~～\s\(\)（）\-\.]/g, '').trim());
+        if (clean) grammarSet.add(clean);
+      });
+    }
   }
 
-  // Filtrar tokens vacíos o no válidos
+  // 7. Si la palabra original es un préstamo en Katakana (ej. コーヒー, パン, アメリカ), incluir Katakana
+  if (/^[\u30a0-\u30ff\sー]+$/.test(displayText)) {
+    grammarSet.add(displayText);
+  }
+
+  // Filtrar tokens vacíos o duplicados
   const validWords = Array.from(grammarSet)
     .map((w) => w.trim())
     .filter((w) => w.length > 0 && w !== '[unk]');
 
-  // Añadir '[unk]' obligatorio para que Kaldi descarte ruido y silencio
   validWords.push('[unk]');
-
   return validWords;
 }

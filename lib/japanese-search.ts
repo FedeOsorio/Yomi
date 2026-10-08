@@ -1,4 +1,4 @@
-import { romajiToHiragana, containsJapanese, deconjugateJapanese, classifyJapaneseWord, conjugateJapanese, JapaneseConjugationForm, toNormalizedHiragana } from './japanese-utils';
+import { romajiToHiragana, containsJapanese, deconjugateJapanese, classifyJapaneseWord, conjugateJapanese, JapaneseConjugationForm, toNormalizedHiragana, kanjiToHiragana, DAY_DATA } from './japanese-utils';
 import { getQuickJlptLevel } from './jlpt-data';
 import { getStorageItem, setStorageItem } from './storage-service';
 
@@ -477,18 +477,19 @@ export async function searchJapanese(rawInput: string, toLang: string = 'es'): P
   ])).filter(Boolean);
 
   try {
-    // Si es una frase u oración, traducir inmediatamente la frase completa para asegurar que sea la tarjeta principal
+    // Si es una frase u oración, traducir inmediatamente la frase completa y resolver lectura fonética
     let phraseEntry: JapaneseEntry | null = null;
     if (isMultiWordPhrase) {
-      const phraseTranslation = await translateToLanguage(hiragana || input, toLang, 'ja');
+      const resolvedReading = await resolveJapaneseReading(input);
+      const phraseTranslation = await translateToLanguage(input, toLang, 'ja');
       phraseEntry = {
         id: `ja_phrase_${Date.now()}`,
-        kanji: hiragana || input,
-        reading: hiragana,
+        kanji: input,
+        reading: resolvedReading || (containsJapanese(input) ? input : romajiToHiragana(input)),
         romaji: input.toLowerCase(),
         meanings: [phraseTranslation || 'Frase / Oración'],
         isCommon: true,
-        category: 'Frase / Expresión',
+        category: classifyJapaneseWord(input, resolvedReading),
       };
     }
 
@@ -545,18 +546,19 @@ export async function searchJapanese(rawInput: string, toLang: string = 'es'): P
     }
 
     if (combinedData.length === 0) {
-      // Si el diccionario no tiene la entrada directa (ej. una oración o frase larga como "chotto matte kudasai"),
-      // traducirla automáticamente del japonés al español para que el usuario pueda guardarla directamente
-      const translated = await translateToSpanish(hiragana || input, 'ja');
+      // Si el diccionario no tiene la entrada directa (ej. una oración, frase o compuesto no indexado),
+      // resolver su lectura fonética completa con los repositorios lingüísticos y traducir su significado
+      const resolvedReading = await resolveJapaneseReading(input);
+      const translated = await translateToLanguage(input, toLang, 'ja');
       return [
         {
           id: `ja_phrase_${Date.now()}`,
-          kanji: hiragana || input,
-          reading: hiragana,
+          kanji: input,
+          reading: resolvedReading || (containsJapanese(input) ? input : romajiToHiragana(input)),
           romaji: input.toLowerCase(),
-          meanings: [translated || 'Frase / Oración'],
+          meanings: [translated || 'Frase / Expresión'],
           isCommon: true,
-          category: 'Frase / Expresión',
+          category: classifyJapaneseWord(input, resolvedReading),
         }
       ];
     }
@@ -860,3 +862,118 @@ export async function searchJapanese(rawInput: string, toLang: string = 'es'): P
   }
 }
 
+/**
+ * Caché en memoria de lecturas resueltas para rendimiento instantáneo durante la sesión.
+ */
+const resolvedReadingCache = new Map<string, string>();
+
+/**
+ * Resuelve de forma automática y precisa la lectura fonética en Hiragana de cualquier texto japonés
+ * (palabra individual, kanji compuesto, expresión o frase completa).
+ *
+ * Estrategia jerárquica universal (cero mapeo manual):
+ * 1. Si no contiene kanji, normaliza a Hiragana puro directamente.
+ * 2. Consulta la caché en memoria y la caché persistente local.
+ * 3. Repositorio Lingüístico Oficial: Jisho API / JMdict (180.000+ términos nativos con lecturas léxicas e irregulares exactas).
+ * 4. Motor NLP de Romanización: Google NLP Translate con parámetro dt=rm (oraciones complejas, frases y conjugaciones verbales).
+ * 5. Fallback Offline: Catálogo universal canónico de 2.678 kanjis (KANJI_READINGS_MAP).
+ */
+export async function resolveJapaneseReading(text: string): Promise<string> {
+  if (!text || !text.trim()) return '';
+  const clean = text.trim();
+
+  // 1. Días del calendario japonés (1日〜31日 o 一日〜三十一日)
+  for (const d of DAY_DATA) {
+    if (clean === d.altKanji || clean === d.kanji) {
+      return d.kana;
+    }
+  }
+
+  // 2. Si no contiene Kanji, normalizar de inmediato
+  if (!/[\u4e00-\u9faf]/.test(clean)) {
+    return toNormalizedHiragana(clean);
+  }
+
+  // 2. Caché en memoria
+  if (resolvedReadingCache.has(clean)) {
+    return resolvedReadingCache.get(clean)!;
+  }
+
+  // 3. Caché persistente en storage
+  try {
+    const cached = await getStorageItem(`yomi_reading_cache_${clean}`);
+    if (cached) {
+      resolvedReadingCache.set(clean, cached);
+      return cached;
+    }
+  } catch {}
+
+  let readingResult = '';
+
+  // 4. Estrategia 1: Jisho / JMdict API (precisión absoluta para léxico, compuestos y lecturas irregulares como 二十歳 -> はたち, 六日 -> むいか)
+  try {
+    const res = await fetch(`https://jisho.org/api/v1/search/words?keyword=${encodeURIComponent(clean)}`, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+      signal: AbortSignal.timeout(3500),
+    });
+    if (res.ok) {
+      const json = await res.json();
+      if (Array.isArray(json.data) && json.data.length > 0) {
+        for (const item of json.data) {
+          for (const j of item.japanese || []) {
+            if (j.word === clean && j.reading) {
+              readingResult = toNormalizedHiragana(j.reading);
+              break;
+            }
+          }
+          if (readingResult) break;
+        }
+
+        if (!readingResult && json.data[0]?.japanese?.[0]?.reading) {
+          const first = json.data[0].japanese[0];
+          if (first.word === clean || !first.word) {
+            readingResult = toNormalizedHiragana(first.reading);
+          }
+        }
+      }
+    }
+  } catch {}
+
+  // 5. Estrategia 2: Google Romanization (oraciones, frases largas y verbos conjugados)
+  if (!readingResult) {
+    try {
+      const gUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=ja&tl=es&dt=rm&q=${encodeURIComponent(clean)}`;
+      const res = await fetch(gUrl, { signal: AbortSignal.timeout(3500) });
+      if (res.ok) {
+        const data = await res.json();
+        const rom = data[0]?.[1]?.[2] || data[0]?.[1]?.[3] || data[0]?.[0]?.[3];
+        if (rom) {
+          const hira = romajiToHiragana(rom);
+          if (hira) {
+            readingResult = toNormalizedHiragana(hira);
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // 6. Estrategia 3: Fallback Offline (utiliza catálogo universal KANJI_READINGS_MAP)
+  if (!readingResult) {
+    readingResult = kanjiToHiragana(clean);
+  }
+
+  // Preservar partículas ortográficas de texto como 'は' si el NLP romanizó como 'わ'
+  if (readingResult && clean.includes('は') && !clean.includes('わ') && readingResult.includes('わ')) {
+    // Si el texto original tenía la partícula 'は' y no tenía 'わ', restaurar la grafía estándar kana
+    readingResult = readingResult.replace(/わ/g, 'は');
+  }
+
+  if (readingResult) {
+    resolvedReadingCache.set(clean, readingResult);
+    try {
+      await setStorageItem(`yomi_reading_cache_${clean}`, readingResult);
+    } catch {}
+  }
+
+  return readingResult;
+}

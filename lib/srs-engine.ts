@@ -15,10 +15,12 @@ import {
   romajiToHiragana,
   toNormalizedHiragana,
   ZH_NUMBERS,
+  containsJapanese,
 } from './japanese-utils';
 import { JLPT_KANJI_READINGS } from './jlpt-data';
 import { KANJI_READINGS_MAP } from './kanji-readings-db';
-import { convertAsrTranscriptToKanaReadings } from './phonetic-dictionary';
+import { convertAsrTranscriptToKanaReadings, registerWordInDictionary } from './phonetic-dictionary';
+import { resolveJapaneseReading } from './japanese-search';
 import { toSearchKey } from './pinyin-utils';
 
 export { JA_CURRENCY_MAP, JA_NUMBERS, ZH_NUMBERS };
@@ -321,6 +323,24 @@ export function checkVoiceMatch(
 
     const targetList = Array.from(expectedReadings);
 
+    // Guarda lingüística para días del calendario y contadores irregulares:
+    // Si la lectura requerida es irregular (termina en 'か', 'ついたち' o 'はつか') y NO contiene 'にち',
+    // pero el usuario pronunció conteo regular con 'にち' o 'nichi' (ej. 'ろくにち' cuando la tarjeta es '六日' -> 'むいか'):
+    // RECHAZAR de inmediato para evitar falsos aprobados.
+    const hasIrregularDayReading = targetList.some(
+      (t) => (t.endsWith('か') || t === 'ついたち' || t === 'はつか') && !t.includes('にち')
+    );
+    if (hasIrregularDayReading) {
+      const isRegularCountingSpoken =
+        cleanTranscript.includes('にち') ||
+        cleanTranscript.includes('nichi') ||
+        /^[0-9一二三四五六七八九十]+日$/.test(cleanTranscript);
+
+      if (isRegularCountingSpoken && !targetList.includes(directKana)) {
+        return { isMatch: false };
+      }
+    }
+
     // 3. Validación fonética estricta: lo pronunciado DEBE coincidir con la lectura requerida
     for (const rawKana of transcriptKanaCandidates) {
       const normTranscript = normalizeLongVowels(rawKana);
@@ -528,6 +548,30 @@ function toFsrsCard(item: SrsItem): Card {
 }
 
 /**
+ * Auto-repara en tiempo de ejecución tarjetas japonesas que carezcan de lectura guardada (displayReading).
+ * Resuelve la lectura fonética automáticamente mediante resolveJapaneseReading y la persiste en SQLite.
+ */
+async function autoHealMissingCardReadings(cardsList: DueCardWithContext[]): Promise<DueCardWithContext[]> {
+  for (const c of cardsList) {
+    if (!c.displayReading || !c.displayReading.trim()) {
+      const isJapanese = (c.languageCode || '').toLowerCase().startsWith('ja') || containsJapanese(c.displayText || '');
+      if (isJapanese && c.displayText) {
+        try {
+          const resolved = await resolveJapaneseReading(c.displayText);
+          if (resolved) {
+            c.displayReading = resolved;
+            db.update(srsItems).set({ displayReading: resolved }).where(eq(srsItems.id, c.id)).catch(() => {});
+            db.update(words).set({ pinyinDisplay: resolved, pinyinNumeric: resolved.toLowerCase() }).where(eq(words.id, c.itemId)).catch(() => {});
+            registerWordInDictionary(c.displayText, resolved);
+          }
+        } catch {}
+      }
+    }
+  }
+  return cardsList;
+}
+
+/**
  * Obtiene todas las tarjetas pendientes de repaso para hoy (due <= ahora).
  */
 export async function getDueCards(deckId?: string): Promise<DueCardWithContext[]> {
@@ -562,11 +606,14 @@ export async function getDueCards(deckId?: string): Promise<DueCardWithContext[]
     .innerJoin(words, eq(srsItems.itemId, words.id))
     .leftJoin(decks, eq(words.deckId, decks.id));
 
+  let cards: DueCardWithContext[] = [];
   if (deckId && deckId !== 'all') {
-    return await query.where(and(lte(srsItems.due, now), eq(words.deckId, deckId)));
+    cards = await query.where(and(lte(srsItems.due, now), eq(words.deckId, deckId)));
+  } else {
+    cards = await query.where(lte(srsItems.due, now));
   }
 
-  return await query.where(lte(srsItems.due, now));
+  return await autoHealMissingCardReadings(cards);
 }
 
 /**
@@ -601,11 +648,14 @@ export async function getAllCardsForPractice(deckId?: string): Promise<DueCardWi
     .innerJoin(words, eq(srsItems.itemId, words.id))
     .leftJoin(decks, eq(words.deckId, decks.id));
 
+  let cards: DueCardWithContext[] = [];
   if (deckId && deckId !== 'all') {
-    return await query.where(eq(words.deckId, deckId));
+    cards = await query.where(eq(words.deckId, deckId));
+  } else {
+    cards = await query;
   }
 
-  return await query;
+  return await autoHealMissingCardReadings(cards);
 }
 
 /**

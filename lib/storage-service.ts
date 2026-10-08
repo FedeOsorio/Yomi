@@ -1,7 +1,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
-import { Platform } from 'react-native';
 
-const SETTINGS_FILE = (FileSystem.documentDirectory || '') + 'yomi_app_storage.json';
+const SETTINGS_FILE = ((FileSystem && FileSystem.documentDirectory) || '') + 'yomi_app_storage.json';
+const isWeb = typeof window !== 'undefined' && Boolean(window.localStorage);
 
 let memoryCache: Record<string, string> = {};
 let isLoaded = false;
@@ -9,14 +9,14 @@ let isLoaded = false;
 async function ensureLoaded() {
   if (isLoaded) return;
   try {
-    if (Platform.OS === 'web') {
+    if (isWeb) {
       if (typeof window !== 'undefined' && window.localStorage) {
         for (let i = 0; i < window.localStorage.length; i++) {
           const k = window.localStorage.key(i);
           if (k) memoryCache[k] = window.localStorage.getItem(k) || '';
         }
       }
-    } else {
+    } else if (FileSystem && FileSystem.getInfoAsync) {
       const info = await FileSystem.getInfoAsync(SETTINGS_FILE);
       if (info.exists) {
         const content = await FileSystem.readAsStringAsync(SETTINGS_FILE);
@@ -42,11 +42,11 @@ export async function setStorageItem(key: string, value: string): Promise<void> 
   await ensureLoaded();
   memoryCache[key] = value;
   try {
-    if (Platform.OS === 'web') {
+    if (isWeb) {
       if (typeof window !== 'undefined' && window.localStorage) {
         window.localStorage.setItem(key, value);
       }
-    } else {
+    } else if (FileSystem && FileSystem.writeAsStringAsync) {
       await FileSystem.writeAsStringAsync(SETTINGS_FILE, JSON.stringify(memoryCache));
     }
   } catch (e) {
@@ -58,11 +58,11 @@ export async function removeStorageItem(key: string): Promise<void> {
   await ensureLoaded();
   delete memoryCache[key];
   try {
-    if (Platform.OS === 'web') {
+    if (isWeb) {
       if (typeof window !== 'undefined' && window.localStorage) {
         window.localStorage.removeItem(key);
       }
-    } else {
+    } else if (FileSystem && FileSystem.writeAsStringAsync) {
       await FileSystem.writeAsStringAsync(SETTINGS_FILE, JSON.stringify(memoryCache));
     }
   } catch (e) {

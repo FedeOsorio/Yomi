@@ -642,8 +642,7 @@ export default function ReviewScreen() {
     const contextualStrings = getCardContextualStrings(card, lang);
     const isJapanese = lang.toLowerCase().startsWith('ja');
     const isChinese = lang.toLowerCase().startsWith('zh');
-    const sessionCards = useReviewStore.getState().dueCards;
-    const voskGrammar = isJapanese ? voskVoiceService.buildGrammarForCard(card, sessionCards) : undefined;
+    const voskGrammar = isJapanese ? voskVoiceService.buildGrammarForCard(card) : undefined;
     console.log('[ReviewVoice] Starting speech with voskGrammar size:', voskGrammar?.length, 'for card:', card.displayText);
 
     const started = await speechService.start(

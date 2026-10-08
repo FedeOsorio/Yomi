@@ -61,7 +61,7 @@ const DeckWordCard = memo(function DeckWordCard({
             {item.simplified}
           </Text>
 
-          {!isCustomDeck && item.displayReading && item.displayReading !== item.simplified ? (
+          {item.displayReading && item.displayReading !== item.simplified ? (
             <Text
               style={[styles.readingText, { color: colors.primaryHover }]}
               numberOfLines={1}

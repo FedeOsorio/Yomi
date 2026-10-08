@@ -219,9 +219,8 @@ export function romajiToHiragana(romaji: string): string {
     .replace(/[ēéèê]/g, 'ee')
     .replace(/[ōóòô]/g, 'ou');
 
-  // 2. Convertir vocal seguida de guión a vocal alargada (ej. "o-i" -> "ooi", "shu-" -> "shuu")
-  // y eliminar cualquier guión remanente porque en Hiragana no se usan guiones
-  text = text.replace(/([aiueo])-/g, '$1$1').replace(/[-_]/g, '');
+  // 2. Normalizar guiones morfológicos (ej. "hyaku-en" -> "hyakuen", "shin-osaka" -> "shin'osaka")
+  text = text.replace(/n-([aeiouy])/g, "n'$1").replace(/[-_]/g, '');
 
   // Normalizar casos comunes donde 'n' precede a una vocal en compuestos léxicos (ej. senen -> sen'en -> せんえん)
   text = text
@@ -1506,7 +1505,7 @@ const MONTH_DATA = [
   { num: 12, kanji: '十二月', kana: 'じゅうにがつ' },
 ];
 
-const DAY_DATA = [
+export const DAY_DATA = [
   { day: 1, kanji: '一日', morpheme: 'ついたち', kana: 'ついたち', altKanji: '1日' },
   { day: 2, kanji: '二日', morpheme: 'ふつか', kana: 'ふつか', altKanji: '2日' },
   { day: 3, kanji: '三日', morpheme: 'みっ か', kana: 'みっか', altKanji: '3日' },

@@ -3,11 +3,12 @@ import { db, dictDb } from '../db';
 import { dictionaryEntries } from '../db/dict-schema';
 import { decks, srsItems, words } from '../db/schema';
 import { cleanHtmlAndAnkiTags, parseAnkiFuriganaSyntax } from './anki-importer';
-import { cleanAndFormatMeanings, extractKanjis, searchJapanese } from './japanese-search';
-import { classifyJapaneseWord, deconjugateJapanese, isJapaneseDictionaryForm, toNormalizedHiragana, COMMON_KANA_NOUNS_AND_EXPRESSIONS } from './japanese-utils';
+import { cleanAndFormatMeanings, extractKanjis, searchJapanese, resolveJapaneseReading } from './japanese-search';
+import { classifyJapaneseWord, deconjugateJapanese, isJapaneseDictionaryForm, toNormalizedHiragana, COMMON_KANA_NOUNS_AND_EXPRESSIONS, containsJapanese } from './japanese-utils';
 import { JLPT_KANJI_READINGS } from './jlpt-data';
 import { DictionaryEntry } from './search-engine';
 import { createNewSrsItem } from './srs-engine';
+import { registerWordInDictionary } from './phonetic-dictionary';
 
 import * as crypto from 'expo-crypto';
 
@@ -287,6 +288,30 @@ export async function saveCustomWord(
   }
 ): Promise<void> {
   const wordId = generateUUID();
+  const cleanText = data.simplified.trim();
+  let cleanReading = (data.pinyinDisplay || '').trim();
+
+  try {
+    const deckRow = await db
+      .select({ languageCode: decks.languageCode })
+      .from(decks)
+      .where(eq(decks.id, deckId))
+      .limit(1);
+    const lang = deckRow[0]?.languageCode || '';
+    const isJapanese = lang.toLowerCase().startsWith('ja') || containsJapanese(cleanText);
+
+    if (isJapanese) {
+      if (!cleanReading || cleanReading === cleanText) {
+        cleanReading = await resolveJapaneseReading(cleanText);
+      }
+      if (cleanReading) {
+        registerWordInDictionary(cleanText, cleanReading);
+      }
+    }
+  } catch (err) {
+    console.warn('[word-service] Error resolving reading for Japanese custom word:', cleanText, err);
+  }
+
   const meaningsJson = data.meanings.startsWith('[') ? data.meanings : JSON.stringify([data.meanings]);
   const auxObj: Record<string, any> = {};
   if (data.level) auxObj.level = data.level;
@@ -297,18 +322,18 @@ export async function saveCustomWord(
   await db.insert(words).values({
     id: wordId,
     deckId,
-    simplified: data.simplified,
-    traditional: data.simplified,
-    pinyinDisplay: data.pinyinDisplay,
-    pinyinNumeric: data.pinyinDisplay.toLowerCase(),
+    simplified: cleanText,
+    traditional: cleanText,
+    pinyinDisplay: cleanReading,
+    pinyinNumeric: cleanReading.toLowerCase(),
     meanings: meaningsJson,
     auxiliaryInfo: auxInfo,
     createdAt: new Date(),
   });
 
   const srsInsert = createNewSrsItem('word', wordId, {
-    displayText: data.simplified,
-    displayReading: data.pinyinDisplay,
+    displayText: cleanText,
+    displayReading: cleanReading,
     displayMeaning: meaningsJson,
   });
 
@@ -327,6 +352,30 @@ export async function saveGenericWord(
   }
 ): Promise<void> {
   const wordId = generateUUID();
+  const cleanText = data.text.trim();
+  let cleanReading = (data.reading || '').trim();
+
+  try {
+    const deckRow = await db
+      .select({ languageCode: decks.languageCode })
+      .from(decks)
+      .where(eq(decks.id, deckId))
+      .limit(1);
+    const lang = deckRow[0]?.languageCode || '';
+    const isJapanese = lang.toLowerCase().startsWith('ja') || containsJapanese(cleanText);
+
+    if (isJapanese) {
+      if (!cleanReading || cleanReading === cleanText) {
+        cleanReading = await resolveJapaneseReading(cleanText);
+      }
+      if (cleanReading) {
+        registerWordInDictionary(cleanText, cleanReading);
+      }
+    }
+  } catch (err) {
+    console.warn('[word-service] Error resolving reading for Japanese word:', cleanText, err);
+  }
+
   const meaningsJson = data.meanings.startsWith('[') ? data.meanings : JSON.stringify([data.meanings]);
   const auxObj: Record<string, any> = {};
   if (data.level) auxObj.level = data.level;
@@ -337,18 +386,18 @@ export async function saveGenericWord(
   await db.insert(words).values({
     id: wordId,
     deckId,
-    simplified: data.text.trim(),
-    traditional: data.text.trim(),
-    pinyinDisplay: data.reading?.trim() || '',
-    pinyinNumeric: data.reading?.trim().toLowerCase() || '',
+    simplified: cleanText,
+    traditional: cleanText,
+    pinyinDisplay: cleanReading,
+    pinyinNumeric: cleanReading.toLowerCase(),
     meanings: meaningsJson,
     auxiliaryInfo: auxInfo,
     createdAt: new Date(),
   });
 
   const srsInsert = createNewSrsItem('word', wordId, {
-    displayText: data.text.trim(),
-    displayReading: data.reading?.trim() || '',
+    displayText: cleanText,
+    displayReading: cleanReading,
     displayMeaning: meaningsJson,
   });
 
@@ -384,6 +433,7 @@ export async function saveCustomCard(
   });
 
   await db.insert(srsItems).values(srsInsert);
+
   return wordId;
 }
 
@@ -425,10 +475,20 @@ export async function updateCustomCard(
  */
 export async function saveBatchCustomCards(
   deckId: string,
-  cards: Array<{ question: string; answer: string }>
+  cards: Array<{ question: string; answer: string; reading?: string }>
 ): Promise<{ inserted: number; skipped: number }> {
   let inserted = 0;
   let skipped = 0;
+
+  let isJapaneseDeck = false;
+  try {
+    const deckRow = await db
+      .select({ languageCode: decks.languageCode })
+      .from(decks)
+      .where(eq(decks.id, deckId))
+      .limit(1);
+    isJapaneseDeck = (deckRow[0]?.languageCode || '').toLowerCase().startsWith('ja');
+  } catch {}
 
   // Obtener preguntas existentes en el mazo para evitar duplicados exactos
   const existingRows = await db
@@ -451,6 +511,11 @@ export async function saveBatchCustomCards(
       continue;
     }
 
+    let finalReading = (card.reading || '').trim();
+    if (!finalReading && (isJapaneseDeck || containsJapanese(cleanQ))) {
+      finalReading = await resolveJapaneseReading(cleanQ);
+    }
+
     const wordId = generateUUID();
     const meaningsJson = JSON.stringify([cleanA]);
 
@@ -459,8 +524,8 @@ export async function saveBatchCustomCards(
       deckId,
       simplified: cleanQ,
       traditional: cleanQ,
-      pinyinDisplay: '',
-      pinyinNumeric: '',
+      pinyinDisplay: finalReading,
+      pinyinNumeric: finalReading.toLowerCase(),
       meanings: meaningsJson,
       auxiliaryInfo: null,
       createdAt: new Date(),
@@ -468,11 +533,16 @@ export async function saveBatchCustomCards(
 
     const srsInsert = createNewSrsItem('word', wordId, {
       displayText: cleanQ,
-      displayReading: '',
+      displayReading: finalReading,
       displayMeaning: meaningsJson,
     });
 
     await db.insert(srsItems).values(srsInsert);
+
+    if (finalReading) {
+      registerWordInDictionary(cleanQ, finalReading);
+    }
+
     existingSet.add(key);
     inserted++;
   }

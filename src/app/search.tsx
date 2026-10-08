@@ -17,7 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { speakText } from '../../lib/audio-service';
 import { ALL_LANGUAGES, DeckWithStats, getDecksWithStats } from '../../lib/deck-service';
 import { getQuickHskLevel } from '../../lib/hsk-data';
-import { JapaneseEntry, searchJapanese } from '../../lib/japanese-search';
+import { JapaneseEntry, resolveJapaneseReading, searchJapanese, translateToSpanish } from '../../lib/japanese-search';
 import { classifyJapaneseWord, isJapaneseDictionaryForm } from '../../lib/japanese-utils';
 import { DictionaryEntry, getChineseSpanishMeaning, searchByPinyin, SearchResult } from '../../lib/search-engine';
 import { saveCustomWord, saveGenericWord, saveWords } from '../../lib/word-service';
@@ -455,17 +455,20 @@ export default function SearchScreen() {
                   </Text>
                   <TouchableOpacity
                     style={[styles.manualAddBtn, { backgroundColor: colors.primary }]}
-                    onPress={() =>
-                      handleQuickSaveJapanese({
-                        id: 'custom',
-                        kanji: query.trim(),
-                        reading: query.trim(),
-                        romaji: query.trim(),
-                        meanings: [query.trim()],
+                    onPress={async () => {
+                      const cleanQ = query.trim();
+                      const resolvedReading = await resolveJapaneseReading(cleanQ);
+                      const translatedMeaning = await translateToSpanish(cleanQ, 'ja');
+                      await handleQuickSaveJapanese({
+                        id: `custom_${Date.now()}`,
+                        kanji: cleanQ,
+                        reading: resolvedReading || cleanQ,
+                        romaji: cleanQ,
+                        meanings: [translatedMeaning || cleanQ],
                         isCommon: false,
-                        category: classifyJapaneseWord(query.trim(), query.trim()),
-                      })
-                    }
+                        category: classifyJapaneseWord(cleanQ, resolvedReading || cleanQ),
+                      });
+                    }}
                   >
                     <Ionicons name="add-circle" size={18} color="#FFF" style={{ marginRight: 6 }} />
                     <Text style={styles.manualAddBtnText}>Guardar "{query}" como tarjeta</Text>
