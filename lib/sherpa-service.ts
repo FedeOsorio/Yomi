@@ -1,5 +1,4 @@
 import * as FileSystem from 'expo-file-system/legacy';
-import type { DueCardWithContext } from './srs-engine';
 
 export interface SherpaCallbacks {
   onResult: (transcript: string, isFinal: boolean, alternatives?: string[]) => void;
@@ -67,6 +66,8 @@ class SherpaVoiceService {
   private activeCallbacks: SherpaCallbacks | null = null;
   private isTranscribing = false;
   private lastTranscribedText = '';
+  private cleanupFns: Array<() => void> = [];
+  private transcribedSampleCount = 0;
 
   /**
    * Verifica si el módulo nativo de Sherpa-ONNX está enlazado y disponible.
@@ -268,9 +269,11 @@ class SherpaVoiceService {
     this.audioBuffer = [];
     this.lastTranscribedText = '';
     this.isTranscribing = false;
+    this.transcribedSampleCount = 0;
 
     let speechDetected = false;
     let silenceFrames = 0;
+    let voiceFrames = 0;
     let framesSinceLastTranscribe = 0;
 
     try {
@@ -279,13 +282,13 @@ class SherpaVoiceService {
         channelCount: 1,
       });
 
-      this.liveStream.onError((msg: string) => {
+      const cleanupError = this.liveStream.onError((msg: string) => {
         if (this.generation !== currentGen) return;
         console.warn('[SherpaVoiceService] LiveStream error:', msg);
         callbacks.onError?.(msg);
       });
 
-      this.liveStream.onData(async (samples: Float32Array, sampleRate: number) => {
+      const cleanupData = this.liveStream.onData(async (samples: Float32Array, sampleRate: number) => {
         if (this.generation !== currentGen || !this.isListeningActive) return;
 
         // Convertir y acumular muestras
@@ -299,13 +302,24 @@ class SherpaVoiceService {
 
         // Detección de energía acústica (VAD ligero)
         const rms = Math.sqrt(sumSquares / (chunkLength || 1));
-        const isVoiceEnergy = rms > 0.015;
+        const isVoiceEnergy = rms > 0.04;
 
         if (isVoiceEnergy) {
-          speechDetected = true;
+          voiceFrames++;
           silenceFrames = 0;
+          if (voiceFrames >= 3) {
+            // ~300ms de voz real antes de considerar habla
+            speechDetected = true;
+          }
         } else if (speechDetected) {
           silenceFrames++;
+          // ~800ms de silencio = fin de elocución, resetear estado
+          if (silenceFrames >= 8) {
+            speechDetected = false;
+            voiceFrames = 0;
+          }
+        } else {
+          voiceFrames = 0;
         }
 
         framesSinceLastTranscribe++;
@@ -321,8 +335,14 @@ class SherpaVoiceService {
           this.isTranscribing = true;
           framesSinceLastTranscribe = 0;
           try {
-            const bufferCopy = [...this.audioBuffer];
-            const result = await this.sttEngine.transcribeSamples(bufferCopy, 16000);
+            // Transcribir solo las muestras pendientes desde la última transcripción
+            const pendingSamples = this.audioBuffer.slice(this.transcribedSampleCount);
+            if (pendingSamples.length < 16000 * 0.3) {
+              this.isTranscribing = false;
+              return;
+            }
+            const result = await this.sttEngine.transcribeSamples([...pendingSamples], 16000);
+            this.transcribedSampleCount = this.audioBuffer.length;
             if (this.generation !== currentGen) return;
 
             const text = this.cleanSenseVoiceTranscript(result?.text || '');
@@ -338,6 +358,8 @@ class SherpaVoiceService {
           }
         }
       });
+
+      this.cleanupFns = [cleanupData, cleanupError];
 
       await this.liveStream.start();
       this.isListeningActive = true;
@@ -357,6 +379,10 @@ class SherpaVoiceService {
   async stop(): Promise<void> {
     if (!this.isListeningActive) return;
     this.isListeningActive = false;
+
+    // Limpiar listeners antes de detener el stream
+    this.cleanupFns.forEach(fn => { try { fn(); } catch {} });
+    this.cleanupFns = [];
 
     if (this.liveStream) {
       try {
@@ -397,6 +423,11 @@ class SherpaVoiceService {
     this.activeCallbacks = null;
     this.isTranscribing = false;
     this.audioBuffer = [];
+    this.transcribedSampleCount = 0;
+
+    // Limpiar listeners de onData/onError antes de detener el stream
+    this.cleanupFns.forEach(fn => { try { fn(); } catch {} });
+    this.cleanupFns = [];
 
     if (this.liveStream) {
       try {

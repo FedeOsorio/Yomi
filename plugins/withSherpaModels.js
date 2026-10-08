@@ -12,6 +12,8 @@ const withSherpaModels = (config) => {
     const propsToAdd = [
       { key: 'sherpaOnnxDisableFfmpeg', value: 'true' },
       { key: 'sherpaOnnxDisableLibarchive', value: 'true' },
+      { key: 'org.gradle.jvmargs', value: '-Xmx4096m -XX:MaxMetaspaceSize=1024m' },
+      { key: 'android.packagingOptions.pickFirsts', value: '**/libonnxruntime.so' },
     ];
     propsToAdd.forEach(({ key, value }) => {
       const idx = configMod.modResults.findIndex((p) => p.type === 'property' && p.key === key);

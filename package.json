@@ -1,7 +1,7 @@
 {
   "name": "yomi",
   "main": "expo-router/entry",
-  "version": "0.2.9",
+  "version": "0.3.2",
   "dependencies": {
     "@expo/ui": "~57.0.22",
     "@expo/vector-icons": "^15.1.1",
@@ -76,7 +76,8 @@
     "build:dictionary": "tsx scripts/build-dictionary.ts",
     "optimize:images": "node scripts/convertImagesToWebp.js",
     "download:models": "node scripts/download-models.js",
-    "build:android:debug": "cd android && gradlew.bat assembleDebug"
+    "build:android:debug": "cd android && gradlew.bat assembleDebug",
+    "build:android:bundle": "cd android && gradlew.bat bundleRelease"
   },
   "overrides": {
     "react-native-device-info": "$react-native-device-info"
