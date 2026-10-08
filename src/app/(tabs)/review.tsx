@@ -642,7 +642,8 @@ export default function ReviewScreen() {
     const contextualStrings = getCardContextualStrings(card, lang);
     const isJapanese = lang.toLowerCase().startsWith('ja');
     const isChinese = lang.toLowerCase().startsWith('zh');
-    const voskGrammar = isJapanese ? voskVoiceService.buildGrammarForCard(card) : undefined;
+    const sessionCards = useReviewStore.getState().dueCards;
+    const voskGrammar = isJapanese ? voskVoiceService.buildGrammarForCard(card, sessionCards) : undefined;
     console.log('[ReviewVoice] Starting speech with voskGrammar size:', voskGrammar?.length, 'for card:', card.displayText);
 
     const started = await speechService.start(
@@ -661,23 +662,21 @@ export default function ReviewScreen() {
           const currentTrimmed = (transcript || '').replace(/\[unk\]/gi, '').trim();
           if (!currentTrimmed && (!alternatives || alternatives.length === 0)) return;
 
-          // Acumular fragmentos de pronunciación
-          if (currentTrimmed) {
-            accumulatedSpeechRef.current = accumulatedSpeechRef.current
-              ? `${accumulatedSpeechRef.current} ${currentTrimmed}`.trim()
-              : currentTrimmed;
-          }
-
-          // Formatear y mostrar de inmediato exactamente lo que se está diciendo en este intento
+          // Formatear y mostrar de inmediato exactamente lo que se está diciendo en este intento (feedback en vivo)
           const formatted = formatSpokenTranscript(currentTrimmed, lang);
           if (formatted) {
             setSpeechTranscript(formatted);
           }
 
-          // Recolectar todas las hipótesis candidatas para evaluación
+          // REGLA CRÍTICA: NUNCA evaluar ni cortar el micrófono en hipótesis parciales (!isFinal).
+          // La app debe esperar a que el usuario termine su elocución para evaluar fonéticamente.
+          if (!isFinal) {
+            return;
+          }
+
+          // Recolectar todas las hipótesis candidatas finales para evaluación
           const candidateHypotheses = [
             currentTrimmed,
-            accumulatedSpeechRef.current,
             ...(alternatives || []),
           ]
             .map((h) => (h || '').replace(/\[unk\]/gi, '').trim())
@@ -685,7 +684,7 @@ export default function ReviewScreen() {
 
           if (candidateHypotheses.length === 0) return;
 
-          // Validación de acierto fonético
+          // Validación de acierto fonético estricto
           let matchedHypo = '';
           let matchedReading = '';
           const isMatch = candidateHypotheses.some((hypo) => {
@@ -711,9 +710,9 @@ export default function ReviewScreen() {
             setTimeout(() => {
               handleVoiceEvaluation(card, true, matchedReading || matchedHypo || currentTrimmed);
             }, 150);
-          } else if (isFinal) {
-            // Si la pronunciación no coincide todavía, el micrófono continúa abierto para permitir
-            // reintentar o completar la palabra durante los 15 segundos.
+          } else {
+            // Si la pronunciación final no coincide todavía, el micrófono continúa abierto para permitir
+            // reintentar o corregir la palabra durante los 15 segundos.
             // Si el temporizador de 15s finaliza sin coincidencia, ejecutará el fallo automáticamente.
             console.log('[ReviewVoice] Non-matching attempt, mic remains open for retry:', currentTrimmed);
           }

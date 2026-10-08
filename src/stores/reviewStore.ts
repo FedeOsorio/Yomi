@@ -13,6 +13,7 @@ import {
 } from '../../lib/srs-engine';
 import { CompoundWord } from '../../lib/word-service';
 import { voskVoiceService } from '../../lib/vosk-service';
+import { initPhoneticDictionary } from '../../lib/phonetic-dictionary';
 
 export interface CardEvaluation {
   isReadingCorrect: boolean;
@@ -133,8 +134,9 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
   fetchDecksData: async () => {
     set({ loading: true });
     try {
-      // Disparar precarga del modelo acústico en segundo plano desde el primer momento
+      // Disparar precarga del modelo acústico y del diccionario fonético en segundo plano
       voskVoiceService.loadModel('model-ja-jp').catch(() => {});
+      initPhoneticDictionary().catch(() => {});
       await healCorruptedSrsIntervals().catch(() => {});
 
       const d = await getDecksWithStats();
@@ -204,6 +206,7 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
     });
 
     try {
+      initPhoneticDictionary().catch(() => {});
       let cards: DueCardWithContext[] = [];
       cards = practiceMode
         ? await getAllCardsForPractice(deckId === 'all' ? undefined : deckId)

@@ -18,6 +18,7 @@ import {
 } from './japanese-utils';
 import { JLPT_KANJI_READINGS } from './jlpt-data';
 import { KANJI_READINGS_MAP } from './kanji-readings-db';
+import { convertAsrTranscriptToKanaReadings } from './phonetic-dictionary';
 import { toSearchKey } from './pinyin-utils';
 
 export { JA_CURRENCY_MAP, JA_NUMBERS, ZH_NUMBERS };
@@ -215,120 +216,79 @@ export function checkVoiceMatch(
     deckType: card.deckType,
   }).toLowerCase();
 
-  // 1. Si es Japonés: resolución exhaustiva y canónica (N5 a N1)
+  // 1. Si es Japonés: resolución exhaustiva fonética basada en el diccionario (N5 a N1)
   if (targetLang.startsWith('ja')) {
-    // Convertir número arábigo a kana equivalente (ej. "11" → "じゅういち", "100" → "ひゃく")
-    const jaNumEntry = JA_NUMBERS[cleanTranscript];
-    const effectiveTranscriptKana = jaNumEntry
-      ? toNormalizedHiragana(jaNumEntry.kana)
-      : toNormalizedHiragana(cleanTranscript);
+    // 1. Recolectar lecturas fonéticas esperadas legítimas de la tarjeta
+    const expectedReadings = new Set<string>();
 
-    // Desglosar lecturas de displayReading y auxiliaryInfo
-    let allReadingsStr = card.displayReading || '';
+    if (cleanReading) {
+      const rHira = toNormalizedHiragana(cleanReading);
+      if (rHira) expectedReadings.add(rHira);
+    }
+
+    if (card.displayReading) {
+      card.displayReading.split(/[\/\n,、;•|]/).forEach((p) => {
+        const clean = toNormalizedHiragana(
+          p.replace(/^(on|kun|音|訓)[:：\s]*/i, '').replace(/[・~～\s\(\)（）\-\.]/g, '').trim()
+        );
+        if (clean) expectedReadings.add(clean);
+      });
+    }
+
     if (card.auxiliaryInfo) {
       try {
         const aux = JSON.parse(card.auxiliaryInfo);
-        if (aux.kanjiReadings) allReadingsStr += ` • ${aux.kanjiReadings}`;
-        if (aux.onReading) allReadingsStr += ` • ${aux.onReading}`;
-        if (aux.kunReading) allReadingsStr += ` • ${aux.kunReading}`;
+        if (aux.kanjiReadings) {
+          aux.kanjiReadings.split(/[\/\n,、;•|]/).forEach((p: string) => {
+            const clean = toNormalizedHiragana(
+              p.replace(/^(on|kun|音|訓)[:：\s]*/i, '').replace(/[・~～\s\(\)（）\-\.]/g, '').trim()
+            );
+            if (clean) expectedReadings.add(clean);
+          });
+        }
+        if (aux.onReading) {
+          aux.onReading.split(/[,、\s]+/).forEach((p: string) => {
+            const clean = toNormalizedHiragana(p.replace(/[・~～\s\(\)（）\-\.]/g, '').trim());
+            if (clean) expectedReadings.add(clean);
+          });
+        }
+        if (aux.kunReading) {
+          aux.kunReading.split(/[,、\s]+/).forEach((p: string) => {
+            const clean = toNormalizedHiragana(p.replace(/[・~～\s\(\)（）\-\.]/g, '').trim());
+            if (clean) expectedReadings.add(clean);
+          });
+        }
       } catch { }
     }
 
-    // Catálogo universal de 2.600+ Kanjis (N5 a N1): incorporar todas las lecturas On y Kun canónicas
-    const kanjiChar = (card.displayText || '').trim();
-    if (KANJI_READINGS_MAP[kanjiChar]) {
-      allReadingsStr += ` • ${KANJI_READINGS_MAP[kanjiChar].join(' • ')}`;
-    } else if (JLPT_KANJI_READINGS[kanjiChar]) {
-      const entry = JLPT_KANJI_READINGS[kanjiChar];
-      if (entry.on) allReadingsStr += ` • ${entry.on}`;
-      if (entry.kun) allReadingsStr += ` • ${entry.kun}`;
-      if (entry.essential) allReadingsStr += ` • ${entry.essential}`;
+    // Si la tarjeta es un único kanji aislado (ej: tarjeta para el kanji '百' o '千' sin lectura explícita),
+    // incorporar sus lecturas canónicas On/Kun de KANJI_READINGS_MAP
+    if (expectedReadings.size === 0 && cleanText.length === 1 && KANJI_READINGS_MAP[cleanText]) {
+      KANJI_READINGS_MAP[cleanText].forEach((r) => {
+        const hira = toNormalizedHiragana(r);
+        if (hira) expectedReadings.add(hira);
+      });
     }
 
-    const validReadings = allReadingsStr
-      .split(/[\/\n,、;•|]/)
-      .map((r) =>
-        toNormalizedHiragana(
-          r.replace(/^(on|kun|音|訓)[:：\s]*/i, '').replace(/[・~～\s\(\)（）\-\.]/g, '')
-        )
-      )
-      .filter((r) => r.length > 0);
-
-    const readingKana = toNormalizedHiragana(cleanReading);
-    const textKana = toNormalizedHiragana(cleanText);
-
-    const targetList = Array.from(
-      new Set([cleanReading, readingKana, textKana, ...validReadings].filter(Boolean))
-    );
-
-    const cleanNormText = normalizeJapaneseCalendarText(cleanText);
-    const cleanNormTranscript = normalizeJapaneseCalendarText(cleanTranscript);
-
-    const isIrregularCalendarDay =
-      /^(ついたち|ふつか|みっか|よっか|いつか|むいか|なのか|ようか|ここのか|とおか|じゅうよっか|はつか|にじゅうよっか)$/.test(
-        readingKana
-      );
-
-    // Si el reconocedor transcribió el kanji exacto directamente o tras normalización de fechas/calendario (ej. "1月" con "一月", o palabras regulares)
-    // No permitir este atajo si es un día irregular del calendario donde el kanji oculta si se dijo la lectura regular errónea (ej. "sannichi")
-    if (
-      !isIrregularCalendarDay &&
-      cleanText.length > 0 &&
-      (cleanTranscript === cleanText ||
-        cleanNormTranscript === cleanNormText ||
-        cleanTranscript === cleanNormText ||
-        cleanNormTranscript === cleanText)
-    ) {
-      const bestKana = validReadings[0] || readingKana || cleanReading || cleanText;
-      return { isMatch: true, matchedReading: bestKana };
-    }
-
-    if (jaNumEntry) {
-      if (cleanText === jaNumEntry.kanji) {
-        return { isMatch: true, matchedReading: toNormalizedHiragana(jaNumEntry.kana) };
-      }
-      const numKana = toNormalizedHiragana(jaNumEntry.kana);
-      if (readingKana === numKana || validReadings.includes(numKana)) {
-        return { isMatch: true, matchedReading: numKana };
-      }
-    }
-
-    const jaCurrEntry = JA_CURRENCY_MAP[cleanTranscript];
-    if (jaCurrEntry) {
-      if (cleanText === jaCurrEntry.kanji || cleanText === cleanTranscript) {
-        return { isMatch: true, matchedReading: toNormalizedHiragana(jaCurrEntry.kana) };
-      }
-      const currKana = toNormalizedHiragana(jaCurrEntry.kana);
-      if (readingKana === currKana || validReadings.includes(currKana)) {
-        return { isMatch: true, matchedReading: currKana };
-      }
-    }
-
-    // Coincidencia inversa si la tarjeta es un monto monetario (ej. displayText: '千円' o '1000円')
-    const cardCurr = Object.values(JA_CURRENCY_MAP).find(
-      (c) => c.kanji === cleanText || c.kana === cleanReading || c.kana === readingKana
-    );
-    if (cardCurr) {
-      const cardCurrKana = toNormalizedHiragana(cardCurr.kana);
-      if (
-        cleanTranscript === cardCurr.kana ||
-        cleanTranscript === cardCurr.kanji ||
-        effectiveTranscriptKana === cardCurrKana ||
-        cleanTranscript === '1000' ||
-        cleanTranscript === '千'
-      ) {
-        return { isMatch: true, matchedReading: cardCurrKana };
-      }
-    }
-
-    // Recolectar transcripciones candidatas en kana
+    // 2. Recolectar transcripciones candidatas en kana de lo que el usuario pronunció
     const transcriptKanaCandidates = new Set<string>();
-    if (effectiveTranscriptKana.length > 0) {
-      transcriptKanaCandidates.add(effectiveTranscriptKana);
+
+    // Transcripción directa normalizada a hiragana (convierte romaji, katakana y hiragana)
+    const directKana = toNormalizedHiragana(cleanTranscript);
+    if (directKana) {
+      transcriptKanaCandidates.add(directKana);
     }
-    if (jaCurrEntry) {
-      transcriptKanaCandidates.add(toNormalizedHiragana(jaCurrEntry.kana));
+
+    // Mapeo automático de números si el reconocedor devolvió "100" -> "ひゃく"
+    const jaNumEntry = JA_NUMBERS[cleanTranscript];
+    if (jaNumEntry) {
+      transcriptKanaCandidates.add(toNormalizedHiragana(jaNumEntry.kana));
     }
+
+    // Mapeo dinámico desde el diccionario fonético si el ASR transcribió en Kanji
+    // (ej. si transcribió '千円' -> 'せんえん', '百' -> 'ひゃく', '二十' -> 'にじゅう')
+    const dictKanaList = convertAsrTranscriptToKanaReadings(cleanTranscript);
+    dictKanaList.forEach((dk) => transcriptKanaCandidates.add(dk));
 
     // Variantes sin prolongación vocálica ASR (ej. 'てー' -> 'て', 'めー' -> 'め')
     const withoutChoonpu = toNormalizedHiragana(cleanTranscript.replace(/[ー〜～\-]/g, ''));
@@ -345,17 +305,9 @@ export function checkVoiceMatch(
       }
     }
 
-    // Si la transcripción fue un kanji individual pero NO coincide con el kanji de la tarjeta, rechazar de inmediato
+    // Si la transcripción fue un kanji individual pero NO coincide con el kanji de la tarjeta, rechazar
     if (/^[\u4e00-\u9faf]$/.test(cleanTranscript) && cleanTranscript !== cleanText) {
       return { isMatch: false };
-    }
-
-    // Si la transcripción fue un compuesto Kanji de 2 o más caracteres (ej. 飛躍 o 秘薬 para ひやく)
-    if (/^[\u4e00-\u9faf]{2,}$/.test(cleanTranscript)) {
-      const compoundReadings = kanjiCompoundToKana(cleanTranscript);
-      for (const cr of compoundReadings) {
-        transcriptKanaCandidates.add(cr);
-      }
     }
 
     const normalizeLongVowels = (k: string): string => {
@@ -367,6 +319,9 @@ export function checkVoiceMatch(
       return normalizeYouon(normalizeLongVowels(k));
     };
 
+    const targetList = Array.from(expectedReadings);
+
+    // 3. Validación fonética estricta: lo pronunciado DEBE coincidir con la lectura requerida
     for (const rawKana of transcriptKanaCandidates) {
       const normTranscript = normalizeLongVowels(rawKana);
       const phoneticTranscript = normPhonetic(rawKana);
@@ -399,8 +354,7 @@ export function checkVoiceMatch(
           return { isMatch: true, matchedReading: t };
         }
 
-        // Tolerancia fonética para desonorización / asimilación de consonantes ASR no nativas
-        // (ej. 'みき' para 'みぎ', 'すし' para 'すじ', etc. para términos de 2 o más moras)
+        // Tolerancia fonética para desonorización / asimilación de consonantes ASR no nativas (2+ moras)
         if (rawKana.length >= 2 && t.length >= 2 && rawKana.length === t.length) {
           const stripDakuten = (str: string) => {
             return str
@@ -423,16 +377,6 @@ export function checkVoiceMatch(
         for (const t of targetList) {
           if (candidateKana === t || normalizeLongVowels(candidateKana) === normalizeLongVowels(t) || normPhonetic(candidateKana) === normPhonetic(t)) {
             return { isMatch: true, matchedReading: t };
-          }
-        }
-      }
-
-      // Verificar displayText convertido a kana si Google transcribió directamente
-      if (cleanText.length > 0) {
-        const displayAsKana = toNormalizedHiragana(cleanText);
-        if (displayAsKana.length > 0 && displayAsKana !== textKana) {
-          if (rawKana === displayAsKana || normTranscript === normalizeLongVowels(displayAsKana) || phoneticTranscript === normPhonetic(displayAsKana)) {
-            return { isMatch: true, matchedReading: displayAsKana };
           }
         }
       }

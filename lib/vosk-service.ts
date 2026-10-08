@@ -9,6 +9,7 @@ import {
   toNormalizedHiragana,
 } from './japanese-utils';
 import { KANJI_READINGS_MAP } from './kanji-readings-db';
+import { decomposeCompoundForKaldi } from './phonetic-dictionary';
 import type { DueCardWithContext } from './srs-engine';
 
 export interface VoskCallbacks {
@@ -148,57 +149,18 @@ function getKaldiMorphemePhrases(kanjiText: string, kanaReading: string): string
   const cleanK = (kanjiText || '').replace(/[^\u4e00-\u9faf]/g, '').trim();
   const cleanR = toNormalizedHiragana(kanaReading || '');
 
-  // 1. Descomposición kanji carácter por carácter separados por espacio
-  if (cleanK.length >= 2) {
-    phrases.push([...cleanK].join(' '));
-  }
-
-  // 2. Descomposición de la lectura kana usando el mapa de lecturas canónicas
+  // 1. Descomposición regular basada en diccionario (ej. '千円'/'せんえん' -> '千 円', 'せん えん')
+  // En palabras irregulares (ej. '二十'/'はたち'), decomposeCompoundForKaldi retorna isRegular: false
+  // y NUNCA genera '二 十', protegiendo contra falsos aciertos al nombrar kanjis individualmente.
   if (cleanK.length >= 2 && cleanR) {
-    const chars = [...cleanK];
-    if (chars.length === 2) {
-      const c1Readings = KANJI_READINGS_MAP[chars[0]] || [];
-      const c2Readings = KANJI_READINGS_MAP[chars[1]] || [];
-      let foundExact = false;
-      for (const r1 of c1Readings) {
-        const normR1 = toNormalizedHiragana(r1);
-        if (normR1 && cleanR.startsWith(normR1) && normR1.length < cleanR.length) {
-          const rem = cleanR.slice(normR1.length);
-          for (const r2 of c2Readings) {
-            const normR2 = toNormalizedHiragana(r2);
-            if (rem === normR2) {
-              phrases.push(`${normR1} ${normR2}`);
-              foundExact = true;
-              break;
-            }
-          }
-          if (foundExact) break;
-        }
-      }
-      if (!foundExact && cleanR.length >= 3) {
-        const mid = Math.floor(cleanR.length / 2);
-        phrases.push(`${cleanR.slice(0, mid)} ${cleanR.slice(mid)}`);
-      }
-    } else if (chars.length === 3 && cleanR.length >= 3) {
-      const c3 = chars[2];
-      const c3Readings = KANJI_READINGS_MAP[c3] || [];
-      let found3 = false;
-      for (const r3 of c3Readings) {
-        const normR3 = toNormalizedHiragana(r3);
-        if (normR3 && cleanR.endsWith(normR3) && cleanR.length > normR3.length) {
-          const prefix = cleanR.slice(0, cleanR.length - normR3.length);
-          phrases.push(`${prefix} ${normR3}`);
-          found3 = true;
-          break;
-        }
-      }
-      if (!found3) {
-        phrases.push(`${cleanR.slice(0, 2)} ${cleanR.slice(2)}`);
-      }
+    const decomp = decomposeCompoundForKaldi(cleanK, cleanR);
+    if (decomp.isRegular) {
+      if (decomp.kanjiMorphemes) phrases.push(decomp.kanjiMorphemes);
+      if (decomp.kanaMorphemes) phrases.push(decomp.kanaMorphemes);
     }
   }
 
-  // 3. Si la lectura kana tiene terminaciones verbales comunes (ej. たべます -> たべ ます)
+  // 2. Si la lectura kana tiene terminaciones verbales comunes (ej. たべます -> たべ ます)
   if (cleanR.length >= 3) {
     if (cleanR.endsWith('ます')) {
       phrases.push(`${cleanR.slice(0, -2)} ます`);
@@ -294,11 +256,14 @@ class VoskVoiceService {
   }
 
   /**
-   * Construye el array de gramática específico y cerrado para una tarjeta dada.
-   * Este subconjunto fuerza al decodificador Kaldi a considerar exclusivamente
-   * las lecturas y representaciones válidas de la tarjeta, más '[unk]' para rechazos.
+   * Construye el array de gramática específico y cerrado para una tarjeta dada,
+   * incorporando palabras de la sesión actual como distractores acústicos para que
+   * Kaldi CSJ tenga un espacio de discriminación robusto y no adivine la única palabra.
    */
-  buildGrammarForCard(card: DueCardWithContext): string[] {
+  buildGrammarForCard(
+    card: DueCardWithContext,
+    allSessionCards?: DueCardWithContext[]
+  ): string[] {
     const rawTokens: string[] = [];
 
     // 1. Texto principal (Kanji o palabra)
@@ -350,10 +315,6 @@ class VoskVoiceService {
       const cleanTok = tok.trim();
       if (cleanTok && (!isJapanese || !/^[a-zA-Z\s]+$/.test(cleanTok))) {
         grammarSet.add(cleanTok);
-        // Si es un compuesto de kanjis de 2 o más caracteres, añadir también sus morfemas separados para Kaldi
-        if (isJapanese && /^[\u4e00-\u9faf]{2,}$/.test(cleanTok)) {
-          grammarSet.add([...cleanTok].join(' '));
-        }
       }
     });
 
@@ -383,7 +344,6 @@ class VoskVoiceService {
           const c = JA_CURRENCY_MAP[tok];
           grammarSet.add(c.kanji);
           grammarSet.add(c.kana);
-          grammarSet.add([...c.kanji].join(' '));
           if (c.kanji === '千円') grammarSet.add('せん えん');
           if (c.kanji === '百円') grammarSet.add('ひゃく えん');
           if (c.kanji === '一万円') grammarSet.add('いち まん えん');
@@ -433,7 +393,7 @@ class VoskVoiceService {
         });
       }
 
-      // 3. Expandir EXCLUSIVAMENTE para estas lecturas directas: Hiragana, Katakana, morfemas y variantes prolongadas
+      // 3. Expandir morfemas regulares y lecturas directas: Hiragana, Katakana, morfemas y variantes prolongadas
       if (card.displayText) {
         const textMorphemes = getKaldiMorphemePhrases(card.displayText, card.displayReading || '');
         textMorphemes.forEach((m) => grammarSet.add(m));
@@ -448,13 +408,11 @@ class VoskVoiceService {
           );
           if (kata) grammarSet.add(kata);
 
-          // Descomposición de morfemas para Kaldi (ej. 'せん えん', 'がく せい', etc.)
+          // Descomposición morfológica regular para Kaldi (ej. 'せん えん', 'がく せい')
           const morphemes = getKaldiMorphemePhrases(card.displayText || '', hira);
           morphemes.forEach((m) => grammarSet.add(m));
 
-          // Si es un monosílabo (ej. じ, き, ひ, て, め), incorporar sus variantes acústicas
-          // prolongadas que representan la duración natural de una persona al hablar (250-400ms).
-          // Esto evita que Kaldi penalice duraciones de monosílabos y los confunda con disílabos (como とき).
+          // Variantes de duración natural para monosílabos
           const prolongations = getMonoraProlongations(hira);
           for (const p of prolongations) {
             grammarSet.add(p);
@@ -465,6 +423,29 @@ class VoskVoiceService {
           }
         }
       });
+
+      // 4. Vocabulario contextual de apoyo de la sesión (distractores acústicos para evitar adivinación)
+      if (allSessionCards && allSessionCards.length > 0) {
+        const otherCards = allSessionCards
+          .filter((c) => c.displayText !== card.displayText)
+          .slice(0, 30);
+
+        otherCards.forEach((oc) => {
+          if (oc.displayReading) {
+            const ocHira = toNormalizedHiragana(oc.displayReading.split(/[\/\n,、;•|]/)[0]);
+            if (ocHira) {
+              grammarSet.add(ocHira);
+              const ocKata = ocHira.replace(/[\u3041-\u3096]/g, (ch) =>
+                String.fromCharCode(ch.charCodeAt(0) + 0x60)
+              );
+              if (ocKata) grammarSet.add(ocKata);
+            }
+          }
+          if (oc.displayText && oc.displayText.length <= 4) {
+            grammarSet.add(oc.displayText);
+          }
+        });
+      }
     }
 
     // Filtrar caracteres vacíos o duplicados
@@ -478,8 +459,12 @@ class VoskVoiceService {
     return validWords;
   }
 
-  getVoskGrammarForCard(card: DueCardWithContext, _lang?: string): string[] {
-    return this.buildGrammarForCard(card);
+  getVoskGrammarForCard(
+    card: DueCardWithContext,
+    _lang?: string,
+    allSessionCards?: DueCardWithContext[]
+  ): string[] {
+    return this.buildGrammarForCard(card, allSessionCards);
   }
 
   /**
