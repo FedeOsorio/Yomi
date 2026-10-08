@@ -705,10 +705,14 @@ export function ConjugationPracticeModal({
     let voskGrammar: string[] | undefined;
     let initialPrompt: string | undefined;
     let contextualStrings: string[] | undefined;
+    let expectedKanji = '';
+    let expectedReading = '';
 
     if (activeItem) {
       const { word, form } = activeItem;
       const expected = conjugateJapanese(word.kanji, word.reading, word.category, form);
+      expectedKanji = expected.kanji;
+      expectedReading = expected.reading;
       voskGrammar = voskVoiceService.buildGrammarForConjugation(word.kanji, word.reading, word.category, form);
       initialPrompt = expected.reading || expected.kanji;
       contextualStrings = [expected.kanji, expected.reading, word.kanji, word.reading].filter(Boolean);
@@ -724,7 +728,12 @@ export function ConjugationPracticeModal({
           const hira = romajiToHiragana(transcript);
           setTextInput(hira);
           setSpokenTranscript(transcript);
-          if (isFinal && transcript.trim()) {
+
+          const normHira = toNormalizedHiragana(hira);
+          const expNorm = toNormalizedHiragana(expectedReading || expectedKanji);
+          const isImmediateMatch = Boolean(expNorm && normHira === expNorm) || Boolean(expectedKanji && transcript.trim() === expectedKanji);
+
+          if ((isImmediateMatch || isFinal) && transcript.trim()) {
             speechService.stop();
             setIsListening(false);
             evaluateAnswer(transcript, alternatives);
@@ -758,7 +767,7 @@ export function ConjugationPracticeModal({
       {
         contextualStrings,
         initialPrompt,
-        preferredEngine: 'vosk',
+        preferredEngine: 'native',
         continuous: true,
         maxAlternatives: 5,
         voskGrammar,

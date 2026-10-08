@@ -169,11 +169,9 @@ class SpeechRecognitionService {
     // Capturar la generación actual para guardar con los callbacks
     const gen = this.generation;
 
-    // 1. Intentar reconocimiento con Vosk Offline (modo vocabulario abierto o con gramática)
+    // 1. Intentar reconocimiento con Vosk Offline solo si fue solicitado explícitamente como 'vosk'
     const isJapanese = languageCode.toLowerCase().startsWith('ja');
-    const wantsVosk =
-      options?.preferredEngine === 'vosk' ||
-      (options?.preferredEngine !== 'native' && isJapanese);
+    const wantsVosk = options?.preferredEngine === 'vosk';
 
     if (wantsVosk && voskVoiceService.checkNativeModule()) {
       if (!voskVoiceService.isReady()) {

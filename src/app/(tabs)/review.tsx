@@ -667,13 +667,7 @@ export default function ReviewScreen() {
             setSpeechTranscript(formatted);
           }
 
-          // REGLA CRÍTICA: NUNCA evaluar ni cortar el micrófono en hipótesis parciales (!isFinal).
-          // La app debe esperar a que el usuario termine su elocución para evaluar fonéticamente.
-          if (!isFinal) {
-            return;
-          }
-
-          // Recolectar todas las hipótesis candidatas finales para evaluación
+          // Recolectar todas las hipótesis candidatas para evaluación
           const candidateHypotheses = [
             currentTrimmed,
             ...(alternatives || []),
@@ -699,7 +693,7 @@ export default function ReviewScreen() {
           console.log('[ReviewVoice] isMatch:', isMatch, 'matchedHypo:', matchedHypo, 'matchedReading:', matchedReading, 'for card:', card.displayText, card.displayReading);
 
           if (isMatch) {
-            // Cortar el micrófono inmediatamente en cuanto se detecta la coincidencia final
+            // Cortar el micrófono inmediatamente en cuanto se detecta la coincidencia
             isCardEvaluatedRef.current = true;
             speechService.abort().catch(() => { });
             setIsListening(false);
@@ -709,12 +703,17 @@ export default function ReviewScreen() {
             setTimeout(() => {
               handleVoiceEvaluation(card, true, matchedReading || matchedHypo || currentTrimmed);
             }, 150);
-          } else {
-            // Si la pronunciación final no coincide todavía, el micrófono continúa abierto para permitir
-            // reintentar o corregir la palabra durante los 15 segundos.
-            // Si el temporizador de 15s finaliza sin coincidencia, ejecutará el fallo automáticamente.
-            console.log('[ReviewVoice] Non-matching attempt, mic remains open for retry:', currentTrimmed);
+            return;
           }
+
+          // Si no coincidió aún y es una hipótesis parcial, seguimos escuchando mientras el usuario termina de hablar
+          if (!isFinal) {
+            return;
+          }
+
+          // Si la elocución terminó (isFinal: true) y no coincidió todavía, el micrófono continúa abierto para permitir
+          // reintentar o corregir la palabra durante los 15 segundos del temporizador.
+          console.log('[ReviewVoice] Non-matching attempt, mic remains open for retry:', currentTrimmed);
         },
         onError: (err) => {
           if (err === 'aborted' || isStale()) return;
@@ -731,7 +730,7 @@ export default function ReviewScreen() {
         contextualStrings,
         maxAlternatives: 10,
         initialPrompt: card.displayReading || card.displayText || contextualStrings[0],
-        preferredEngine: isJapanese ? 'vosk' : 'native',
+        preferredEngine: 'native',
         continuous: true,
         voskGrammar,
       }
