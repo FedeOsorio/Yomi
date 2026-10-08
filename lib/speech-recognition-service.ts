@@ -171,7 +171,7 @@ class SpeechRecognitionService {
     if (!wantsNative && isSupportedBySherpa && sherpaVoiceService.checkNativeModule()) {
       if (!sherpaVoiceService.isReady()) {
         console.log('[SpeechRecognition] Sherpa model not loaded yet, initializing SenseVoice...');
-        await sherpaVoiceService.loadModel();
+        await sherpaVoiceService.loadModel(languageCode);
       }
 
       if (sherpaVoiceService.isReady()) {

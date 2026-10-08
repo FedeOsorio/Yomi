@@ -13,6 +13,24 @@ export interface SherpaStartOptions {
   initialPrompt?: string;
 }
 
+/**
+ * Mapeo de códigos BCP-47 a los códigos cortos que SenseVoice espera.
+ * SenseVoice soporta: 'auto', 'zh', 'en', 'ja', 'ko', 'yue'.
+ */
+const SENSEVOICE_LANG_MAP: Record<string, string> = {
+  'ja': 'ja',
+  'ja-jp': 'ja',
+  'zh': 'zh',
+  'zh-cn': 'zh',
+  'zh-tw': 'zh',
+  'en': 'en',
+  'en-us': 'en',
+  'en-gb': 'en',
+  'ko': 'ko',
+  'ko-kr': 'ko',
+  'yue': 'yue',
+};
+
 export const SENSE_VOICE_MODEL_DIR_NAME = 'models/sense-voice';
 
 export const SENSE_VOICE_URLS = {
@@ -60,14 +78,13 @@ class SherpaVoiceService {
   private modelLoadPromise: Promise<boolean> | null = null;
   private isListeningActive = false;
   private liveStream: any = null;
-  private audioBuffer: number[] = [];
   private generation = 0;
   private isNativeAvailable: boolean | null = null;
   private activeCallbacks: SherpaCallbacks | null = null;
   private isTranscribing = false;
   private lastTranscribedText = '';
   private cleanupFns: Array<() => void> = [];
-  private transcribedSampleCount = 0;
+  private engineLanguage = '';
 
   /**
    * Verifica si el módulo nativo de Sherpa-ONNX está enlazado y disponible.
@@ -151,11 +168,34 @@ class SherpaVoiceService {
   }
 
   /**
-   * Carga el modelo acústico SenseVoice en memoria (desde assets empaquetados o almacenamiento local).
+   * Resuelve el código de idioma SenseVoice a partir de un código BCP-47.
    */
-  async loadModel(): Promise<boolean> {
-    if (this.isModelLoaded && this.sttEngine) {
+  private resolveSenseVoiceLanguage(langCode?: string): string {
+    if (!langCode) return 'ja'; // Default para Yomi
+    const key = langCode.toLowerCase().trim();
+    return SENSEVOICE_LANG_MAP[key] || SENSEVOICE_LANG_MAP[key.split('-')[0]] || 'ja';
+  }
+
+  /**
+   * Carga el modelo acústico SenseVoice en memoria para el idioma especificado.
+   * Si el engine ya está cargado con un idioma diferente, lo destruye y recrea.
+   */
+  async loadModel(languageCode?: string): Promise<boolean> {
+    const targetLang = this.resolveSenseVoiceLanguage(languageCode);
+
+    // Si ya está cargado con el mismo idioma, no recrear
+    if (this.isModelLoaded && this.sttEngine && this.engineLanguage === targetLang) {
       return true;
+    }
+
+    // Si está cargado con otro idioma, destruir el engine anterior
+    if (this.isModelLoaded && this.sttEngine && this.engineLanguage !== targetLang) {
+      console.log(`[SherpaVoiceService] Language changed: ${this.engineLanguage} → ${targetLang}, recreating engine...`);
+      try {
+        await this.sttEngine.destroy();
+      } catch {}
+      this.sttEngine = null;
+      this.isModelLoaded = false;
     }
 
     const modules = getSherpaModules();
@@ -169,7 +209,7 @@ class SherpaVoiceService {
 
     const loadPromise = (async () => {
       try {
-        console.log('[SherpaVoiceService] Initializing SenseVoice STT Engine...');
+        console.log(`[SherpaVoiceService] Initializing SenseVoice STT Engine (lang: ${targetLang})...`);
         const hasLocal = await this.isModelDownloaded();
 
         let modelPathConfig: any;
@@ -195,6 +235,7 @@ class SherpaVoiceService {
           numThreads: 2,
           modelOptions: {
             senseVoice: {
+              language: targetLang,
               useItn: true,
             },
           },
@@ -202,12 +243,14 @@ class SherpaVoiceService {
 
         this.sttEngine = engine;
         this.isModelLoaded = true;
-        console.log('[SherpaVoiceService] SenseVoice Engine initialized successfully!');
+        this.engineLanguage = targetLang;
+        console.log(`[SherpaVoiceService] SenseVoice Engine initialized (lang: ${targetLang})!`);
         return true;
       } catch (err) {
         console.warn('[SherpaVoiceService] Could not initialize SenseVoice model:', err);
         this.isModelLoaded = false;
         this.sttEngine = null;
+        this.engineLanguage = '';
         return false;
       }
     })();
@@ -235,26 +278,46 @@ class SherpaVoiceService {
   }
 
   /**
-   * Limpia etiquetas de eventos y emociones de SenseVoice (ej. <|NEUTRAL|>, <|ja|>, etc.).
+   * Limpia etiquetas de eventos y emociones de SenseVoice (ej. <|NEUTRAL|>, <|ja|>, etc.),
+   * y remueve puntuación espuria. Retorna cadena vacía si no hubo habla real.
    */
-  cleanSenseVoiceTranscript(rawText: string): string {
+  cleanSenseVoiceTranscript(rawText: string, langCode?: string): string {
     if (!rawText) return '';
-    return rawText
-      .replace(/<\|.*?\|>/g, '')
-      .replace(/\s+/g, '')
-      .trim();
+    // Descartar de inmediato eventos nospeech de SenseVoice
+    if (rawText.includes('<|nospeech|>')) return '';
+
+    // Remover tokens especiales de SenseVoice (<|...|>)
+    let cleaned = rawText.replace(/<\|.*?\|>/g, '').trim();
+
+    // Remover signos de puntuación espurios que SenseVoice agrega ante silencios o pausas
+    cleaned = cleaned.replace(/[。、！？!?.,:;…〜～・]/g, '').trim();
+
+    // Espaciado según idioma: japonés/chino no usan espacios
+    const isCjk = !langCode || langCode.startsWith('ja') || langCode.startsWith('zh');
+    if (isCjk) {
+      cleaned = cleaned.replace(/\s+/g, '');
+    } else {
+      cleaned = cleaned.replace(/\s+/g, ' ');
+    }
+
+    return cleaned;
   }
 
   /**
    * Inicia la captura de audio en vivo y el reconocimiento con SenseVoice.
+   * Utiliza VAD adaptativo por energía y buffer circular de onset para transcribir
+   * únicamente cuando el usuario realmente habla, evitando alucinaciones sobre silencios.
    */
   async start(
     callbacks: SherpaCallbacks,
     options?: SherpaStartOptions
   ): Promise<boolean> {
     if (!this.checkNativeModule()) return false;
-    if (!this.isReady()) {
-      const loaded = await this.loadModel();
+
+    // Cargar/recrear engine con el idioma correcto
+    const requestedLang = options?.language;
+    if (!this.isReady() || (requestedLang && this.engineLanguage !== this.resolveSenseVoiceLanguage(requestedLang))) {
+      const loaded = await this.loadModel(requestedLang);
       if (!loaded || !this.sttEngine) return false;
     }
 
@@ -266,15 +329,20 @@ class SherpaVoiceService {
     this.generation++;
     const currentGen = this.generation;
     this.activeCallbacks = callbacks;
-    this.audioBuffer = [];
     this.lastTranscribedText = '';
     this.isTranscribing = false;
-    this.transcribedSampleCount = 0;
 
-    let speechDetected = false;
-    let silenceFrames = 0;
+    // Constantes de audio (16kHz mono)
+    const PRE_ROLL_SAMPLES = 16000 * 0.25; // 250ms de audio previo para capturar ataques consonánticos
+    const MIN_UTTERANCE_SAMPLES = 16000 * 0.3; // Mínimo 300ms de audio para considerar elocución
+    const MAX_UTTERANCE_SAMPLES = 16000 * 4.0; // Máximo 4s para una palabra/frase de tarjeta
+
+    let preRollBuffer: number[] = [];
+    let utteranceSamples: number[] = [];
+    let isSpeaking = false;
     let voiceFrames = 0;
-    let framesSinceLastTranscribe = 0;
+    let silenceFrames = 0;
+    let noiseFloor = 0.015;
 
     try {
       this.liveStream = modules.audio.createPcmLiveStream({
@@ -291,68 +359,95 @@ class SherpaVoiceService {
       const cleanupData = this.liveStream.onData(async (samples: Float32Array, sampleRate: number) => {
         if (this.generation !== currentGen || !this.isListeningActive) return;
 
-        // Convertir y acumular muestras
         const chunkLength = samples.length;
+        if (chunkLength === 0) return;
+
+        // 1. Calcular energía RMS del chunk
         let sumSquares = 0;
         for (let i = 0; i < chunkLength; i++) {
           const val = samples[i];
-          this.audioBuffer.push(val);
           sumSquares += val * val;
         }
+        const rms = Math.sqrt(sumSquares / chunkLength);
 
-        // Detección de energía acústica (VAD ligero)
-        const rms = Math.sqrt(sumSquares / (chunkLength || 1));
-        const isVoiceEnergy = rms > 0.04;
+        // 2. Calibración dinámica del piso de ruido cuando no hay habla activa
+        if (!isSpeaking) {
+          noiseFloor = noiseFloor * 0.92 + rms * 0.08;
+        }
+
+        // Umbral adaptativo: al menos 0.045 absoluto y 2.5x el ruido ambiental
+        const voiceThreshold = Math.max(0.045, noiseFloor * 2.5);
+        const isVoiceEnergy = rms > voiceThreshold;
 
         if (isVoiceEnergy) {
           voiceFrames++;
           silenceFrames = 0;
-          if (voiceFrames >= 3) {
-            // ~300ms de voz real antes de considerar habla
-            speechDetected = true;
-          }
-        } else if (speechDetected) {
-          silenceFrames++;
-          // ~800ms de silencio = fin de elocución, resetear estado
-          if (silenceFrames >= 8) {
-            speechDetected = false;
-            voiceFrames = 0;
+
+          if (!isSpeaking && voiceFrames >= 2) {
+            // Inicio de elocución confirmado (~200ms de voz por encima del umbral)
+            isSpeaking = true;
+            // Arrancar elocución con el pre-roll preservado + este frame
+            utteranceSamples = [...preRollBuffer];
+            for (let i = 0; i < chunkLength; i++) {
+              utteranceSamples.push(samples[i]);
+            }
+          } else if (isSpeaking) {
+            for (let i = 0; i < chunkLength; i++) {
+              utteranceSamples.push(samples[i]);
+            }
           }
         } else {
           voiceFrames = 0;
+
+          if (isSpeaking) {
+            silenceFrames++;
+            for (let i = 0; i < chunkLength; i++) {
+              utteranceSamples.push(samples[i]);
+            }
+          } else {
+            // Mantener buffer circular de pre-roll
+            for (let i = 0; i < chunkLength; i++) {
+              preRollBuffer.push(samples[i]);
+            }
+            if (preRollBuffer.length > PRE_ROLL_SAMPLES) {
+              preRollBuffer = preRollBuffer.slice(preRollBuffer.length - PRE_ROLL_SAMPLES);
+            }
+          }
         }
 
-        framesSinceLastTranscribe++;
+        // 3. Fin de elocución: habla confirmada seguida de ~400-500ms de silencio o límite de tiempo
+        const isEndOfUtterance = isSpeaking && !this.isTranscribing && silenceFrames >= 4;
+        const isTooLong = isSpeaking && !this.isTranscribing && utteranceSamples.length >= MAX_UTTERANCE_SAMPLES;
 
-        // Si se detectó voz y luego hubo silencio (~400ms = ~4-5 chunks a 16kHz)
-        // O si ya se acumularon más de 1.5s de habla sin transcribir:
-        const shouldTranscribe =
-          speechDetected &&
-          !this.isTranscribing &&
-          (silenceFrames >= 4 || framesSinceLastTranscribe >= 12);
-
-        if (shouldTranscribe && this.audioBuffer.length >= 16000 * 0.4) {
+        if ((isEndOfUtterance || isTooLong) && utteranceSamples.length >= MIN_UTTERANCE_SAMPLES) {
           this.isTranscribing = true;
-          framesSinceLastTranscribe = 0;
+          isSpeaking = false;
+          voiceFrames = 0;
+          const currentSilence = silenceFrames;
+          silenceFrames = 0;
+
+          // Recortar silencio posterior excesivo antes de enviar al modelo acústico
+          const trailingSilenceSamples = Math.min(currentSilence * chunkLength, 16000 * 0.35);
+          const audioToTranscribe = utteranceSamples.slice(
+            0,
+            Math.max(MIN_UTTERANCE_SAMPLES, utteranceSamples.length - trailingSilenceSamples)
+          );
+
+          utteranceSamples = [];
+          preRollBuffer = [];
+
           try {
-            // Transcribir solo las muestras pendientes desde la última transcripción
-            const pendingSamples = this.audioBuffer.slice(this.transcribedSampleCount);
-            if (pendingSamples.length < 16000 * 0.3) {
-              this.isTranscribing = false;
-              return;
-            }
-            const result = await this.sttEngine.transcribeSamples([...pendingSamples], 16000);
-            this.transcribedSampleCount = this.audioBuffer.length;
+            const result = await this.sttEngine.transcribeSamples(audioToTranscribe, 16000);
             if (this.generation !== currentGen) return;
 
-            const text = this.cleanSenseVoiceTranscript(result?.text || '');
+            const text = this.cleanSenseVoiceTranscript(result?.text || '', requestedLang);
             if (text && text !== this.lastTranscribedText) {
               this.lastTranscribedText = text;
-              console.log('[SherpaVoiceService] Partial transcription:', text);
-              callbacks.onResult(text, false, [text]);
+              console.log('[SherpaVoiceService] Utterance transcription:', text);
+              callbacks.onResult(text, true, [text]);
             }
           } catch (e) {
-            console.warn('[SherpaVoiceService] Transcribe chunk error:', e);
+            console.warn('[SherpaVoiceService] Transcribe utterance error:', e);
           } finally {
             this.isTranscribing = false;
           }
@@ -374,14 +469,19 @@ class SherpaVoiceService {
   }
 
   /**
-   * Detiene la captura y realiza una transcripción final de todo el buffer acumulado.
+   * Detiene la captura de audio en vivo de forma limpia.
+   * NO transcribe silencios residuales para evitar alucinaciones.
    */
   async stop(): Promise<void> {
     if (!this.isListeningActive) return;
     this.isListeningActive = false;
 
     // Limpiar listeners antes de detener el stream
-    this.cleanupFns.forEach(fn => { try { fn(); } catch {} });
+    this.cleanupFns.forEach((fn) => {
+      try {
+        fn();
+      } catch {}
+    });
     this.cleanupFns = [];
 
     if (this.liveStream) {
@@ -392,41 +492,25 @@ class SherpaVoiceService {
     }
 
     const callbacks = this.activeCallbacks;
-    const currentGen = this.generation;
-
-    if (this.sttEngine && this.audioBuffer.length >= 16000 * 0.3) {
-      try {
-        const bufferCopy = [...this.audioBuffer];
-        const result = await this.sttEngine.transcribeSamples(bufferCopy, 16000);
-        if (this.generation === currentGen && callbacks) {
-          const text = this.cleanSenseVoiceTranscript(result?.text || '');
-          if (text) {
-            console.log('[SherpaVoiceService] Final transcription:', text);
-            callbacks.onResult(text, true, [text]);
-          }
-        }
-      } catch (e) {
-        console.warn('[SherpaVoiceService] Final transcribe error:', e);
-      }
-    }
-
-    this.audioBuffer = [];
+    this.activeCallbacks = null;
+    this.isTranscribing = false;
     callbacks?.onEnd?.();
   }
 
   /**
-   * Aborta de inmediato cualquier sesión de audio y limpia buffers.
+   * Aborta de inmediato cualquier sesión de audio y limpia listeners.
    */
   async abort(): Promise<void> {
     this.generation++;
     this.isListeningActive = false;
     this.activeCallbacks = null;
     this.isTranscribing = false;
-    this.audioBuffer = [];
-    this.transcribedSampleCount = 0;
 
-    // Limpiar listeners de onData/onError antes de detener el stream
-    this.cleanupFns.forEach(fn => { try { fn(); } catch {} });
+    this.cleanupFns.forEach((fn) => {
+      try {
+        fn();
+      } catch {}
+    });
     this.cleanupFns = [];
 
     if (this.liveStream) {
@@ -436,6 +520,7 @@ class SherpaVoiceService {
       this.liveStream = null;
     }
   }
+
 }
 
 export const sherpaVoiceService = new SherpaVoiceService();
