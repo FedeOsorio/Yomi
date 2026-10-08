@@ -50,8 +50,8 @@
     "react-native-reanimated": "4.5.1",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
+    "react-native-sherpa-onnx": "^0.4.4",
     "react-native-svg": "15.15.4",
-    "react-native-vosk": "^2.1.7",
     "react-native-web": "~0.21.0",
     "react-native-worklets": "0.10.1",
     "sp-react-native-in-app-updates": "^2.0.0",
@@ -74,7 +74,12 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "build:dictionary": "tsx scripts/build-dictionary.ts",
-    "optimize:images": "node scripts/convertImagesToWebp.js"
+    "optimize:images": "node scripts/convertImagesToWebp.js",
+    "download:models": "node scripts/download-models.js",
+    "build:android:debug": "cd android && gradlew.bat assembleDebug"
+  },
+  "overrides": {
+    "react-native-device-info": "$react-native-device-info"
   },
   "private": true
 }

@@ -2,7 +2,7 @@ import {
   ExpoSpeechRecognitionModule,
   type ExpoSpeechRecognitionOptions,
 } from 'expo-speech-recognition';
-import { voskVoiceService } from './vosk-service';
+import { sherpaVoiceService } from './sherpa-service';
 
 /**
  * Mapeo de códigos de idioma de Yomi a tags de idioma BCP-47 para reconocimiento de voz.
@@ -12,10 +12,10 @@ const LANGUAGE_RECOGNITION_MAP: Record<string, string> = {
   'zh': 'zh-CN',
   'ja-JP': 'ja-JP',
   'ja': 'ja-JP',
-  'en': 'en-US',
   'en-US': 'en-US',
-  'es': 'es-ES',
+  'en': 'en-US',
   'es-ES': 'es-ES',
+  'es': 'es-ES',
 };
 
 export interface SpeechRecognitionCallbacks {
@@ -34,12 +34,12 @@ export interface SpeechRecognitionOptions {
   continuous?: boolean;
   /** Modelo de lenguaje en Android: 'free_form' (vocabulario general/fonético) o 'web_search' */
   androidLanguageModel?: 'free_form' | 'web_search';
-  /** Prompt inicial para Whisper (la lectura o kanji esperado) */
+  /** Prompt inicial para el modelo (la lectura o kanji esperado) */
   initialPrompt?: string;
-  /** Gramática cerrada para reconocimiento con Vosk */
+  /** Gramática cerrada (obsoleta en modelos neuronales) */
   voskGrammar?: string[];
-  /** Motor preferido: 'auto' | 'vosk' | 'native' */
-  preferredEngine?: 'auto' | 'vosk' | 'native';
+  /** Motor preferido: 'auto' | 'sherpa' | 'native' */
+  preferredEngine?: 'auto' | 'sherpa' | 'native';
 }
 
 class SpeechRecognitionService {
@@ -47,20 +47,17 @@ class SpeechRecognitionService {
   private isListeningActive = false;
   private isStarting = false;
   private hasCheckedPermissions = false;
-  private activeEngine: 'vosk' | 'native' | null = null;
+  private activeEngine: 'sherpa' | 'native' | null = null;
 
   /**
    * Contador de generación: se incrementa en cada start() para invalidar
    * automáticamente callbacks de sesiones anteriores que lleguen tarde.
-   * Los callbacks verifican su generación capturada contra la generación actual
-   * antes de ejecutarse; si no coinciden, se descartan silenciosamente.
    */
   private generation = 0;
 
   /**
    * Cola de operaciones: serializa todas las llamadas a start() y abort()
-   * para que nunca se ejecuten en paralelo. Elimina race conditions entre
-   * stop/start entre tarjetas que corrompían el motor nativo.
+   * para que nunca se ejecuten en paralelo.
    */
   private operationQueue: Promise<void> = Promise.resolve();
 
@@ -102,26 +99,22 @@ class SpeechRecognitionService {
 
   /**
    * Invalida todos los callbacks de sesiones anteriores incrementando la generación.
-   * Llamar esto antes de iniciar una nueva sesión para una nueva tarjeta.
    */
   invalidate(): void {
     this.generation++;
   }
 
   /**
-   * Encola una operación para ejecución secuencial. Garantiza que start() y abort()
-   * nunca se ejecuten en paralelo, eliminando corrupción del motor nativo.
+   * Encola una operación para ejecución secuencial.
    */
   private enqueue<T>(fn: () => Promise<T>): Promise<T> {
     const result = this.operationQueue.then(fn, fn);
-    // Actualizar la cola para que la próxima operación espere a esta
     this.operationQueue = result.then(() => { }, () => { });
     return result;
   }
 
   /**
    * Inicia el reconocimiento de voz en el idioma especificado.
-   * Serializado por la promise queue: espera a que cualquier abort() previo termine.
    */
   async start(
     languageCode: string,
@@ -163,37 +156,33 @@ class SpeechRecognitionService {
       }
     }
 
-    // Limpiar cualquier sesión previa (ya estamos en la queue, no hay race condition)
+    // Limpiar cualquier sesión previa
     await this._abortInternal();
 
-    // Capturar la generación actual para guardar con los callbacks
     const gen = this.generation;
 
-    // 1. Intentar reconocimiento con Vosk Offline solo si fue solicitado explícitamente como 'vosk'
+    // 1. Intentar reconocimiento con Sherpa-ONNX SenseVoice Offline
     const isJapanese = languageCode.toLowerCase().startsWith('ja');
-    const wantsVosk = options?.preferredEngine === 'vosk';
+    const isChinese = languageCode.toLowerCase().startsWith('zh');
+    const isEnglish = languageCode.toLowerCase().startsWith('en');
+    const isSupportedBySherpa = isJapanese || isChinese || isEnglish;
+    const wantsNative = options?.preferredEngine === 'native';
 
-    if (wantsVosk && voskVoiceService.checkNativeModule()) {
-      if (!voskVoiceService.isReady()) {
-        console.log('[SpeechRecognition] Vosk model not loaded yet, loading model-ja-jp...');
-        await voskVoiceService.loadModel('model-ja-jp');
+    if (!wantsNative && isSupportedBySherpa && sherpaVoiceService.checkNativeModule()) {
+      if (!sherpaVoiceService.isReady()) {
+        console.log('[SpeechRecognition] Sherpa model not loaded yet, initializing SenseVoice...');
+        await sherpaVoiceService.loadModel();
       }
 
-      if (voskVoiceService.isReady()) {
-        const hasGrammar = Boolean(options?.voskGrammar && options.voskGrammar.length > 0);
-        console.log(`[SpeechRecognition] Starting Vosk recognition ${hasGrammar ? 'with grammar' : 'in open-vocabulary mode'}`);
-        const started = await voskVoiceService.start(
+      if (sherpaVoiceService.isReady()) {
+        console.log(`[SpeechRecognition] Starting Sherpa SenseVoice recognition for lang: ${languageCode}`);
+        const started = await sherpaVoiceService.start(
           {
-            onResult: (hypothesis, isFinal) => {
+            onResult: (hypothesis, isFinal, alternatives) => {
               if (this.generation !== gen) return;
-              // Limpiar de raíz cualquier token [unk] (incluso si viene repetido como "[unk] [unk]")
-              const cleaned = (hypothesis || '').replace(/\[unk\]/gi, '').trim();
-              if (!cleaned) {
-                // Silencio acústico, respiración o sonido no reconocido por la gramática (OOV):
-                // IGNORAR POR COMPLETO. No ensuciar pantalla y no gatillar evaluación de fallo prematura.
-                return;
-              }
-              callbacks.onResult(cleaned, isFinal, [cleaned]);
+              const cleaned = (hypothesis || '').trim();
+              if (!cleaned) return;
+              callbacks.onResult(cleaned, isFinal, alternatives || [cleaned]);
             },
             onError: (errorMessage) => {
               if (this.generation !== gen) return;
@@ -217,18 +206,19 @@ class SpeechRecognitionService {
             },
           },
           {
-            grammar: options?.voskGrammar && options.voskGrammar.length > 0 ? options.voskGrammar : undefined,
+            language: languageCode,
+            initialPrompt: options?.initialPrompt,
           }
         );
 
         if (started) {
-          this.activeEngine = 'vosk';
+          this.activeEngine = 'sherpa';
           this.isListeningActive = true;
           return true;
         }
-        console.warn('[SpeechRecognition] Vosk failed to start, falling back to native engine');
+        console.warn('[SpeechRecognition] Sherpa failed to start, falling back to native engine');
       } else {
-        console.warn('[SpeechRecognition] Vosk model not ready, falling back to native engine');
+        console.warn('[SpeechRecognition] Sherpa model not ready, falling back to native engine');
       }
     }
 
@@ -239,8 +229,6 @@ class SpeechRecognitionService {
     try {
       console.log('[SpeechRecognition] Starting native recognition for lang:', targetLang);
 
-      // Suscribirse a eventos con guard de generación: si la generación cambió
-      // desde que se crearon estos listeners, los callbacks se ignoran silenciosamente
       const resultSub = ExpoSpeechRecognitionModule.addListener('result', (event) => {
         if (this.generation !== gen) return;
         const allTranscripts = (event.results || [])
@@ -255,9 +243,7 @@ class SpeechRecognitionService {
 
       const errorSub = ExpoSpeechRecognitionModule.addListener('error', (event) => {
         if (this.generation !== gen) return;
-        // Ignorar eventos 'aborted' provocados deliberadamente al cambiar de tarjeta
         if (event.error === 'aborted') return;
-        // Los eventos 'no-speech' y 'speech-timeout' son silencios normales mientras el usuario piensa durante los 15s
         if (event.error === 'no-speech' || event.error === 'speech-timeout') {
           console.log('[SpeechRecognition] Silence detected while user is thinking, continuing listening...');
           callbacks.onEnd?.();
@@ -284,11 +270,6 @@ class SpeechRecognitionService {
 
       this.activeSubscriptions = [resultSub, errorSub, startSub, endSub];
 
-      // Configuración optimizada para reconocimiento acústico de pronunciación:
-      // - continuous: true (reconocimiento continuo sin cortes por silencio mientras el usuario piensa)
-      // - EXTRA_LANGUAGE_MODEL: 'free_form' (modelo fonético general, no búsquedas web de Google)
-      // - interimResults: true (resultados parciales en tiempo real mientras habla)
-      // - 15000ms de tolerancia a silencio para coincidir con la ventana de 15 segundos de la tarjeta
       const recognitionOptions: ExpoSpeechRecognitionOptions = {
         lang: targetLang,
         interimResults: true,
@@ -300,39 +281,28 @@ class SpeechRecognitionService {
           EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS: 5000,
           EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS: 15000,
           EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS: 15000,
+          EXTRA_PREFER_OFFLINE: false,
         },
       };
 
       if (options?.contextualStrings && options.contextualStrings.length > 0) {
-        recognitionOptions.contextualStrings = Array.from(new Set(options.contextualStrings.filter(Boolean)));
+        recognitionOptions.contextualStrings = options.contextualStrings.slice(0, 100);
       }
 
-      // Iniciar el módulo nativo de reconocimiento
-      try {
-        ExpoSpeechRecognitionModule.start(recognitionOptions);
-        this.isListeningActive = true;
-        return true;
-      } catch (startErr) {
-        console.warn('[SpeechRecognition] Error on first start attempt, retrying:', startErr);
-        try {
-          ExpoSpeechRecognitionModule.abort();
-        } catch { }
-        ExpoSpeechRecognitionModule.start(recognitionOptions);
-        this.isListeningActive = true;
-        return true;
-      }
-    } catch (err: unknown) {
+      await ExpoSpeechRecognitionModule.start(recognitionOptions);
+      this.isListeningActive = true;
+      return true;
+    } catch (e: any) {
+      console.warn('[SpeechRecognition] Could not start native recognition:', e);
       this.isListeningActive = false;
-      const message = err instanceof Error ? err.message : 'No se pudo iniciar el micrófono';
-      console.warn('[SpeechRecognition] Error iniciando SpeechRecognition:', message);
-      callbacks.onError?.(message);
+      this.cleanupSubscriptions();
+      callbacks.onError?.(e?.message || 'Error al iniciar reconocimiento');
       return false;
     }
   }
 
   /**
-   * Cancela inmediatamente la sesión nativa de reconocimiento de voz y libera el micrófono.
-   * Serializado por la promise queue.
+   * Aborta el reconocimiento de voz inmediatamente.
    */
   async abort(): Promise<void> {
     return this.enqueue(() => this._abortInternal());
@@ -342,10 +312,11 @@ class SpeechRecognitionService {
     this.isListeningActive = false;
     this.cleanupSubscriptions();
 
-    // Siempre garantizar que el motor de Vosk esté detenido para liberar AudioRecord
-    try {
-      await voskVoiceService.stop();
-    } catch { }
+    if (this.activeEngine === 'sherpa') {
+      try {
+        await sherpaVoiceService.abort();
+      } catch { }
+    }
 
     if (this.activeEngine === 'native') {
       try {
@@ -405,9 +376,9 @@ class SpeechRecognitionService {
   }
 
   /**
-   * Retorna el motor activo ('vosk' | 'native' | null).
+   * Retorna el motor activo ('sherpa' | 'native' | null).
    */
-  getActiveEngine(): 'vosk' | 'native' | null {
+  getActiveEngine(): 'sherpa' | 'native' | null {
     return this.activeEngine;
   }
 

@@ -40,7 +40,7 @@ import {
   removeCardFromReview,
   rescheduleCardNextDay
 } from '../../../lib/srs-engine';
-import { voskVoiceService } from '../../../lib/vosk-service';
+import { sherpaVoiceService } from '../../../lib/sherpa-service';
 import { getCompoundWordsForChar } from '../../../lib/word-service';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { ConjugationPracticeModal } from '../../components/ConjugationPracticeModal';
@@ -172,7 +172,7 @@ export default function ReviewScreen() {
 
   // Estado de preparación del motor de voz offline
   const [isVoiceEngineReady, setIsVoiceEngineReady] = useState<boolean>(() => {
-    return voskVoiceService.isReady();
+    return sherpaVoiceService.isReady();
   });
   const [isPreparingVoice, setIsPreparingVoice] = useState<boolean>(false);
 
@@ -286,15 +286,15 @@ export default function ReviewScreen() {
     return () => subscription.remove();
   }, [selectedDeckId]);
 
-  // Precargar modelo acústico de Vosk en segundo plano para el repaso offline
+  // Precargar modelo acústico de Sherpa SenseVoice en segundo plano para el repaso offline
   useEffect(() => {
     let mounted = true;
-    voskVoiceService.loadModel('model-ja-jp').then((ready) => {
+    sherpaVoiceService.loadModel().then((ready) => {
       if (mounted && ready) {
         setIsVoiceEngineReady(true);
       }
     }).catch((e) => {
-      console.warn('[ReviewScreen] Could not preload Vosk model:', e);
+      console.warn('[ReviewScreen] Could not preload Sherpa model:', e);
     });
     return () => {
       mounted = false;
@@ -420,11 +420,10 @@ export default function ReviewScreen() {
             return;
           }
         }
-        if (!languageCode || languageCode.startsWith('ja')) {
-          const ready = await voskVoiceService.loadModel('model-ja-jp');
-          setIsVoiceEngineReady(ready);
+        if (!languageCode || languageCode.startsWith('ja') || languageCode.startsWith('zh')) {
+          const ready = await sherpaVoiceService.loadModel();
+          setIsVoiceEngineReady(ready || !sherpaVoiceService.checkNativeModule());
         } else {
-          // Los demás idiomas usan el motor nativo: no dependen del modelo offline de Vosk.
           setIsVoiceEngineReady(true);
         }
       } catch (err) {
@@ -640,10 +639,7 @@ export default function ReviewScreen() {
     };
 
     const contextualStrings = getCardContextualStrings(card, lang);
-    const isJapanese = lang.toLowerCase().startsWith('ja');
-    const isChinese = lang.toLowerCase().startsWith('zh');
-    const voskGrammar = isJapanese ? voskVoiceService.buildGrammarForCard(card) : undefined;
-    console.log('[ReviewVoice] Starting speech with voskGrammar size:', voskGrammar?.length, 'for card:', card.displayText);
+    console.log('[ReviewVoice] Starting speech recognition for card:', card.displayText);
 
     const started = await speechService.start(
       lang,
@@ -730,9 +726,8 @@ export default function ReviewScreen() {
         contextualStrings,
         maxAlternatives: 10,
         initialPrompt: card.displayReading || card.displayText || contextualStrings[0],
-        preferredEngine: 'native',
+        preferredEngine: 'auto',
         continuous: true,
-        voskGrammar,
       }
     );
 
@@ -1512,11 +1507,10 @@ export default function ReviewScreen() {
   const isIdeographic = lang.startsWith('zh') || lang.startsWith('ja');
   const isJapanese = lang.startsWith('ja');
 
-  // El motor nativo cubre cualquier idioma: solo el japonés necesita el modelo offline de Vosk.
-  // Si Vosk no está presente en el binario, el servicio recurre al motor nativo y la voz sigue disponible.
+  // Si Sherpa no está presente en el binario o el modelo no está cargado, el servicio recurre al motor nativo.
   const isVoiceEngineReadyForCard = !isJapanese
     ? true
-    : isVoiceEngineReady || !voskVoiceService.checkNativeModule();
+    : isVoiceEngineReady || !sherpaVoiceService.checkNativeModule();
 
   return (
     <KeyboardAvoidingView

@@ -12,7 +12,7 @@ import {
   healCorruptedSrsIntervals,
 } from '../../lib/srs-engine';
 import { CompoundWord } from '../../lib/word-service';
-import { voskVoiceService } from '../../lib/vosk-service';
+import { sherpaVoiceService } from '../../lib/sherpa-service';
 import { initPhoneticDictionary } from '../../lib/phonetic-dictionary';
 
 export interface CardEvaluation {
@@ -134,8 +134,8 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
   fetchDecksData: async () => {
     set({ loading: true });
     try {
-      // Disparar precarga del modelo acústico y del diccionario fonético en segundo plano
-      voskVoiceService.loadModel('model-ja-jp').catch(() => {});
+      // Disparar precarga del modelo acústico de Sherpa y del diccionario fonético en segundo plano
+      sherpaVoiceService.loadModel().catch(() => {});
       initPhoneticDictionary().catch(() => {});
       await healCorruptedSrsIntervals().catch(() => {});
 

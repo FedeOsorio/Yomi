@@ -25,7 +25,7 @@ import {
   toNormalizedHiragana,
 } from '../../lib/japanese-utils';
 import { speechService } from '../../lib/speech-recognition-service';
-import { voskVoiceService } from '../../lib/vosk-service';
+import { sherpaVoiceService } from '../../lib/sherpa-service';
 import {
   ConjugableWord,
   getAvailableDeckWordsForConjugation,
@@ -331,7 +331,7 @@ export function ConjugationPracticeModal({
   useEffect(() => {
     if (visible && deckId) {
       preloadAudioService('ja-JP').catch(() => {});
-      voskVoiceService.loadModel('model-ja-jp').catch(() => {});
+      sherpaVoiceService.loadModel().catch(() => {});
       loadWords();
     } else {
       resetSession();
@@ -702,7 +702,6 @@ export function ConjugationPracticeModal({
     } catch { }
 
     const activeItem = queueRef.current[currentIndexRef.current];
-    let voskGrammar: string[] | undefined;
     let initialPrompt: string | undefined;
     let contextualStrings: string[] | undefined;
     let expectedKanji = '';
@@ -713,7 +712,6 @@ export function ConjugationPracticeModal({
       const expected = conjugateJapanese(word.kanji, word.reading, word.category, form);
       expectedKanji = expected.kanji;
       expectedReading = expected.reading;
-      voskGrammar = voskVoiceService.buildGrammarForConjugation(word.kanji, word.reading, word.category, form);
       initialPrompt = expected.reading || expected.kanji;
       contextualStrings = [expected.kanji, expected.reading, word.kanji, word.reading].filter(Boolean);
     }
@@ -767,10 +765,9 @@ export function ConjugationPracticeModal({
       {
         contextualStrings,
         initialPrompt,
-        preferredEngine: 'native',
+        preferredEngine: 'auto',
         continuous: true,
         maxAlternatives: 5,
-        voskGrammar,
       }
     );
 
