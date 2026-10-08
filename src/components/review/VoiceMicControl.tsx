@@ -11,7 +11,8 @@ const CIRCUMFERENCE = 2 * Math.PI * CIRCLE_RADIUS;
 export interface VoiceMicControlProps {
   isListening: boolean;
   speechStatus: 'idle' | 'starting' | 'listening' | 'evaluating' | 'correct' | 'incorrect';
-  isEngineReady?: boolean;
+  /** Si hay texto, el motor se está preparando (descarga/carga del modelo) y el botón queda bloqueado. */
+  busyLabel?: string | null;
   voiceProgressAnim: Animated.Value;
   micPulseAnim: Animated.Value;
   colors: {
@@ -27,14 +28,14 @@ export interface VoiceMicControlProps {
 export const VoiceMicControl = memo(function VoiceMicControl({
   isListening,
   speechStatus,
-  isEngineReady = true,
+  busyLabel = null,
   voiceProgressAnim,
   micPulseAnim,
   colors,
   onPress,
 }: VoiceMicControlProps) {
   const isStarting = speechStatus === 'starting';
-  const isButtonDisabled = !isEngineReady || isStarting;
+  const isButtonDisabled = isStarting || Boolean(busyLabel);
 
   return (
     <>
@@ -90,7 +91,7 @@ export const VoiceMicControl = memo(function VoiceMicControl({
             disabled={isButtonDisabled}
             onPress={onPress}
           >
-            {isStarting || !isEngineReady ? (
+            {isButtonDisabled ? (
               <ActivityIndicator size="small" color={colors.primary} />
             ) : (
               <Ionicons
@@ -115,7 +116,7 @@ export const VoiceMicControl = memo(function VoiceMicControl({
             Iniciando micrófono...
           </Text>
         </View>
-      ) : !isEngineReady ? (
+      ) : busyLabel ? (
         <View
           style={[
             styles.startPromptPill,
@@ -124,7 +125,7 @@ export const VoiceMicControl = memo(function VoiceMicControl({
         >
           <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: 8 }} />
           <Text style={[styles.startPromptPillText, { color: colors.textMuted }]}>
-            Preparando motor de voz...
+            {busyLabel}
           </Text>
         </View>
       ) : speechStatus === 'idle' ? (

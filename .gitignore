@@ -58,6 +58,3 @@ example
 .gemini/
 .agents/
 
-# AI Models (large binaries >100MB exceed GitHub limit)
-assets/models/
-android/app/src/main/assets/models/

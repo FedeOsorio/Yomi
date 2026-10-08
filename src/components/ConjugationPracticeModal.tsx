@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   Easing,
   FlatList,
@@ -24,8 +25,8 @@ import {
   romajiToHiragana,
   toNormalizedHiragana,
 } from '../../lib/japanese-utils';
+import { MODEL_NOT_DOWNLOADED } from '../../lib/sherpa-service';
 import { speechService } from '../../lib/speech-recognition-service';
-import { sherpaVoiceService } from '../../lib/sherpa-service';
 import {
   ConjugableWord,
   getAvailableDeckWordsForConjugation,
@@ -331,7 +332,6 @@ export function ConjugationPracticeModal({
   useEffect(() => {
     if (visible && deckId) {
       preloadAudioService('ja-JP').catch(() => {});
-      sherpaVoiceService.loadModel().catch(() => {});
       loadWords();
     } else {
       resetSession();
@@ -702,7 +702,6 @@ export function ConjugationPracticeModal({
     } catch { }
 
     const activeItem = queueRef.current[currentIndexRef.current];
-    let initialPrompt: string | undefined;
     let contextualStrings: string[] | undefined;
     let expectedKanji = '';
     let expectedReading = '';
@@ -712,7 +711,6 @@ export function ConjugationPracticeModal({
       const expected = conjugateJapanese(word.kanji, word.reading, word.category, form);
       expectedKanji = expected.kanji;
       expectedReading = expected.reading;
-      initialPrompt = expected.reading || expected.kanji;
       contextualStrings = [expected.kanji, expected.reading, word.kanji, word.reading].filter(Boolean);
     }
 
@@ -720,7 +718,7 @@ export function ConjugationPracticeModal({
       'ja-JP',
       {
         onStart: () => setIsListening(true),
-        onResult: (transcript, isFinal, alternatives) => {
+        onResult: (transcript, isFinal) => {
           if (hasEvaluatedRef.current) return;
           if (!transcript || transcript === '[unk]') return;
           const hira = romajiToHiragana(transcript);
@@ -734,10 +732,18 @@ export function ConjugationPracticeModal({
           if ((isImmediateMatch || isFinal) && transcript.trim()) {
             speechService.stop();
             setIsListening(false);
-            evaluateAnswer(transcript, alternatives);
+            evaluateAnswer(transcript);
           }
         },
-        onError: () => {
+        onError: (err) => {
+          if (err === MODEL_NOT_DOWNLOADED) {
+            // Sin modelo offline no tiene sentido reintentar en bucle
+            autoVoiceModeRef.current = false;
+            setAutoVoiceMode(false);
+            setIsListening(false);
+            Alert.alert('Modelo de voz', 'Primero descarga el modelo de voz: inicia un repaso por voz desde la pestaña Repaso.');
+            return;
+          }
           // En modo automático, si el servicio da timeout o error antes de responder, reconectar automáticamente
           if (autoVoiceModeRef.current && !hasEvaluatedRef.current) {
             setTimeout(() => {
@@ -764,10 +770,7 @@ export function ConjugationPracticeModal({
       },
       {
         contextualStrings,
-        initialPrompt,
-        preferredEngine: 'auto',
         continuous: true,
-        maxAlternatives: 5,
       }
     );
 

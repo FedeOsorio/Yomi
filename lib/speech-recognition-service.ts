@@ -1,392 +1,186 @@
-import {
-  ExpoSpeechRecognitionModule,
-  type ExpoSpeechRecognitionOptions,
-} from 'expo-speech-recognition';
-import { sherpaVoiceService } from './sherpa-service';
+import { PermissionsAndroid, Platform } from 'react-native';
+import { ExpoSpeechRecognitionModule } from 'expo-speech-recognition';
+import { sherpaVoiceService, toSenseVoiceLang } from './sherpa-service';
 
 /**
- * Mapeo de códigos de idioma de Yomi a tags de idioma BCP-47 para reconocimiento de voz.
+ * Punto de entrada único para el reconocimiento de voz de la app.
+ * - Japonés / chino / inglés → Sherpa-ONNX offline (un resultado final por intento).
+ * - Cualquier otro idioma (p. ej. español en tarjetas personalizadas) → reconocedor nativo del sistema.
  */
-const LANGUAGE_RECOGNITION_MAP: Record<string, string> = {
-  'zh-CN': 'zh-CN',
-  'zh': 'zh-CN',
-  'ja-JP': 'ja-JP',
-  'ja': 'ja-JP',
-  'en-US': 'en-US',
-  'en': 'en-US',
-  'es-ES': 'es-ES',
-  'es': 'es-ES',
+
+const NATIVE_LANG_MAP: Record<string, string> = {
+  ja: 'ja-JP',
+  zh: 'zh-CN',
+  en: 'en-US',
+  es: 'es-ES',
+  pt: 'pt-BR',
 };
 
 export interface SpeechRecognitionCallbacks {
-  onResult: (transcript: string, isFinal: boolean, alternatives?: string[]) => void;
+  onResult: (transcript: string, isFinal: boolean) => void;
   onError?: (errorMessage: string) => void;
   onEnd?: () => void;
   onStart?: () => void;
 }
 
 export interface SpeechRecognitionOptions {
-  /** Términos esperados para sesgar el reconocedor (ej. la palabra actual y sus lecturas) */
+  /** Palabras esperadas para sesgar el reconocedor nativo (Sherpa las ignora). */
   contextualStrings?: string[];
-  /** Cantidad máxima de alternativas fonéticas a devolver */
-  maxAlternatives?: number;
-  /** Modo continuo */
+  /** Forzar el reconocedor nativo aunque el idioma lo soporte Sherpa. */
+  preferredEngine?: 'auto' | 'native';
   continuous?: boolean;
-  /** Modelo de lenguaje en Android: 'free_form' (vocabulario general/fonético) o 'web_search' */
-  androidLanguageModel?: 'free_form' | 'web_search';
-  /** Prompt inicial para el modelo (la lectura o kanji esperado) */
-  initialPrompt?: string;
-  /** Gramática cerrada (obsoleta en modelos neuronales) */
-  voskGrammar?: string[];
-  /** Motor preferido: 'auto' | 'sherpa' | 'native' */
-  preferredEngine?: 'auto' | 'sherpa' | 'native';
+}
+
+/** Indica si el idioma se reconoce con el modelo offline (y por lo tanto necesita descargarlo). */
+export function usesOfflineModel(languageCode: string): boolean {
+  return ['ja', 'zh', 'en'].includes(toSenseVoiceLang(languageCode) ?? '');
 }
 
 class SpeechRecognitionService {
-  private activeSubscriptions: Array<{ remove: () => void }> = [];
-  private isListeningActive = false;
-  private isStarting = false;
-  private hasCheckedPermissions = false;
-  private activeEngine: 'sherpa' | 'native' | null = null;
-
-  /**
-   * Contador de generación: se incrementa en cada start() para invalidar
-   * automáticamente callbacks de sesiones anteriores que lleguen tarde.
-   */
+  private engine: 'sherpa' | 'native' | null = null;
+  private nativeSubs: Array<{ remove: () => void }> = [];
   private generation = 0;
+  private queue: Promise<unknown> = Promise.resolve();
 
-  /**
-   * Cola de operaciones: serializa todas las llamadas a start() y abort()
-   * para que nunca se ejecuten en paralelo.
-   */
-  private operationQueue: Promise<void> = Promise.resolve();
-
-  /**
-   * Solicita permisos de micrófono al usuario en tiempo de ejecución.
-   */
-  async requestPermissions(): Promise<boolean> {
-    try {
-      const response = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
-      if (response.granted) return true;
-      const micRes = await ExpoSpeechRecognitionModule.requestMicrophonePermissionsAsync();
-      return micRes.granted;
-    } catch (e) {
-      console.warn('Error solicitando permisos de reconocimiento de voz:', e);
-      return false;
-    }
+  /** Serializa start/abort para que nunca corran en paralelo. */
+  private enqueue<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(fn, fn);
+    this.queue = run.catch(() => {});
+    return run;
   }
 
-  /**
-   * Verifica si los permisos de micrófono ya fueron otorgados.
-   */
   async checkPermissions(): Promise<boolean> {
-    try {
-      const { granted } = await ExpoSpeechRecognitionModule.getPermissionsAsync();
-      return granted;
-    } catch (e) {
-      console.warn('Error verificando permisos de reconocimiento de voz:', e);
-      return false;
+    if (Platform.OS === 'android') {
+      return PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
     }
+    return (await ExpoSpeechRecognitionModule.getPermissionsAsync()).granted;
   }
 
-  /**
-   * Retorna la generación actual del servicio. Útil para que la capa superior
-   * verifique si una operación sigue siendo vigente.
-   */
+  async requestPermissions(): Promise<boolean> {
+    if (Platform.OS === 'android') {
+      const res = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+      return res === PermissionsAndroid.RESULTS.GRANTED;
+    }
+    return (await ExpoSpeechRecognitionModule.requestPermissionsAsync()).granted;
+  }
+
+  /** Generación actual: cambia con cada start()/invalidate(); sirve para descartar callbacks viejos. */
   getGeneration(): number {
     return this.generation;
   }
 
-  /**
-   * Invalida todos los callbacks de sesiones anteriores incrementando la generación.
-   */
   invalidate(): void {
     this.generation++;
   }
 
-  /**
-   * Encola una operación para ejecución secuencial.
-   */
-  private enqueue<T>(fn: () => Promise<T>): Promise<T> {
-    const result = this.operationQueue.then(fn, fn);
-    this.operationQueue = result.then(() => { }, () => { });
-    return result;
+  isListening(): boolean {
+    return this.engine === 'sherpa' ? sherpaVoiceService.isListening() : this.engine === 'native';
   }
 
-  /**
-   * Inicia el reconocimiento de voz en el idioma especificado.
-   */
-  async start(
+  start(
     languageCode: string,
     callbacks: SpeechRecognitionCallbacks,
-    options?: SpeechRecognitionOptions
+    options: SpeechRecognitionOptions = {}
   ): Promise<boolean> {
-    return this.enqueue(() => this._startInternal(languageCode, callbacks, options));
+    return this.enqueue(async () => {
+      // No se cambia la generación aquí: la pantalla la fija con invalidate() antes de llamar a start().
+      await this.abortNow(false);
+      const gen = this.generation;
+      const live = () => gen === this.generation;
+
+      if (!(await this.checkPermissions()) && !(await this.requestPermissions())) {
+        callbacks.onError?.('Permiso de micrófono denegado');
+        return false;
+      }
+
+      if (options.preferredEngine !== 'native' && usesOfflineModel(languageCode)) {
+        this.engine = 'sherpa';
+        const ok = await sherpaVoiceService.start(languageCode, {
+          onResult: (text) => live() && callbacks.onResult(text, true),
+          onError: (msg) => live() && callbacks.onError?.(msg),
+          onStart: () => live() && callbacks.onStart?.(),
+          onEnd: () => live() && callbacks.onEnd?.(),
+        });
+        if (!ok) this.engine = null;
+        return ok;
+      }
+
+      return this.startNative(languageCode, callbacks, options, live);
+    });
   }
 
-  private async _startInternal(
+  private async startNative(
     languageCode: string,
     callbacks: SpeechRecognitionCallbacks,
-    options?: SpeechRecognitionOptions
+    options: SpeechRecognitionOptions,
+    live: () => boolean
   ): Promise<boolean> {
-    this.isStarting = true;
-    try {
-      return await this._executeStart(languageCode, callbacks, options);
-    } finally {
-      this.isStarting = false;
-    }
-  }
+    const base = languageCode.toLowerCase().split('-')[0];
+    const lang = languageCode.includes('-') ? languageCode : NATIVE_LANG_MAP[base] ?? languageCode;
 
-  private async _executeStart(
-    languageCode: string,
-    callbacks: SpeechRecognitionCallbacks,
-    options?: SpeechRecognitionOptions
-  ): Promise<boolean> {
-    if (!this.hasCheckedPermissions) {
-      const alreadyGranted = await this.checkPermissions();
-      if (alreadyGranted) {
-        this.hasCheckedPermissions = true;
-      } else {
-        const hasPermission = await this.requestPermissions();
-        if (!hasPermission) {
-          callbacks.onError?.('Permiso de micrófono denegado');
-          return false;
-        }
-        this.hasCheckedPermissions = true;
-      }
-    }
-
-    // Limpiar cualquier sesión previa
-    await this._abortInternal();
-
-    const gen = this.generation;
-
-    // 1. Intentar reconocimiento con Sherpa-ONNX SenseVoice Offline
-    const isJapanese = languageCode.toLowerCase().startsWith('ja');
-    const isChinese = languageCode.toLowerCase().startsWith('zh');
-    const isEnglish = languageCode.toLowerCase().startsWith('en');
-    const isSupportedBySherpa = isJapanese || isChinese || isEnglish;
-    const wantsNative = options?.preferredEngine === 'native';
-
-    if (!wantsNative && isSupportedBySherpa && sherpaVoiceService.checkNativeModule()) {
-      if (!sherpaVoiceService.isReady()) {
-        console.log('[SpeechRecognition] Sherpa model not loaded yet, initializing SenseVoice...');
-        await sherpaVoiceService.loadModel(languageCode);
-      }
-
-      if (sherpaVoiceService.isReady()) {
-        console.log(`[SpeechRecognition] Starting Sherpa SenseVoice recognition for lang: ${languageCode}`);
-        const started = await sherpaVoiceService.start(
-          {
-            onResult: (hypothesis, isFinal, alternatives) => {
-              if (this.generation !== gen) return;
-              const cleaned = (hypothesis || '').trim();
-              if (!cleaned) return;
-              callbacks.onResult(cleaned, isFinal, alternatives || [cleaned]);
-            },
-            onError: (errorMessage) => {
-              if (this.generation !== gen) return;
-              this.isListeningActive = false;
-              callbacks.onError?.(errorMessage);
-            },
-            onStart: () => {
-              if (this.generation !== gen) return;
-              this.isListeningActive = true;
-              callbacks.onStart?.();
-            },
-            onEnd: () => {
-              if (this.generation !== gen) return;
-              this.isListeningActive = false;
-              callbacks.onEnd?.();
-            },
-            onTimeout: () => {
-              if (this.generation !== gen) return;
-              this.isListeningActive = false;
-              callbacks.onEnd?.();
-            },
-          },
-          {
-            language: languageCode,
-            initialPrompt: options?.initialPrompt,
-          }
-        );
-
-        if (started) {
-          this.activeEngine = 'sherpa';
-          this.isListeningActive = true;
-          return true;
-        }
-        console.warn('[SpeechRecognition] Sherpa failed to start, falling back to native engine');
-      } else {
-        console.warn('[SpeechRecognition] Sherpa model not ready, falling back to native engine');
-      }
-    }
-
-    this.activeEngine = 'native';
-
-    const targetLang = LANGUAGE_RECOGNITION_MAP[languageCode] || 'ja-JP';
-
-    try {
-      console.log('[SpeechRecognition] Starting native recognition for lang:', targetLang);
-
-      const resultSub = ExpoSpeechRecognitionModule.addListener('result', (event) => {
-        if (this.generation !== gen) return;
-        const allTranscripts = (event.results || [])
-          .map((r) => r.transcript)
-          .filter(Boolean);
-        const firstResult = allTranscripts[0] || '';
-        console.log('[SpeechRecognition] Result:', firstResult, 'isFinal:', event.isFinal, 'alternatives:', allTranscripts);
-        if (firstResult || allTranscripts.length > 0) {
-          callbacks.onResult(firstResult, event.isFinal ?? false, allTranscripts);
-        }
-      });
-
-      const errorSub = ExpoSpeechRecognitionModule.addListener('error', (event) => {
-        if (this.generation !== gen) return;
-        if (event.error === 'aborted') return;
-        if (event.error === 'no-speech' || event.error === 'speech-timeout') {
-          console.log('[SpeechRecognition] Silence detected while user is thinking, continuing listening...');
+    this.engine = 'native';
+    this.nativeSubs = [
+      ExpoSpeechRecognitionModule.addListener('start', () => live() && callbacks.onStart?.()),
+      ExpoSpeechRecognitionModule.addListener('result', (e) => {
+        const text = e.results?.[0]?.transcript ?? '';
+        if (live() && text) callbacks.onResult(text, e.isFinal ?? false);
+      }),
+      ExpoSpeechRecognitionModule.addListener('error', (e) => {
+        if (!live() || e.error === 'aborted') return;
+        if (e.error === 'no-speech' || e.error === 'speech-timeout') {
           callbacks.onEnd?.();
-          return;
+        } else {
+          callbacks.onError?.(e.message || e.error || 'Error de reconocimiento');
         }
-        console.warn('[SpeechRecognition] Error event:', event.error, event.message);
-        this.isListeningActive = false;
-        callbacks.onError?.(event.message || event.error || 'Error de reconocimiento');
-      });
-
-      const startSub = ExpoSpeechRecognitionModule.addListener('start', () => {
-        if (this.generation !== gen) return;
-        console.log('[SpeechRecognition] Native mic STARTED listening');
-        this.isListeningActive = true;
-        callbacks.onStart?.();
-      });
-
-      const endSub = ExpoSpeechRecognitionModule.addListener('end', () => {
-        if (this.generation !== gen) return;
-        console.log('[SpeechRecognition] Native mic ENDED');
-        this.isListeningActive = false;
+      }),
+      ExpoSpeechRecognitionModule.addListener('end', () => {
+        if (!live()) return;
+        this.engine = null;
         callbacks.onEnd?.();
-      });
+      }),
+    ];
 
-      this.activeSubscriptions = [resultSub, errorSub, startSub, endSub];
-
-      const recognitionOptions: ExpoSpeechRecognitionOptions = {
-        lang: targetLang,
+    try {
+      ExpoSpeechRecognitionModule.start({
+        lang,
         interimResults: true,
-        continuous: options?.continuous ?? true,
-        maxAlternatives: 10,
-        iosTaskHint: 'confirmation',
-        androidIntentOptions: {
-          EXTRA_LANGUAGE_MODEL: 'free_form',
-          EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS: 5000,
-          EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS: 15000,
-          EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS: 15000,
-          EXTRA_PREFER_OFFLINE: false,
-        },
-      };
-
-      if (options?.contextualStrings && options.contextualStrings.length > 0) {
-        recognitionOptions.contextualStrings = options.contextualStrings.slice(0, 100);
-      }
-
-      await ExpoSpeechRecognitionModule.start(recognitionOptions);
-      this.isListeningActive = true;
+        continuous: options.continuous ?? true,
+        contextualStrings: options.contextualStrings?.slice(0, 100),
+      });
       return true;
     } catch (e: any) {
-      console.warn('[SpeechRecognition] Could not start native recognition:', e);
-      this.isListeningActive = false;
-      this.cleanupSubscriptions();
-      callbacks.onError?.(e?.message || 'Error al iniciar reconocimiento');
+      this.removeNativeSubs();
+      this.engine = null;
+      callbacks.onError?.(e?.message || 'No se pudo iniciar el reconocimiento');
       return false;
     }
   }
 
-  /**
-   * Aborta el reconocimiento de voz inmediatamente.
-   */
-  async abort(): Promise<void> {
-    return this.enqueue(() => this._abortInternal());
+  private removeNativeSubs() {
+    this.nativeSubs.forEach((s) => s.remove());
+    this.nativeSubs = [];
   }
 
-  private async _abortInternal(): Promise<void> {
-    this.isListeningActive = false;
-    this.cleanupSubscriptions();
-
-    if (this.activeEngine === 'sherpa') {
+  private async abortNow(invalidate = true): Promise<void> {
+    if (invalidate) this.generation++;
+    const engine = this.engine;
+    this.engine = null;
+    this.removeNativeSubs();
+    if (engine === 'sherpa') await sherpaVoiceService.abort();
+    if (engine === 'native') {
       try {
-        await sherpaVoiceService.abort();
-      } catch { }
+        ExpoSpeechRecognitionModule.abort();
+      } catch {}
     }
-
-    if (this.activeEngine === 'native') {
-      try {
-        await new Promise<void>((resolve) => {
-          let resolved = false;
-          const endSub = ExpoSpeechRecognitionModule.addListener('end', () => {
-            if (!resolved) {
-              resolved = true;
-              try { endSub.remove(); } catch { }
-              resolve();
-            }
-          });
-          setTimeout(() => {
-            if (!resolved) {
-              resolved = true;
-              try { endSub.remove(); } catch { }
-              resolve();
-            }
-          }, 250);
-
-          try {
-            ExpoSpeechRecognitionModule.abort();
-          } catch {
-            try {
-              ExpoSpeechRecognitionModule.stop();
-            } catch { }
-          }
-        });
-      } catch { }
-    }
-
-    this.activeEngine = null;
   }
 
-  /**
-   * Detiene el reconocimiento de voz y limpia los listeners.
-   */
-  async stop(): Promise<void> {
+  /** Detiene el micrófono inmediatamente y descarta cualquier resultado pendiente. */
+  abort(): Promise<void> {
+    return this.enqueue(() => this.abortNow());
+  }
+
+  stop(): Promise<void> {
     return this.abort();
-  }
-
-  private cleanupSubscriptions(): void {
-    const subs = this.activeSubscriptions;
-    this.activeSubscriptions = [];
-    subs.forEach((sub) => {
-      try {
-        sub.remove();
-      } catch { }
-    });
-  }
-
-  /**
-   * Retorna si el servicio se encuentra escuchando activamente.
-   */
-  isListening(): boolean {
-    return this.isListeningActive;
-  }
-
-  /**
-   * Retorna el motor activo ('sherpa' | 'native' | null).
-   */
-  getActiveEngine(): 'sherpa' | 'native' | null {
-    return this.activeEngine;
-  }
-
-  /**
-   * Retorna si el servicio se encuentra en proceso de conexión/arranque.
-   */
-  isStartingState(): boolean {
-    return this.isStarting;
   }
 }
 

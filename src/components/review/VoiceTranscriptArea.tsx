@@ -1,82 +1,16 @@
 import React, { memo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Spacing } from '../../constants/theme';
-import { DueCardWithContext, JA_NUMBERS, ZH_NUMBERS, checkVoiceMatch } from '../../../lib/srs-engine';
-import { toNormalizedHiragana, romajiToHiragana, getEffectiveCardLanguage } from '../../../lib/japanese-utils';
+import { DueCardWithContext, checkVoiceMatch } from '../../../lib/srs-engine';
+import { getEffectiveCardLanguage } from '../../../lib/japanese-utils';
 import { useReviewStore } from '../../stores/reviewStore';
-
-export interface SpokenRubyData {
-  mainText: string;
-  rubyText?: string;
-}
-
-export function getSpokenRubyDisplay(
-  transcript: string,
-  card: DueCardWithContext | null,
-  lang: string
-): SpokenRubyData {
-  if (!transcript) return { mainText: '' };
-  const trimmed = transcript.trim();
-  const isJapanese = (lang || '').toLowerCase().startsWith('ja');
-  const isChinese = (lang || '').toLowerCase().startsWith('zh');
-
-  if (isJapanese) {
-    if (JA_NUMBERS[trimmed]) {
-      return {
-        mainText: JA_NUMBERS[trimmed].kana,
-        rubyText: JA_NUMBERS[trimmed].kanji,
-      };
-    }
-
-    if (card) {
-      const matchRes = checkVoiceMatch(card, transcript, lang);
-      const cardHasKanji = /[\u4e00-\u9faf]/.test(card.displayText);
-
-      if (matchRes.isMatch) {
-        const cleanSpoken = toNormalizedHiragana(transcript).replace(/[a-zA-Z]/g, '');
-        if (cardHasKanji) {
-          return {
-            mainText: cleanSpoken || card.displayReading,
-            rubyText: card.displayText,
-          };
-        } else {
-          return {
-            mainText: cleanSpoken || card.displayText,
-          };
-        }
-      }
-    }
-
-    let converted = toNormalizedHiragana(transcript).replace(/[a-zA-Z]/g, '');
-    if (!converted) {
-      converted = romajiToHiragana(transcript).replace(/[a-zA-Z]/g, '');
-    }
-    return { mainText: converted || transcript };
-  }
-
-  if (isChinese) {
-    if (ZH_NUMBERS[trimmed]) {
-      return {
-        mainText: ZH_NUMBERS[trimmed].pinyin,
-        rubyText: ZH_NUMBERS[trimmed].hanzi,
-      };
-    }
-    if (card && checkVoiceMatch(card, transcript, lang).isMatch) {
-      return {
-        mainText: card.displayReading,
-        rubyText: card.displayText,
-      };
-    }
-    return { mainText: transcript };
-  }
-
-  return { mainText: transcript };
-}
 
 export interface VoiceTranscriptAreaProps {
   transcript?: string;
   card: DueCardWithContext | null;
   isChecked: boolean;
+  /** Aviso bajo la transcripción (p. ej. "No coincide · intento 1 de 3"). */
+  feedback?: string | null;
   colors: {
     primary: string;
     text: string;
@@ -84,70 +18,70 @@ export interface VoiceTranscriptAreaProps {
   };
 }
 
+/** Muestra lo que el reconocedor entendió (en kana cuando es posible) y, si coincide, la palabra de la tarjeta encima. */
 export const VoiceTranscriptArea = memo(function VoiceTranscriptArea({
   transcript: propTranscript,
   card,
   isChecked,
+  feedback,
   colors,
 }: VoiceTranscriptAreaProps) {
   const storeTranscript = useReviewStore((s) => s.speechTranscript);
-  const transcript = propTranscript !== undefined ? propTranscript : storeTranscript;
+  const transcript = (propTranscript ?? storeTranscript ?? '').trim();
 
-  const spokenRuby = transcript
-    ? getSpokenRubyDisplay(transcript, card, getEffectiveCardLanguage(card))
-    : null;
+  const match = transcript && card ? checkVoiceMatch(card, transcript, getEffectiveCardLanguage(card)) : null;
+  const showCardAbove = Boolean(match?.isMatch && card?.displayText && card.displayText !== match.heard);
 
   return (
-    <View style={[styles.floatingTranscriptArea, isChecked && { opacity: 0 }]}>
-      {transcript && spokenRuby ? (
-        <View style={styles.rubySpokenContainer}>
-          {spokenRuby.rubyText ? (
-            <Text style={[styles.rubySpokenKanji, { color: colors.primary }]}>
-              {spokenRuby.rubyText}
-            </Text>
-          ) : null}
-          <Text style={[styles.rubySpokenKana, { color: colors.text }]}>
-            “{spokenRuby.mainText}”
-          </Text>
+    <View style={[styles.area, isChecked && { opacity: 0 }]}>
+      {transcript ? (
+        <View style={styles.center}>
+          {showCardAbove ? <Text style={[styles.above, { color: colors.primary }]}>{card!.displayText}</Text> : null}
+          <Text style={[styles.heard, { color: colors.text }]}>“{match?.heard || transcript}”</Text>
+          {feedback ? <Text style={[styles.feedback, { color: colors.textMuted }]}>{feedback}</Text> : null}
         </View>
       ) : (
-        <Text style={[styles.floatingSpokenText, { color: colors.textMuted }]}>
-          Pronuncia en voz alta...
-        </Text>
+        <Text style={[styles.placeholder, { color: colors.textMuted }]}>Pronuncia en voz alta...</Text>
       )}
     </View>
   );
 });
 
 const styles = StyleSheet.create({
-  floatingTranscriptArea: {
+  area: {
     height: 60,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: Spacing.lg,
     marginBottom: Spacing.xs,
   },
-  floatingSpokenText: {
+  center: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  placeholder: {
     fontSize: 22,
     fontWeight: '700',
     textAlign: 'center',
     letterSpacing: 0.3,
   },
-  rubySpokenContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  rubySpokenKanji: {
+  above: {
     fontSize: 15,
     fontWeight: '700',
     letterSpacing: 2,
     marginBottom: 1,
     textAlign: 'center',
   },
-  rubySpokenKana: {
+  heard: {
     fontSize: 24,
     fontWeight: 'bold',
     letterSpacing: 0.5,
+    textAlign: 'center',
+  },
+  feedback: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 2,
     textAlign: 'center',
   },
 });

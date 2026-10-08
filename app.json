@@ -2,7 +2,7 @@
   "expo": {
     "name": "Yomi",
     "slug": "Yomi",
-    "version": "0.3.201",
+    "version": "0.3.208",
     "orientation": "default",
     "scheme": [
       "yomi",
@@ -12,7 +12,7 @@
     "userInterfaceStyle": "automatic",
     "android": {
       "package": "com.kuyi.yomi",
-      "versionCode": 23,
+      "versionCode": 30,
       "adaptiveIcon": {
         "backgroundColor": "#2c76bc",
         "foregroundImage": "./assets/images/icon.png"
@@ -26,7 +26,9 @@
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.SYSTEM_ALERT_WINDOW",
-        "android.permission.VIBRATE"
+        "android.permission.VIBRATE",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_DATA_SYNC"
       ],
       "runtimeVersion": {
         "policy": "appVersion"
@@ -92,7 +94,7 @@
       "expo-web-browser",
       "expo-localization",
       "expo-video",
-      "./plugins/withSherpaModels",
+      "./plugins/withSherpaOnnx",
       "./plugins/withAndroidSigning",
       [
         "expo-build-properties",
@@ -100,7 +102,7 @@
           "android": {
             "enableMinifyInReleaseBuilds": true,
             "enableShrinkResourcesInReleaseBuilds": true,
-            "extraProguardRules": "-keep class com.facebook.react.turbomodule.** { *; }\n-keepclassmembers class * {\n    @com.facebook.react.uimanager.annotations.ReactProp <methods>;\n    @com.facebook.react.uimanager.annotations.ReactPropGroup <methods>;\n}\n-dontwarn com.facebook.react.**\n\n-keep class com.swmansion.reanimated.** { *; }\n-keep class com.swmansion.gesturehandler.** { *; }\n-keep class com.swmansion.rnscreens.** { *; }\n-keep class com.swmansion.worklets.** { *; }\n\n-keep class expo.modules.** { *; }\n-dontwarn expo.modules.**\n\n-dontwarn java.awt.**\n\n-keep class com.sherpaonnx.** { *; }\n-keep class com.k2fsa.sherpa.onnx.** { *; }\n-keep class ai.onnxruntime.** { *; }\n-dontwarn com.sherpaonnx.**\n-dontwarn com.k2fsa.sherpa.onnx.**\n-dontwarn ai.onnxruntime.**\n\n-keep class com.imxiqi.audiopcmstream.** { *; }\n\n-keep class com.google.android.play.core.** { *; }\n-keep class com.sudoplz.rninappupdates.** { *; }\n\n-keep class com.learnium.RNDeviceInfo.** { *; }\n-keep class com.horcrux.svg.** { *; }"
+            "extraProguardRules": "-keep class com.facebook.react.turbomodule.** { *; }\n-keepclassmembers class * {\n    @com.facebook.react.uimanager.annotations.ReactProp <methods>;\n    @com.facebook.react.uimanager.annotations.ReactPropGroup <methods>;\n}\n-dontwarn com.facebook.react.**\n\n-keep class com.swmansion.reanimated.** { *; }\n-keep class com.swmansion.gesturehandler.** { *; }\n-keep class com.swmansion.rnscreens.** { *; }\n-keep class com.swmansion.worklets.** { *; }\n\n-keep class expo.modules.** { *; }\n-dontwarn expo.modules.**\n\n-dontwarn java.awt.**\n\n-keep class com.sherpaonnx.** { *; }\n-keep class com.k2fsa.sherpa.onnx.** { *; }\n-keep class ai.onnxruntime.** { *; }\n-dontwarn com.sherpaonnx.**\n-dontwarn com.k2fsa.sherpa.onnx.**\n-dontwarn ai.onnxruntime.**\n\n-keep class com.google.android.play.core.** { *; }\n-keep class com.sudoplz.rninappupdates.** { *; }\n\n-keep class com.learnium.RNDeviceInfo.** { *; }\n-keep class com.horcrux.svg.** { *; }"
           }
         }
       ]

@@ -4,6 +4,7 @@ import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from '
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   AppState,
   type AppStateStatus,
@@ -24,23 +25,22 @@ import { Rating } from 'ts-fsrs';
 import { speakText, stopSpeech } from '../../../lib/audio-service';
 import { ALL_LANGUAGES, DeckWithStats, SUPPORTED_LANGUAGES } from '../../../lib/deck-service';
 import { cleanAndFormatMeanings } from '../../../lib/japanese-search';
-import { formatJapaneseReading, getEffectiveCardLanguage, getMonosyllableVariants, hiraganaToRomaji, JA_NUMBERS, normalizeYouon, toNormalizedHiragana } from '../../../lib/japanese-utils';
+import { formatJapaneseReading, getEffectiveCardLanguage, toNormalizedHiragana } from '../../../lib/japanese-utils';
 import { JLPT_KANJI_READINGS } from '../../../lib/jlpt-data';
-import { KANJI_READINGS_MAP } from '../../../lib/kanji-readings-db';
 import { calculateChineseAccuracyScore, PinyinBreakdownItem } from '../../../lib/pinyin-utils';
-import { speechService } from '../../../lib/speech-recognition-service';
+import { speechService, usesOfflineModel } from '../../../lib/speech-recognition-service';
 import {
   calculateReviewRating,
   checkMeaningMatch,
   checkReadingMatch,
   checkVoiceMatch,
   DueCardWithContext,
-  formatSpokenTranscript,
   processCardReview,
   removeCardFromReview,
   rescheduleCardNextDay
 } from '../../../lib/srs-engine';
-import { sherpaVoiceService } from '../../../lib/sherpa-service';
+import { registerWordInDictionary } from '../../../lib/phonetic-dictionary';
+import { MODEL_NOT_DOWNLOADED, SHERPA_MODEL_SIZE_MB, sherpaVoiceService } from '../../../lib/sherpa-service';
 import { getCompoundWordsForChar } from '../../../lib/word-service';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { ConjugationPracticeModal } from '../../components/ConjugationPracticeModal';
@@ -54,6 +54,23 @@ import { useTranslation } from '../../i18n';
 import { useReviewStore } from '../../stores/reviewStore';
 
 const VOICE_TIMEOUT_SECONDS = 15;
+/** Intentos de pronunciación por tarjeta antes de darla por fallada. */
+const MAX_VOICE_ATTEMPTS = 3;
+
+/** Pregunta al usuario si quiere descargar el modelo de voz offline. */
+function confirmVoiceModelDownload(): Promise<boolean> {
+  return new Promise((resolve) => {
+    Alert.alert(
+      'Descargar modelo de voz',
+      `Para evaluar tu pronunciación sin conexión, Yomi necesita descargar un modelo de voz de unos ${SHERPA_MODEL_SIZE_MB} MB (solo la primera vez). Se recomienda usar Wi-Fi.`,
+      [
+        { text: 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
+        { text: 'Descargar', onPress: () => resolve(true) },
+      ],
+      { cancelable: true, onDismiss: () => resolve(false) }
+    );
+  });
+}
 
 
 interface SyllableBreakdownViewProps {
@@ -170,11 +187,30 @@ export default function ReviewScreen() {
   // Estado para abrir práctica de conjugaciones desde la selección de mazo
   const [conjugationDeck, setConjugationDeck] = useState<{ id: string; name: string } | null>(null);
 
-  // Estado de preparación del motor de voz offline
-  const [isVoiceEngineReady, setIsVoiceEngineReady] = useState<boolean>(() => {
-    return sherpaVoiceService.isReady();
-  });
-  const [isPreparingVoice, setIsPreparingVoice] = useState<boolean>(false);
+  // Texto que se muestra mientras se descarga o carga el modelo de voz (null = listo / inactivo)
+  const [voiceSetupLabel, setVoiceSetupLabel] = useState<string | null>(null);
+  const [voiceFeedback, setVoiceFeedback] = useState<string | null>(null);
+
+  /** Descarga (si hace falta) y carga en memoria el modelo de voz para el idioma. */
+  const prepareVoiceModel = async (lang: string): Promise<boolean> => {
+    if (!usesOfflineModel(lang) || sherpaVoiceService.isReady(lang)) return true;
+    try {
+      if (!(await sherpaVoiceService.isModelDownloaded())) {
+        setVoiceSetupLabel('Descargando modelo de voz… 0%');
+        const ok = await sherpaVoiceService.downloadModel((p) => setVoiceSetupLabel(`Descargando modelo de voz… ${p}%`));
+        if (!ok) {
+          Alert.alert('Descarga fallida', 'No se pudo descargar el modelo de voz. Revisa tu conexión e inténtalo de nuevo.');
+          return false;
+        }
+      }
+      setVoiceSetupLabel('Cargando motor de voz…');
+      const loaded = await sherpaVoiceService.loadModel(lang);
+      if (!loaded) Alert.alert('Motor de voz', sherpaVoiceService.lastError ?? 'No se pudo cargar el modelo de voz.');
+      return loaded;
+    } finally {
+      setVoiceSetupLabel(null);
+    }
+  };
 
   const handleOpenConjugation = (deckId: string, deckName: string) => {
     setShowMethodModal(false);
@@ -207,7 +243,6 @@ export default function ReviewScreen() {
   // Control de timers y animación de voz
   const autoTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isCardEvaluatedRef = useRef<boolean>(false);
-  const accumulatedSpeechRef = useRef<string>('');
   const voiceProgressAnim = useRef(new Animated.Value(0)).current;
   const micPulseAnim = useRef(new Animated.Value(1)).current;
   const cardFlipAnim = useRef(new Animated.Value(0)).current;
@@ -216,7 +251,6 @@ export default function ReviewScreen() {
   const flipCountdownStartTimeRef = useRef<number>(0);
   const flipCountdownRemainingRef = useRef<number>(7000);
   const isCountdownPausedRef = useRef<boolean>(false);
-  const restartAttemptsRef = useRef<number>(0);
 
   // Estilos de animación 3D optimizados para 60 FPS continuos con backfaceVisibility
   const frontAnimatedStyle = useMemo(() => ({
@@ -286,20 +320,6 @@ export default function ReviewScreen() {
     return () => subscription.remove();
   }, [selectedDeckId]);
 
-  // Precargar modelo acústico de Sherpa SenseVoice en segundo plano para el repaso offline
-  useEffect(() => {
-    let mounted = true;
-    sherpaVoiceService.loadModel().then((ready) => {
-      if (mounted && ready) {
-        setIsVoiceEngineReady(true);
-      }
-    }).catch((e) => {
-      console.warn('[ReviewScreen] Could not preload Sherpa model:', e);
-    });
-    return () => {
-      mounted = false;
-    };
-  }, []);
 
   // Pausar y liberar el micrófono si la app pasa a segundo plano (llamada, minimizar, bloquear pantalla)
   useEffect(() => {
@@ -408,33 +428,25 @@ export default function ReviewScreen() {
     if (!pendingSelection) return;
     const { deckId, deckName, hasDue, languageCode } = pendingSelection;
 
-    // Si el usuario elige voz, asegurar permisos y modelo 100% en RAM antes de entrar
+    // Voz: pedir el micrófono y, si el idioma usa el modelo offline y aún no está descargado, ofrecer descargarlo
+    let needsModelPrep = false;
     if (method === 'voice') {
-      setIsPreparingVoice(true);
-      try {
-        const hasPerm = await speechService.checkPermissions();
-        if (!hasPerm) {
-          const granted = await speechService.requestPermissions();
-          if (!granted) {
-            setIsPreparingVoice(false);
-            return;
-          }
-        }
-        if (!languageCode || languageCode.startsWith('ja') || languageCode.startsWith('zh')) {
-          const ready = await sherpaVoiceService.loadModel();
-          setIsVoiceEngineReady(ready || !sherpaVoiceService.checkNativeModule());
-        } else {
-          setIsVoiceEngineReady(true);
-        }
-      } catch (err) {
-        console.warn('Error preparando motor de voz:', err);
-      } finally {
-        setIsPreparingVoice(false);
+      const hasPerm = (await speechService.checkPermissions()) || (await speechService.requestPermissions());
+      if (!hasPerm) {
+        Alert.alert('Permiso de Micrófono', 'Para practicar con voz es necesario permitir el acceso al micrófono desde los Ajustes del dispositivo.');
+        return;
+      }
+      const voiceLang = languageCode || 'ja-JP';
+      if (usesOfflineModel(voiceLang)) {
+        if (!(await sherpaVoiceService.isModelDownloaded()) && !(await confirmVoiceModelDownload())) return;
+        needsModelPrep = true;
       }
     }
 
     setShowMethodModal(false);
-    handleStartSession(deckId, deckName, method, !hasDue);
+    await handleStartSession(deckId, deckName, method, !hasDue);
+    // Descarga/carga del modelo en segundo plano: el botón del micrófono muestra el progreso
+    if (needsModelPrep) prepareVoiceModel(languageCode || 'ja-JP');
   };
 
   // Inicia la sesión para un mazo específico o para todos los mazos ('all')
@@ -463,131 +475,10 @@ export default function ReviewScreen() {
     }
   };
 
-  // Extrae strings contextuales para sesgar el reconocedor de voz nativo hacia la tarjeta actual
-  const getCardContextualStrings = (card: DueCardWithContext, lang: string): string[] => {
-    const strings: string[] = [];
-    if (card.displayText) strings.push(card.displayText.trim());
-    if (card.displayReading) {
-      strings.push(card.displayReading.trim());
-      card.displayReading.split(/[\/\n,、;•|]/).forEach((p) => {
-        const clean = p.replace(/^(on|kun|音|訓)[:：\s]*/i, '').trim();
-        if (clean) strings.push(clean);
-      });
-    }
-    if (card.auxiliaryInfo) {
-      try {
-        const aux = JSON.parse(card.auxiliaryInfo);
-        if (aux.kanjiReadings) {
-          aux.kanjiReadings.split(/[\/\n,、;•|]/).forEach((p: string) => {
-            const clean = p.replace(/^(on|kun|音|訓)[:：\s]*/i, '').trim();
-            if (clean) strings.push(clean);
-          });
-        }
-        if (aux.onReading) {
-          aux.onReading.split(/[,、\s]+/).forEach((p: string) => {
-            const clean = p.trim();
-            if (clean) strings.push(clean);
-          });
-        }
-        if (aux.kunReading) {
-          aux.kunReading.split(/[,、\s]+/).forEach((p: string) => {
-            const clean = p.trim();
-            if (clean) strings.push(clean);
-          });
-        }
-      } catch { }
-    }
-
-    const effectiveLang = getEffectiveCardLanguage(card);
-    const isJapanese = effectiveLang.toLowerCase().startsWith('ja');
-    if (isJapanese) {
-      const extraVariants: string[] = [];
-      strings.forEach((str) => {
-        const hira = toNormalizedHiragana(str);
-        if (hira && !strings.includes(hira)) extraVariants.push(hira);
-        // Generar Katakana para ampliar reconocimiento fonético
-        const kata = hira.replace(/[\u3041-\u3096]/g, (ch) =>
-          String.fromCharCode(ch.charCodeAt(0) + 0x60)
-        );
-        if (kata && !strings.includes(kata)) extraVariants.push(kata);
-
-        // Si la lectura o término es corto (≤ 2 moras, monosílabo), generar variantes fonéticas profundas
-        if (hira && hira.length <= 2) {
-          extraVariants.push(...getMonosyllableVariants(hira, card.displayText));
-        }
-      });
-
-      // Generar variantes para el displayReading directo si es de 1 o 2 moras
-      if (card.displayReading) {
-        const rHira = toNormalizedHiragana(card.displayReading);
-        if (rHira && rHira.length <= 2) {
-          extraVariants.push(...getMonosyllableVariants(rHira, card.displayText));
-        }
-      }
-
-      // Si es un kanji del catálogo universal (N5 a N1), agregar todas sus lecturas On y Kun
-      const kanjiChar = (card.displayText || '').trim();
-      if (KANJI_READINGS_MAP[kanjiChar]) {
-        KANJI_READINGS_MAP[kanjiChar].forEach((r) => {
-          extraVariants.push(r);
-          const kata = r.replace(/[\u3041-\u3096]/g, (ch) =>
-            String.fromCharCode(ch.charCodeAt(0) + 0x60)
-          );
-          if (kata) extraVariants.push(kata);
-          if (r.length <= 2) {
-            extraVariants.push(...getMonosyllableVariants(r, kanjiChar));
-          }
-        });
-      } else if (JLPT_KANJI_READINGS[kanjiChar]) {
-        const entry = JLPT_KANJI_READINGS[kanjiChar];
-        if (entry.essential) {
-          extraVariants.push(...getMonosyllableVariants(entry.essential, kanjiChar));
-        }
-        if (entry.on) {
-          entry.on.split(/[,、\s]+/).forEach((p) => {
-            const clean = p.trim();
-            if (clean) extraVariants.push(clean, toNormalizedHiragana(clean));
-          });
-        }
-        if (entry.kun) {
-          entry.kun.split(/[,、\s]+/).forEach((p) => {
-            const clean = p.replace(/[・~～\s\(\)（）\-\.]/g, '').trim();
-            if (clean) extraVariants.push(clean, toNormalizedHiragana(clean));
-          });
-        }
-      }
-
-      // 1. Detectar automáticamente números de JA_NUMBERS (ej. 百, 千, 一, 二, etc.)
-      for (const [numKey, numVal] of Object.entries(JA_NUMBERS)) {
-        if (card.displayText === numVal.kanji || card.displayReading?.includes(numVal.kana)) {
-          extraVariants.push(numKey, numVal.kanji, numVal.kana);
-          const rom = hiraganaToRomaji(numVal.kana);
-          if (rom) extraVariants.push(rom);
-        }
-      }
-
-      // 2. Generación fonética universal para todas las lecturas (N5 a N1):
-      // - Romaji universal para todas las lecturas
-      // - Variante Youon expandida si contiene ゃ, ゅ, ょ (ej. ひやく para ひゃく)
-      strings.forEach((str) => {
-        const hira = toNormalizedHiragana(str);
-        if (hira) {
-          const rom = hiraganaToRomaji(hira);
-          if (rom && !strings.includes(rom)) extraVariants.push(rom);
-
-          if (/[ゃゅょ]/.test(hira)) {
-            const youonNorm = normalizeYouon(hira);
-            if (youonNorm && !strings.includes(youonNorm)) extraVariants.push(youonNorm);
-            const youonRom = hiraganaToRomaji(youonNorm);
-            if (youonRom && !strings.includes(youonRom)) extraVariants.push(youonRom);
-          }
-        }
-      });
-
-      strings.push(...extraVariants);
-    }
-
-    return Array.from(new Set(strings.filter(Boolean)));
+  // Palabras esperadas para sesgar el reconocedor nativo (solo se usa en idiomas sin modelo offline)
+  const getCardContextualStrings = (card: DueCardWithContext): string[] => {
+    const strings = [card.displayText, ...(card.displayReading || '').split(/[\/\n,、;•|]/)];
+    return Array.from(new Set(strings.map((x) => (x || '').trim()).filter(Boolean)));
   };
 
   // Ciclo continuo de escucha con el micrófono con temporizador de 15 segundos sincronizado al inicio real.
@@ -608,8 +499,6 @@ export default function ReviewScreen() {
     const cardGeneration = speechService.getGeneration();
 
     isCardEvaluatedRef.current = false;
-    restartAttemptsRef.current = 0;
-    accumulatedSpeechRef.current = '';
     setSpeechTranscript('');
     setIsListening(false);
     setSpeechStatus('starting');
@@ -638,102 +527,71 @@ export default function ReviewScreen() {
       });
     };
 
-    const contextualStrings = getCardContextualStrings(card, lang);
-    console.log('[ReviewVoice] Starting speech recognition for card:', card.displayText);
+    console.log('[ReviewVoice] Escuchando tarjeta:', card.displayText);
+    registerWordInDictionary(card.displayText, card.displayReading);
+    setVoiceFeedback(null);
+    let attempts = 0;
+    let reportedError: string | null = null;
 
     const started = await speechService.start(
       lang,
       {
         onStart: () => {
-          if (!isStale()) {
-            startTimerCountdown();
-            setIsListening(true);
-            setSpeechStatus('listening');
-          }
-        },
-        onResult: (transcript, isFinal, alternatives) => {
           if (isStale()) return;
-          console.log('[ReviewVoice] onResult received:', transcript, 'isFinal:', isFinal, 'alternatives:', alternatives);
-          const currentTrimmed = (transcript || '').replace(/\[unk\]/gi, '').trim();
-          if (!currentTrimmed && (!alternatives || alternatives.length === 0)) return;
+          startTimerCountdown();
+          setIsListening(true);
+          setSpeechStatus('listening');
+        },
+        onResult: (transcript, isFinal) => {
+          // Cada elocución terminada es UN intento. Los resultados parciales del reconocedor
+          // nativo no se evalúan: solo se muestran.
+          if (isStale()) return;
+          const result = checkVoiceMatch(card, transcript, lang);
+          setSpeechTranscript(result.heard || transcript);
+          if (!isFinal) return;
 
-          // Formatear y mostrar de inmediato exactamente lo que se está diciendo en este intento (feedback en vivo)
-          const formatted = formatSpokenTranscript(currentTrimmed, lang);
-          if (formatted) {
-            setSpeechTranscript(formatted);
-          }
-
-          // Recolectar todas las hipótesis candidatas para evaluación
-          const candidateHypotheses = [
-            currentTrimmed,
-            ...(alternatives || []),
-          ]
-            .map((h) => (h || '').replace(/\[unk\]/gi, '').trim())
-            .filter(Boolean);
-
-          if (candidateHypotheses.length === 0) return;
-
-          // Validación de acierto fonético estricto
-          let matchedHypo = '';
-          let matchedReading = '';
-          const isMatch = candidateHypotheses.some((hypo) => {
-            const res = checkVoiceMatch(card, hypo, lang);
-            if (res.isMatch) {
-              matchedHypo = hypo;
-              matchedReading = res.matchedReading || '';
-              return true;
-            }
-            return false;
-          });
-
-          console.log('[ReviewVoice] isMatch:', isMatch, 'matchedHypo:', matchedHypo, 'matchedReading:', matchedReading, 'for card:', card.displayText, card.displayReading);
-
-          if (isMatch) {
-            // Cortar el micrófono inmediatamente en cuanto se detecta la coincidencia
+          console.log('[ReviewVoice] Intento:', transcript, '→', result);
+          if (result.isMatch) {
             isCardEvaluatedRef.current = true;
             speechService.abort().catch(() => { });
             setIsListening(false);
             setSpeechStatus('evaluating');
-            const matchedFormatted = formatSpokenTranscript(matchedReading || matchedHypo || currentTrimmed, lang);
-            setSpeechTranscript(matchedFormatted);
-            setTimeout(() => {
-              handleVoiceEvaluation(card, true, matchedReading || matchedHypo || currentTrimmed);
-            }, 150);
+            setVoiceFeedback(null);
+            setTimeout(() => handleVoiceEvaluation(card, true, result.matchedReading), 150);
             return;
           }
 
-          // Si no coincidió aún y es una hipótesis parcial, seguimos escuchando mientras el usuario termina de hablar
-          if (!isFinal) {
+          attempts++;
+          if (attempts >= MAX_VOICE_ATTEMPTS) {
+            isCardEvaluatedRef.current = true;
+            speechService.abort().catch(() => { });
+            setIsListening(false);
+            setVoiceFeedback(null);
+            handleVoiceEvaluation(card, false);
             return;
           }
-
-          // Si la elocución terminó (isFinal: true) y no coincidió todavía, el micrófono continúa abierto para permitir
-          // reintentar o corregir la palabra durante los 15 segundos del temporizador.
-          console.log('[ReviewVoice] Non-matching attempt, mic remains open for retry:', currentTrimmed);
+          setVoiceFeedback(`No coincide · intento ${attempts} de ${MAX_VOICE_ATTEMPTS}`);
         },
         onError: (err) => {
-          if (err === 'aborted' || isStale()) return;
-          console.warn('[ReviewVoice] Speech error:', err);
+          if (isStale()) return;
+          reportedError = err;
           setIsListening(false);
           setSpeechStatus('idle');
-        },
-        onEnd: () => {
-          if (isStale()) return;
-          console.log('[ReviewVoice] Speech session ended');
+          voiceProgressAnim.stopAnimation();
+          if (err === MODEL_NOT_DOWNLOADED) {
+            confirmVoiceModelDownload().then((ok) => ok && prepareVoiceModel(lang));
+            return;
+          }
+          Alert.alert('Error de micrófono', err || 'No fue posible iniciar la captura de voz.');
         },
       },
-      {
-        contextualStrings,
-        maxAlternatives: 10,
-        initialPrompt: card.displayReading || card.displayText || contextualStrings[0],
-        preferredEngine: 'auto',
-        continuous: true,
-      }
+      { contextualStrings: getCardContextualStrings(card) }
     );
 
     if (!started && !isStale()) {
       setIsListening(false);
       setSpeechStatus('idle');
+      if (!reportedError) Alert.alert('Micrófono no iniciado', 'No se pudo iniciar la grabación. Toca el micrófono para reintentar.');
     }
   };
 
@@ -745,6 +603,7 @@ export default function ReviewScreen() {
   ) => {
     isCardEvaluatedRef.current = true;
     voiceProgressAnim.stopAnimation();
+    setVoiceFeedback(null);
 
     // Abortar el micrófono inmediatamente en segundo plano para liberar el hilo de render y empezar el giro sin lag
     speechService.abort().catch(() => { });
@@ -758,7 +617,7 @@ export default function ReviewScreen() {
     // La precisión fonética con desglose de tonos se calcula exclusivamente para Chino (Pinyin)
     // En japonés, el reconocimiento ASR estándar no mide acento tonal (pitch accent), por lo que se omite el badge
     if (lang.startsWith('zh')) {
-      const recognized = directTranscript || useReviewStore.getState().speechTranscript || accumulatedSpeechRef.current || '';
+      const recognized = directTranscript || useReviewStore.getState().speechTranscript || '';
       const res = calculateChineseAccuracyScore(recognized, card.displayText, card.displayReading);
       voiceScore = { score: res.score, label: res.label, breakdown: res.breakdown };
     }
@@ -891,7 +750,6 @@ export default function ReviewScreen() {
     // Detener cualquier reproducción TTS activa de forma asíncrona y limpiar transcripciones
     await stopSpeech();
     setSpeechTranscript('');
-    accumulatedSpeechRef.current = '';
 
     // Invalidar la generación ANTES de la transición para que cualquier callback
     // tardío de la tarjeta anterior se descarte automáticamente.
@@ -958,7 +816,6 @@ export default function ReviewScreen() {
     cardFlipAnim.setValue(0);
     speechService.abort().catch(() => { });
     setSpeechTranscript('');
-    accumulatedSpeechRef.current = '';
     exitSession();
     fetchDecksData();
   };
@@ -1443,7 +1300,6 @@ export default function ReviewScreen() {
           visible={showMethodModal}
           pendingSelection={pendingSelection}
           colors={colors}
-          isPreparingVoice={isPreparingVoice}
           onClose={() => setShowMethodModal(false)}
           onSelectMethod={handleSelectMethod}
           onSelectConjugation={() => {
@@ -1491,7 +1347,6 @@ export default function ReviewScreen() {
           visible={showMethodModal}
           pendingSelection={pendingSelection}
           colors={colors}
-          isPreparingVoice={isPreparingVoice}
           onClose={() => setShowMethodModal(false)}
           onSelectMethod={handleSelectMethod}
         />
@@ -1506,11 +1361,6 @@ export default function ReviewScreen() {
   const lang = getEffectiveCardLanguage(currentCard);
   const isIdeographic = lang.startsWith('zh') || lang.startsWith('ja');
   const isJapanese = lang.startsWith('ja');
-
-  // Si Sherpa no está presente en el binario o el modelo no está cargado, el servicio recurre al motor nativo.
-  const isVoiceEngineReadyForCard = !isJapanese
-    ? true
-    : isVoiceEngineReady || !sherpaVoiceService.checkNativeModule();
 
   return (
     <KeyboardAvoidingView
@@ -1571,6 +1421,7 @@ export default function ReviewScreen() {
             <VoiceTranscriptArea
               card={currentCard}
               isChecked={isChecked}
+              feedback={voiceFeedback}
               colors={colors}
             />
           )}
@@ -1825,12 +1676,12 @@ export default function ReviewScreen() {
                 <VoiceMicControl
                   isListening={isListening}
                   speechStatus={speechStatus}
-                  isEngineReady={isVoiceEngineReadyForCard}
+                  busyLabel={voiceSetupLabel}
                   voiceProgressAnim={voiceProgressAnim}
                   micPulseAnim={micPulseAnim}
                   colors={colors}
                   onPress={() => {
-                    if (speechStatus === 'starting' || !isVoiceEngineReadyForCard) return;
+                    if (speechStatus === 'starting' || voiceSetupLabel) return;
                     if (isListening) {
                       speechService.stop();
                       setIsListening(false);

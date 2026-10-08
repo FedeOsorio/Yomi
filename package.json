@@ -1,11 +1,10 @@
 {
   "name": "yomi",
   "main": "expo-router/entry",
-  "version": "0.3.2",
+  "version": "0.3.207",
   "dependencies": {
     "@expo/ui": "~57.0.22",
     "@expo/vector-icons": "^15.1.1",
-    "@fugood/react-native-audio-pcm-stream": "^1.1.4",
     "babel-plugin-inline-import": "^3.0.0",
     "drizzle-kit": "^0.31.10",
     "drizzle-orm": "^0.45.2",
@@ -75,7 +74,6 @@
     "lint": "expo lint",
     "build:dictionary": "tsx scripts/build-dictionary.ts",
     "optimize:images": "node scripts/convertImagesToWebp.js",
-    "download:models": "node scripts/download-models.js",
     "build:android:debug": "cd android && gradlew.bat assembleDebug",
     "build:android:bundle": "cd android && gradlew.bat bundleRelease"
   },

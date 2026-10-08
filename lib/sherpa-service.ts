@@ -1,526 +1,369 @@
+import { PermissionsAndroid, Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 
+/**
+ * Reconocimiento de voz offline con Sherpa-ONNX + SenseVoice (ja / zh / en / ko / yue).
+ *
+ * - El modelo NO viaja dentro del APK: se descarga una sola vez (~230 MB) a la carpeta
+ *   interna de la app la primera vez que el usuario elige repasar por voz.
+ * - Cada vez que el usuario habla y hace una pausa se transcribe esa "elocución" completa
+ *   y se entrega como UN resultado final (un intento).
+ */
+
+const MODEL_BASE_URL =
+  'https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main';
+const MODEL_FILES = [
+  { name: 'tokens.txt', minBytes: 300_000 },
+  { name: 'model.int8.onnx', minBytes: 230_000_000 },
+];
+export const SHERPA_MODEL_SIZE_MB = 230;
+
+const SENSEVOICE_LANGS: Record<string, string> = { ja: 'ja', zh: 'zh', en: 'en', ko: 'ko', yue: 'yue' };
+
+/** Código de idioma de SenseVoice para un código BCP-47, o null si el modelo no lo soporta. */
+export function toSenseVoiceLang(code?: string | null): string | null {
+  const base = (code || '').toLowerCase().split('-')[0];
+  return SENSEVOICE_LANGS[base] ?? null;
+}
+
+export const MODEL_NOT_DOWNLOADED = 'MODEL_NOT_DOWNLOADED';
+
+// Detección de voz (VAD por energía). Todo en milisegundos: el tamaño de cada bloque de
+// audio que entrega el micrófono varía según el teléfono (40–100 ms).
+const SAMPLE_RATE = 16000;
+const SPEECH_START_MS = 120; // voz sostenida necesaria para considerar que empezó a hablar
+const END_SILENCE_MS = 650; // pausa que da la palabra por terminada (tolera っ y pausas cortas)
+const PRE_ROLL_MS = 450; // audio previo que se conserva para no cortar la primera sílaba
+const MIN_UTTERANCE_MS = 300;
+const MAX_UTTERANCE_MS = 4000;
+
+const ms = (n: number) => Math.round((n / 1000) * SAMPLE_RATE);
+
 export interface SherpaCallbacks {
-  onResult: (transcript: string, isFinal: boolean, alternatives?: string[]) => void;
-  onError?: (errorMessage: string) => void;
+  /** Un resultado por elocución (siempre final). */
+  onResult: (text: string) => void;
+  onError?: (message: string) => void;
   onStart?: () => void;
   onEnd?: () => void;
-  onTimeout?: () => void;
 }
 
-export interface SherpaStartOptions {
-  language?: string;
-  initialPrompt?: string;
-}
-
-/**
- * Mapeo de códigos BCP-47 a los códigos cortos que SenseVoice espera.
- * SenseVoice soporta: 'auto', 'zh', 'en', 'ja', 'ko', 'yue'.
- */
-const SENSEVOICE_LANG_MAP: Record<string, string> = {
-  'ja': 'ja',
-  'ja-jp': 'ja',
-  'zh': 'zh',
-  'zh-cn': 'zh',
-  'zh-tw': 'zh',
-  'en': 'en',
-  'en-us': 'en',
-  'en-gb': 'en',
-  'ko': 'ko',
-  'ko-kr': 'ko',
-  'yue': 'yue',
+type SherpaModules = {
+  stt: typeof import('react-native-sherpa-onnx/stt');
+  audio: typeof import('react-native-sherpa-onnx/audio');
 };
 
-export const SENSE_VOICE_MODEL_DIR_NAME = 'models/sense-voice';
-
-export const SENSE_VOICE_URLS = {
-  model: 'https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx',
-  tokens: 'https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt',
-};
-
-type SttModuleType = typeof import('react-native-sherpa-onnx/stt');
-type AudioModuleType = typeof import('react-native-sherpa-onnx/audio');
-
-let cachedSttModule: SttModuleType | null = null;
-let cachedAudioModule: AudioModuleType | null = null;
-let hasCheckedModules = false;
-
-function getSherpaModules(): { stt: SttModuleType; audio: AudioModuleType } | null {
-  if (hasCheckedModules) {
-    if (cachedSttModule && cachedAudioModule) {
-      return { stt: cachedSttModule, audio: cachedAudioModule };
-    }
-    return null;
-  }
-  hasCheckedModules = true;
+let modules: SherpaModules | null | undefined;
+function getModules(): SherpaModules | null {
+  if (modules !== undefined) return modules;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const stt = require('react-native-sherpa-onnx/stt');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const audio = require('react-native-sherpa-onnx/audio');
-    if (stt && typeof stt.createSTT === 'function' && audio && typeof audio.createPcmLiveStream === 'function') {
-      cachedSttModule = stt;
-      cachedAudioModule = audio;
-      return { stt, audio };
-    }
+    /* eslint-disable @typescript-eslint/no-require-imports */
+    modules = {
+      stt: require('react-native-sherpa-onnx/stt'),
+      audio: require('react-native-sherpa-onnx/audio'),
+    };
+    /* eslint-enable @typescript-eslint/no-require-imports */
   } catch (err) {
-    console.warn(
-      '[SherpaVoiceService] react-native-sherpa-onnx native module is not present in this binary build.',
-      err
-    );
+    console.warn('[Sherpa] Módulo nativo no disponible en este binario:', err);
+    modules = null;
   }
-  return null;
+  return modules;
+}
+
+/** Limpia etiquetas <|...|>, puntuación y rellenos que SenseVoice emite ante ruidos. */
+function cleanTranscript(raw: string, lang: string): string {
+  if (!raw || raw.includes('<|nospeech|>')) return '';
+  let text = raw
+    .replace(/<\|.*?\|>/g, '')
+    .replace(/[。、，！？!?.,:;…〜～・]/g, '')
+    .trim();
+  text = lang === 'ja' || lang === 'zh' || lang === 'yue' ? text.replace(/\s+/g, '') : text.replace(/\s+/g, ' ');
+  const FILLERS = new Set(['ああ', 'ええ', 'えー', 'あの', 'ん', 'うーん', 'えっと', '嗯', '啊', '呃', '哦', '呀', 'っ', 'ー']);
+  return FILLERS.has(text) ? '' : text;
 }
 
 class SherpaVoiceService {
-  private sttEngine: any = null;
-  private isModelLoaded = false;
-  private modelLoadPromise: Promise<boolean> | null = null;
-  private isListeningActive = false;
-  private liveStream: any = null;
+  private engine: any = null;
+  private engineLang = '';
+  private loading: Promise<boolean> | null = null;
+  private downloading: Promise<boolean> | null = null;
+  private stream: any = null;
+  private unsubscribers: Array<() => void> = [];
+  private callbacks: SherpaCallbacks | null = null;
   private generation = 0;
-  private isNativeAvailable: boolean | null = null;
-  private activeCallbacks: SherpaCallbacks | null = null;
-  private isTranscribing = false;
-  private lastTranscribedText = '';
-  private cleanupFns: Array<() => void> = [];
-  private engineLanguage = '';
+  lastError: string | null = null;
 
-  /**
-   * Verifica si el módulo nativo de Sherpa-ONNX está enlazado y disponible.
-   */
-  checkNativeModule(): boolean {
-    if (this.isNativeAvailable !== null) return this.isNativeAvailable;
-    const modules = getSherpaModules();
-    this.isNativeAvailable = Boolean(modules !== null);
-    return this.isNativeAvailable;
+  isNativeAvailable(): boolean {
+    return getModules() !== null;
   }
 
-  /**
-   * Ruta del directorio local en el almacenamiento de la app.
-   */
-  getLocalModelDirectory(): string {
-    const docDir = FileSystem.documentDirectory || '';
-    return `${docDir}${SENSE_VOICE_MODEL_DIR_NAME}`;
+  // ───────────── Modelo ─────────────
+
+  /** Directorio del modelo como URI (para expo-file-system). */
+  private modelDirUri(): string {
+    return `${FileSystem.documentDirectory}models/sense-voice`;
   }
 
-  /**
-   * Verifica si los archivos del modelo SenseVoice existen en el almacenamiento local.
-   */
+  /** Mismo directorio como ruta absoluta SIN "file://" (el código nativo usa java.io.File). */
+  private modelDirPath(): string {
+    return decodeURI(this.modelDirUri().replace(/^file:\/\//, ''));
+  }
+
   async isModelDownloaded(): Promise<boolean> {
     try {
-      const dir = this.getLocalModelDirectory();
-      const modelFile = `${dir}/model.int8.onnx`;
-      const tokensFile = `${dir}/tokens.txt`;
-
-      const [modelInfo, tokensInfo] = await Promise.all([
-        FileSystem.getInfoAsync(modelFile),
-        FileSystem.getInfoAsync(tokensFile),
-      ]);
-
-      return Boolean(modelInfo.exists && tokensInfo.exists && (modelInfo.size || 0) > 1000000);
+      for (const f of MODEL_FILES) {
+        const info = await FileSystem.getInfoAsync(`${this.modelDirUri()}/${f.name}`);
+        if (!info.exists || (info.size ?? 0) < f.minBytes) return false;
+      }
+      return true;
     } catch {
       return false;
     }
   }
 
-  /**
-   * Descarga el modelo SenseVoice-Small cuantizado (INT8) y sus tokens con reporte de progreso.
-   */
-  async downloadModel(onProgress?: (percent: number) => void): Promise<boolean> {
-    try {
-      const dir = this.getLocalModelDirectory();
-      const dirInfo = await FileSystem.getInfoAsync(dir);
-      if (!dirInfo.exists) {
-        await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
-      }
+  /** Descarga el modelo (una sola vez). Se descarga a ".part" y se renombra al terminar. */
+  downloadModel(onProgress?: (percent: number) => void): Promise<boolean> {
+    if (this.downloading) return this.downloading;
+    this.downloading = (async () => {
+      try {
+        const dir = this.modelDirUri();
+        await FileSystem.makeDirectoryAsync(dir, { intermediates: true }).catch(() => {});
+        for (const f of MODEL_FILES) {
+          const target = `${dir}/${f.name}`;
+          const info = await FileSystem.getInfoAsync(target);
+          if (info.exists && (info.size ?? 0) >= f.minBytes) continue;
 
-      const tokensPath = `${dir}/tokens.txt`;
-      const modelPath = `${dir}/model.int8.onnx`;
-
-      console.log('[SherpaVoiceService] Downloading tokens.txt...');
-      await FileSystem.downloadAsync(SENSE_VOICE_URLS.tokens, tokensPath);
-
-      console.log('[SherpaVoiceService] Downloading model.int8.onnx (~230MB)...');
-      const downloadResumable = FileSystem.createDownloadResumable(
-        SENSE_VOICE_URLS.model,
-        modelPath,
-        {},
-        (downloadProgress) => {
-          const progress =
-            downloadProgress.totalBytesWritten / downloadProgress.totalBytesExpectedToWrite;
-          const percent = Math.min(Math.max(Math.round(progress * 100), 0), 100);
-          onProgress?.(percent);
+          const part = `${target}.part`;
+          await FileSystem.deleteAsync(part, { idempotent: true });
+          const isBig = f.name.endsWith('.onnx');
+          const task = FileSystem.createDownloadResumable(`${MODEL_BASE_URL}/${f.name}`, part, {}, (p) => {
+            if (isBig && p.totalBytesExpectedToWrite > 0) {
+              onProgress?.(Math.round((p.totalBytesWritten / p.totalBytesExpectedToWrite) * 100));
+            }
+          });
+          const res = await task.downloadAsync();
+          const partInfo = await FileSystem.getInfoAsync(part);
+          if (!res || res.status !== 200 || !partInfo.exists || (partInfo.size ?? 0) < f.minBytes) {
+            await FileSystem.deleteAsync(part, { idempotent: true });
+            throw new Error(`Descarga incompleta de ${f.name}`);
+          }
+          await FileSystem.deleteAsync(target, { idempotent: true });
+          await FileSystem.moveAsync({ from: part, to: target });
         }
-      );
-
-      const result = await downloadResumable.downloadAsync();
-      if (result && result.status === 200) {
-        console.log('[SherpaVoiceService] Model downloaded successfully to:', modelPath);
         onProgress?.(100);
         return true;
+      } catch (err: any) {
+        this.lastError = err?.message ?? String(err);
+        console.warn('[Sherpa] Error descargando el modelo:', err);
+        return false;
+      } finally {
+        this.downloading = null;
       }
-      return false;
-    } catch (err) {
-      console.error('[SherpaVoiceService] Error downloading SenseVoice model:', err);
-      return false;
-    }
+    })();
+    return this.downloading;
   }
 
-  /**
-   * Resuelve el código de idioma SenseVoice a partir de un código BCP-47.
-   */
-  private resolveSenseVoiceLanguage(langCode?: string): string {
-    if (!langCode) return 'ja'; // Default para Yomi
-    const key = langCode.toLowerCase().trim();
-    return SENSEVOICE_LANG_MAP[key] || SENSEVOICE_LANG_MAP[key.split('-')[0]] || 'ja';
+  isReady(lang?: string): boolean {
+    return Boolean(this.engine) && (!lang || this.engineLang === toSenseVoiceLang(lang));
   }
 
-  /**
-   * Carga el modelo acústico SenseVoice en memoria para el idioma especificado.
-   * Si el engine ya está cargado con un idioma diferente, lo destruye y recrea.
-   */
-  async loadModel(languageCode?: string): Promise<boolean> {
-    const targetLang = this.resolveSenseVoiceLanguage(languageCode);
-
-    // Si ya está cargado con el mismo idioma, no recrear
-    if (this.isModelLoaded && this.sttEngine && this.engineLanguage === targetLang) {
-      return true;
+  /** Carga el modelo en memoria para el idioma indicado (reutiliza el motor si ya está cargado). */
+  async loadModel(langCode: string): Promise<boolean> {
+    const lang = toSenseVoiceLang(langCode);
+    if (!lang) return false;
+    if (this.engine && this.engineLang === lang) return true;
+    if (this.loading) {
+      await this.loading;
+      if (this.engine && this.engineLang === lang) return true;
     }
 
-    // Si está cargado con otro idioma, destruir el engine anterior
-    if (this.isModelLoaded && this.sttEngine && this.engineLanguage !== targetLang) {
-      console.log(`[SherpaVoiceService] Language changed: ${this.engineLanguage} → ${targetLang}, recreating engine...`);
+    this.loading = (async () => {
+      this.lastError = null;
+      const m = getModules();
+      if (!m) {
+        this.lastError = 'El módulo nativo de Sherpa-ONNX no está incluido en esta compilación.';
+        return false;
+      }
+      if (!(await this.isModelDownloaded())) {
+        this.lastError = MODEL_NOT_DOWNLOADED;
+        return false;
+      }
       try {
-        await this.sttEngine.destroy();
-      } catch {}
-      this.sttEngine = null;
-      this.isModelLoaded = false;
-    }
-
-    const modules = getSherpaModules();
-    if (!modules) {
-      return false;
-    }
-
-    if (this.modelLoadPromise) {
-      return this.modelLoadPromise;
-    }
-
-    const loadPromise = (async () => {
-      try {
-        console.log(`[SherpaVoiceService] Initializing SenseVoice STT Engine (lang: ${targetLang})...`);
-        const hasLocal = await this.isModelDownloaded();
-
-        let modelPathConfig: any;
-        if (hasLocal) {
-          modelPathConfig = {
-            type: 'file',
-            path: this.getLocalModelDirectory(),
-          };
-          console.log('[SherpaVoiceService] Using downloaded model from:', modelPathConfig.path);
-        } else {
-          // Intentar primero con assets de la app (si fueron empaquetados en el APK)
-          modelPathConfig = {
-            type: 'auto',
-            path: SENSE_VOICE_MODEL_DIR_NAME,
-          };
-          console.log('[SherpaVoiceService] Using auto/asset model path:', modelPathConfig.path);
+        if (this.engine) {
+          await this.engine.destroy().catch(() => {});
+          this.engine = null;
         }
-
-        const engine = await modules.stt.createSTT({
-          modelPath: modelPathConfig,
+        this.engine = await m.stt.createSTT({
+          modelPath: { type: 'file', path: this.modelDirPath() },
           modelType: 'sense_voice',
           preferInt8: true,
           numThreads: 2,
-          modelOptions: {
-            senseVoice: {
-              language: targetLang,
-              useItn: true,
-            },
-          },
+          modelOptions: { senseVoice: { language: lang, useItn: true } },
         });
-
-        this.sttEngine = engine;
-        this.isModelLoaded = true;
-        this.engineLanguage = targetLang;
-        console.log(`[SherpaVoiceService] SenseVoice Engine initialized (lang: ${targetLang})!`);
+        this.engineLang = lang;
         return true;
-      } catch (err) {
-        console.warn('[SherpaVoiceService] Could not initialize SenseVoice model:', err);
-        this.isModelLoaded = false;
-        this.sttEngine = null;
-        this.engineLanguage = '';
+      } catch (err: any) {
+        this.engine = null;
+        this.engineLang = '';
+        this.lastError = err?.message ?? String(err);
+        console.warn('[Sherpa] No se pudo cargar el modelo:', err);
         return false;
       }
     })();
 
-    this.modelLoadPromise = loadPromise;
     try {
-      return await loadPromise;
+      return await this.loading;
     } finally {
-      this.modelLoadPromise = null;
+      this.loading = null;
     }
   }
 
-  /**
-   * Retorna si el motor está inicializado y listo para transcribir.
-   */
-  isReady(): boolean {
-    return this.isModelLoaded && Boolean(this.sttEngine);
+  // ───────────── Micrófono ─────────────
+
+  private async ensureMicPermission(): Promise<boolean> {
+    if (Platform.OS !== 'android') return true;
+    const perm = PermissionsAndroid.PERMISSIONS.RECORD_AUDIO;
+    if (await PermissionsAndroid.check(perm)) return true;
+    return (await PermissionsAndroid.request(perm)) === PermissionsAndroid.RESULTS.GRANTED;
   }
 
-  /**
-   * Retorna si el micrófono está escuchando activamente.
-   */
   isListening(): boolean {
-    return this.isListeningActive;
+    return this.stream !== null;
   }
 
-  /**
-   * Limpia etiquetas de eventos y emociones de SenseVoice (ej. <|NEUTRAL|>, <|ja|>, etc.),
-   * y remueve puntuación espuria. Retorna cadena vacía si no hubo habla real.
-   */
-  cleanSenseVoiceTranscript(rawText: string, langCode?: string): string {
-    if (!rawText) return '';
-    // Descartar de inmediato eventos nospeech de SenseVoice
-    if (rawText.includes('<|nospeech|>')) return '';
-
-    // Remover tokens especiales de SenseVoice (<|...|>)
-    let cleaned = rawText.replace(/<\|.*?\|>/g, '').trim();
-
-    // Remover signos de puntuación espurios que SenseVoice agrega ante silencios o pausas
-    cleaned = cleaned.replace(/[。、！？!?.,:;…〜～・]/g, '').trim();
-
-    // Espaciado según idioma: japonés/chino no usan espacios
-    const isCjk = !langCode || langCode.startsWith('ja') || langCode.startsWith('zh');
-    if (isCjk) {
-      cleaned = cleaned.replace(/\s+/g, '');
-    } else {
-      cleaned = cleaned.replace(/\s+/g, ' ');
-    }
-
-    return cleaned;
-  }
-
-  /**
-   * Inicia la captura de audio en vivo y el reconocimiento con SenseVoice.
-   * Utiliza VAD adaptativo por energía y buffer circular de onset para transcribir
-   * únicamente cuando el usuario realmente habla, evitando alucinaciones sobre silencios.
-   */
-  async start(
-    callbacks: SherpaCallbacks,
-    options?: SherpaStartOptions
-  ): Promise<boolean> {
-    if (!this.checkNativeModule()) return false;
-
-    // Cargar/recrear engine con el idioma correcto
-    const requestedLang = options?.language;
-    if (!this.isReady() || (requestedLang && this.engineLanguage !== this.resolveSenseVoiceLanguage(requestedLang))) {
-      const loaded = await this.loadModel(requestedLang);
-      if (!loaded || !this.sttEngine) return false;
-    }
-
+  async start(langCode: string, callbacks: SherpaCallbacks): Promise<boolean> {
     await this.abort();
+    const gen = ++this.generation;
 
-    const modules = getSherpaModules();
-    if (!modules) return false;
+    if (!(await this.loadModel(langCode))) {
+      callbacks.onError?.(this.lastError ?? 'No se pudo cargar el modelo de voz');
+      return false;
+    }
+    if (!(await this.ensureMicPermission())) {
+      callbacks.onError?.('Permiso de micrófono denegado');
+      return false;
+    }
+    if (gen !== this.generation) return false; // otra llamada a start/abort llegó mientras cargaba
 
-    this.generation++;
-    const currentGen = this.generation;
-    this.activeCallbacks = callbacks;
-    this.lastTranscribedText = '';
-    this.isTranscribing = false;
+    const lang = this.engineLang;
+    const m = getModules()!;
+    let preRoll: number[] = [];
+    let utterance: number[] = [];
+    let speaking = false;
+    let voicedMs = 0;
+    let silenceMs = 0;
+    let noiseFloor = 0.003;
+    let busy = false;
 
-    // Constantes de audio (16kHz mono)
-    const PRE_ROLL_SAMPLES = 16000 * 0.25; // 250ms de audio previo para capturar ataques consonánticos
-    const MIN_UTTERANCE_SAMPLES = 16000 * 0.3; // Mínimo 300ms de audio para considerar elocución
-    const MAX_UTTERANCE_SAMPLES = 16000 * 4.0; // Máximo 4s para una palabra/frase de tarjeta
+    const pushPreRoll = (samples: Float32Array) => {
+      for (let i = 0; i < samples.length; i++) preRoll.push(samples[i]);
+      if (preRoll.length > ms(PRE_ROLL_MS)) preRoll = preRoll.slice(preRoll.length - ms(PRE_ROLL_MS));
+    };
 
-    let preRollBuffer: number[] = [];
-    let utteranceSamples: number[] = [];
-    let isSpeaking = false;
-    let voiceFrames = 0;
-    let silenceFrames = 0;
-    let noiseFloor = 0.015;
+    const transcribe = async (audio: number[]) => {
+      // Normalización suave de volumen para micrófonos con poca ganancia
+      let peak = 0;
+      for (const v of audio) peak = Math.max(peak, Math.abs(v));
+      if (peak < 0.01) return;
+      if (peak < 0.6) {
+        const gain = Math.min(0.7 / peak, 3);
+        for (let i = 0; i < audio.length; i++) audio[i] *= gain;
+      }
+      busy = true;
+      try {
+        const result = await this.engine.transcribeSamples(audio, SAMPLE_RATE);
+        if (gen !== this.generation) return;
+        const text = cleanTranscript(result?.text ?? '', lang);
+        console.log('[Sherpa] Elocución:', JSON.stringify(result?.text), '→', JSON.stringify(text));
+        if (text) callbacks.onResult(text);
+      } catch (err) {
+        console.warn('[Sherpa] Error transcribiendo:', err);
+      } finally {
+        busy = false;
+      }
+    };
 
     try {
-      this.liveStream = modules.audio.createPcmLiveStream({
-        sampleRate: 16000,
-        channelCount: 1,
+      const stream = m.audio.createPcmLiveStream({ sampleRate: SAMPLE_RATE, channelCount: 1 });
+
+      const offData = stream.onData((samples: Float32Array, rate: number) => {
+        if (gen !== this.generation || samples.length === 0) return;
+        const chunkMs = (samples.length / (rate || SAMPLE_RATE)) * 1000;
+
+        let sum = 0;
+        for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+        const rms = Math.sqrt(sum / samples.length);
+        if (!speaking) noiseFloor = noiseFloor * 0.95 + Math.min(rms, 0.015) * 0.05;
+        const isVoice = rms > Math.max(0.005, Math.min(0.02, noiseFloor * 1.8));
+
+        if (busy || !speaking) {
+          // Esperando que empiece a hablar (o transcribiendo el intento anterior)
+          pushPreRoll(samples);
+          if (busy) return;
+          voicedMs = isVoice ? voicedMs + chunkMs : 0;
+          if (voicedMs >= SPEECH_START_MS) {
+            speaking = true;
+            silenceMs = 0;
+            utterance = preRoll;
+            preRoll = [];
+          }
+          return;
+        }
+
+        for (let i = 0; i < samples.length; i++) utterance.push(samples[i]);
+        silenceMs = isVoice ? 0 : silenceMs + chunkMs;
+
+        const ended = silenceMs >= END_SILENCE_MS;
+        const tooLong = utterance.length >= ms(MAX_UTTERANCE_MS);
+        if (!ended && !tooLong) return;
+
+        speaking = false;
+        voicedMs = 0;
+        // Quitar el silencio final dejando ~200 ms de cola
+        const trim = ended ? Math.max(0, ms(silenceMs - 200)) : 0;
+        const audio = utterance.slice(0, utterance.length - trim);
+        utterance = [];
+        if (audio.length >= ms(MIN_UTTERANCE_MS)) transcribe(audio);
       });
 
-      const cleanupError = this.liveStream.onError((msg: string) => {
-        if (this.generation !== currentGen) return;
-        console.warn('[SherpaVoiceService] LiveStream error:', msg);
-        callbacks.onError?.(msg);
+      const offError = stream.onError((msg: string) => {
+        if (gen === this.generation) callbacks.onError?.(msg);
       });
 
-      const cleanupData = this.liveStream.onData(async (samples: Float32Array, sampleRate: number) => {
-        if (this.generation !== currentGen || !this.isListeningActive) return;
-
-        const chunkLength = samples.length;
-        if (chunkLength === 0) return;
-
-        // 1. Calcular energía RMS del chunk
-        let sumSquares = 0;
-        for (let i = 0; i < chunkLength; i++) {
-          const val = samples[i];
-          sumSquares += val * val;
-        }
-        const rms = Math.sqrt(sumSquares / chunkLength);
-
-        // 2. Calibración dinámica del piso de ruido cuando no hay habla activa
-        if (!isSpeaking) {
-          noiseFloor = noiseFloor * 0.92 + rms * 0.08;
-        }
-
-        // Umbral adaptativo: al menos 0.045 absoluto y 2.5x el ruido ambiental
-        const voiceThreshold = Math.max(0.045, noiseFloor * 2.5);
-        const isVoiceEnergy = rms > voiceThreshold;
-
-        if (isVoiceEnergy) {
-          voiceFrames++;
-          silenceFrames = 0;
-
-          if (!isSpeaking && voiceFrames >= 2) {
-            // Inicio de elocución confirmado (~200ms de voz por encima del umbral)
-            isSpeaking = true;
-            // Arrancar elocución con el pre-roll preservado + este frame
-            utteranceSamples = [...preRollBuffer];
-            for (let i = 0; i < chunkLength; i++) {
-              utteranceSamples.push(samples[i]);
-            }
-          } else if (isSpeaking) {
-            for (let i = 0; i < chunkLength; i++) {
-              utteranceSamples.push(samples[i]);
-            }
-          }
-        } else {
-          voiceFrames = 0;
-
-          if (isSpeaking) {
-            silenceFrames++;
-            for (let i = 0; i < chunkLength; i++) {
-              utteranceSamples.push(samples[i]);
-            }
-          } else {
-            // Mantener buffer circular de pre-roll
-            for (let i = 0; i < chunkLength; i++) {
-              preRollBuffer.push(samples[i]);
-            }
-            if (preRollBuffer.length > PRE_ROLL_SAMPLES) {
-              preRollBuffer = preRollBuffer.slice(preRollBuffer.length - PRE_ROLL_SAMPLES);
-            }
-          }
-        }
-
-        // 3. Fin de elocución: habla confirmada seguida de ~400-500ms de silencio o límite de tiempo
-        const isEndOfUtterance = isSpeaking && !this.isTranscribing && silenceFrames >= 4;
-        const isTooLong = isSpeaking && !this.isTranscribing && utteranceSamples.length >= MAX_UTTERANCE_SAMPLES;
-
-        if ((isEndOfUtterance || isTooLong) && utteranceSamples.length >= MIN_UTTERANCE_SAMPLES) {
-          this.isTranscribing = true;
-          isSpeaking = false;
-          voiceFrames = 0;
-          const currentSilence = silenceFrames;
-          silenceFrames = 0;
-
-          // Recortar silencio posterior excesivo antes de enviar al modelo acústico
-          const trailingSilenceSamples = Math.min(currentSilence * chunkLength, 16000 * 0.35);
-          const audioToTranscribe = utteranceSamples.slice(
-            0,
-            Math.max(MIN_UTTERANCE_SAMPLES, utteranceSamples.length - trailingSilenceSamples)
-          );
-
-          utteranceSamples = [];
-          preRollBuffer = [];
-
-          try {
-            const result = await this.sttEngine.transcribeSamples(audioToTranscribe, 16000);
-            if (this.generation !== currentGen) return;
-
-            const text = this.cleanSenseVoiceTranscript(result?.text || '', requestedLang);
-            if (text && text !== this.lastTranscribedText) {
-              this.lastTranscribedText = text;
-              console.log('[SherpaVoiceService] Utterance transcription:', text);
-              callbacks.onResult(text, true, [text]);
-            }
-          } catch (e) {
-            console.warn('[SherpaVoiceService] Transcribe utterance error:', e);
-          } finally {
-            this.isTranscribing = false;
-          }
-        }
-      });
-
-      this.cleanupFns = [cleanupData, cleanupError];
-
-      await this.liveStream.start();
-      this.isListeningActive = true;
+      this.unsubscribers = [offData, offError];
+      this.stream = stream;
+      this.callbacks = callbacks;
+      await stream.start();
+      if (gen !== this.generation) return false;
       callbacks.onStart?.();
       return true;
     } catch (err: any) {
-      console.warn('[SherpaVoiceService] Failed to start liveStream:', err);
-      this.isListeningActive = false;
-      callbacks.onError?.(err?.message || 'Error al iniciar micrófono');
+      await this.abort();
+      callbacks.onError?.(err?.message ?? 'No se pudo abrir el micrófono');
       return false;
     }
   }
 
-  /**
-   * Detiene la captura de audio en vivo de forma limpia.
-   * NO transcribe silencios residuales para evitar alucinaciones.
-   */
+  /** Detiene el micrófono y notifica onEnd. */
   async stop(): Promise<void> {
-    if (!this.isListeningActive) return;
-    this.isListeningActive = false;
-
-    // Limpiar listeners antes de detener el stream
-    this.cleanupFns.forEach((fn) => {
-      try {
-        fn();
-      } catch {}
-    });
-    this.cleanupFns = [];
-
-    if (this.liveStream) {
-      try {
-        await this.liveStream.stop();
-      } catch {}
-      this.liveStream = null;
-    }
-
-    const callbacks = this.activeCallbacks;
-    this.activeCallbacks = null;
-    this.isTranscribing = false;
-    callbacks?.onEnd?.();
+    const cb = this.callbacks;
+    await this.abort();
+    cb?.onEnd?.();
   }
 
-  /**
-   * Aborta de inmediato cualquier sesión de audio y limpia listeners.
-   */
+  /** Detiene el micrófono sin notificar y descarta resultados pendientes. */
   async abort(): Promise<void> {
     this.generation++;
-    this.isListeningActive = false;
-    this.activeCallbacks = null;
-    this.isTranscribing = false;
-
-    this.cleanupFns.forEach((fn) => {
+    this.callbacks = null;
+    this.unsubscribers.forEach((off) => {
       try {
-        fn();
+        off();
       } catch {}
     });
-    this.cleanupFns = [];
-
-    if (this.liveStream) {
-      try {
-        await this.liveStream.stop();
-      } catch {}
-      this.liveStream = null;
-    }
+    this.unsubscribers = [];
+    const stream = this.stream;
+    this.stream = null;
+    if (stream) await stream.stop().catch(() => {});
   }
-
 }
 
 export const sherpaVoiceService = new SherpaVoiceService();
