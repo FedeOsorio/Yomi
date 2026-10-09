@@ -1,5 +1,6 @@
 import { toNormalizedHiragana } from './japanese-utils';
 import { KANJI_READINGS_MAP } from './kanji-readings-db';
+import { parseAux } from './word-aux';
 
 /**
  * Índice en memoria palabra → lecturas (kana), construido con el vocabulario de los mazos del usuario.
@@ -30,11 +31,8 @@ export async function initPhoneticDictionary(): Promise<void> {
       .from(words);
     for (const w of wordsList) {
       registerWordInDictionary(w.text, w.reading);
-      if (!w.aux) continue;
-      try {
-        const aux = JSON.parse(w.aux);
-        [aux.kanjiReadings, aux.onReading, aux.kunReading].forEach((r) => registerWordInDictionary(w.text, r));
-      } catch {}
+      const aux = parseAux(w.aux);
+      [aux.kanjiReadings, aux.onReading, aux.kunReading].forEach((r) => registerWordInDictionary(w.text, r));
     }
   } catch (err) {
     console.warn('[PhoneticDictionary] No se pudo cargar el vocabulario:', err);

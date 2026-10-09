@@ -1,17 +1,13 @@
 import { create } from 'zustand';
 import { Rating } from 'ts-fsrs';
-import { db } from '../../db';
-import { decks, words } from '../../db/schema';
-import { eq } from 'drizzle-orm';
 import { DeckWithStats, getDecksWithStats } from '../../lib/deck-service';
 import { PinyinBreakdownItem } from '../../lib/pinyin-utils';
 import {
   DueCardWithContext,
   getDueCards,
   getAllCardsForPractice,
-  healCorruptedSrsIntervals,
+  processCardReview,
 } from '../../lib/srs-engine';
-import { CompoundWord } from '../../lib/word-service';
 import { initPhoneticDictionary } from '../../lib/phonetic-dictionary';
 
 export interface CardEvaluation {
@@ -34,7 +30,7 @@ export interface ReviewState {
   isPracticeMode: boolean;
   showMethodModal: boolean;
   pendingSelection: {
-    deckId: string | 'all';
+    deckId: string;
     deckName: string;
     hasDue: boolean;
     languageCode?: string;
@@ -48,16 +44,14 @@ export interface ReviewState {
   sessionCompleted: boolean;
   sessionCount: number;
 
-  // Rastreo interno de tarjetas en la sesión actual
+  // Tarjetas falladas en la sesión actual
   sessionFailedCardIds: Set<string>;
-  sessionProcessedCardIds: Set<string>;
 
   // Entrada e interacción de la tarjeta
   inputReading: string;
   inputMeaning: string;
   isChecked: boolean;
   evaluation: CardEvaluation | null;
-  currentCompoundWords: CompoundWord[];
 
   // Reconocimiento de voz
   isListening: boolean;
@@ -69,10 +63,10 @@ export interface ReviewState {
 
   // Acciones
   fetchDecksData: () => Promise<void>;
-  promptStudyMethod: (deckId: string | 'all', deckName: string, hasDue: boolean) => void;
+  promptStudyMethod: (deckId: string, deckName: string, hasDue: boolean) => void;
   setShowMethodModal: (show: boolean) => void;
   startSession: (
-    deckId: string | 'all',
+    deckId: string,
     deckName: string,
     method?: StudyMethod,
     practiceMode?: boolean
@@ -82,13 +76,19 @@ export interface ReviewState {
   setInputMeaning: (val: string) => void;
   setIsChecked: (val: boolean) => void;
   setEvaluation: (evalData: CardEvaluation | null) => void;
-  setCurrentCompoundWords: (compounds: CompoundWord[]) => void;
   setIsListening: (val: boolean) => void;
   setSpeechTranscript: (val: string) => void;
   setSpeechStatus: (val: SpeechStatus) => void;
   setIsProcessing: (val: boolean) => void;
   recordFailedCard: (cardId: string) => void;
-  recordProcessedCard: (cardId: string) => void;
+  /**
+   * Registra la respuesta a la tarjeta ACTUAL dentro de la sesión: si es un fallo, la marca como
+   * fallada y la vuelve a meter 5–10 tarjetas más adelante. Devuelve si ya se había fallado antes
+   * en la sesión (dato que necesita saveCardReview). No escribe en la base de datos.
+   */
+  answerCurrentCard: (rating: Rating) => { wasFailedInSession: boolean };
+  /** Guarda la respuesta en el SRS (no hace nada en modo práctica). */
+  saveCardReview: (cardId: string, rating: Rating, wasFailedInSession: boolean) => Promise<void>;
   resetCurrentCardForm: () => void;
   advanceCard: (incrementCount?: boolean) => boolean;
   reinsertCurrentCardAhead: (offsetMin?: number, offsetMax?: number) => void;
@@ -113,13 +113,11 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
   sessionCount: 0,
 
   sessionFailedCardIds: new Set<string>(),
-  sessionProcessedCardIds: new Set<string>(),
 
   inputReading: '',
   inputMeaning: '',
   isChecked: false,
   evaluation: null,
-  currentCompoundWords: [],
 
   isListening: false,
   speechTranscript: '',
@@ -134,29 +132,8 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
     set({ loading: true });
     try {
       initPhoneticDictionary().catch(() => {});
-      await healCorruptedSrsIntervals().catch(() => {});
 
       const d = await getDecksWithStats();
-      // Auto-reparar mazos japoneses creados con 'zh-CN' por defecto en versiones anteriores
-      for (const deck of d) {
-        if (deck.languageCode === 'zh-CN') {
-          const sampleWords = await db
-            .select()
-            .from(words)
-            .where(eq(words.deckId, deck.id))
-            .limit(5);
-          const isJapanese = sampleWords.some(
-            (w) =>
-              /[\u3040-\u30ff]/.test(w.pinyinDisplay || '') ||
-              /[\u3040-\u30ff]/.test(w.simplified || '') ||
-              /[\u3040-\u30ff]/.test(w.auxiliaryInfo || '')
-          );
-          if (isJapanese) {
-            await db.update(decks).set({ languageCode: 'ja-JP' }).where(eq(decks.id, deck.id));
-            deck.languageCode = 'ja-JP';
-          }
-        }
-      }
       set({ decksList: d.filter((deck) => deck.activeCardsCount > 0) });
     } catch (e) {
       console.warn('Error al cargar mazos con stats en reviewStore:', e);
@@ -190,12 +167,10 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       sessionCount: 0,
       currentIndex: 0,
       sessionFailedCardIds: new Set<string>(),
-      sessionProcessedCardIds: new Set<string>(),
       inputReading: '',
       inputMeaning: '',
       isChecked: false,
       evaluation: null,
-      currentCompoundWords: [],
       speechTranscript: '',
       speechStatus: 'idle',
       isListening: false,
@@ -206,8 +181,8 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       initPhoneticDictionary().catch(() => {});
       let cards: DueCardWithContext[] = [];
       cards = practiceMode
-        ? await getAllCardsForPractice(deckId === 'all' ? undefined : deckId)
-        : await getDueCards(deckId === 'all' ? undefined : deckId);
+        ? await getAllCardsForPractice(deckId)
+        : await getDueCards(deckId);
 
       // Mezclar aleatoriamente (Fisher-Yates)
       for (let i = cards.length - 1; i > 0; i--) {
@@ -235,7 +210,6 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       inputMeaning: '',
       isChecked: false,
       evaluation: null,
-      currentCompoundWords: [],
       isListening: false,
       speechTranscript: '',
       speechStatus: 'idle',
@@ -247,7 +221,6 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
   setInputMeaning: (val) => set({ inputMeaning: val }),
   setIsChecked: (val) => set({ isChecked: val }),
   setEvaluation: (evalData) => set({ evaluation: evalData }),
-  setCurrentCompoundWords: (compounds) => set({ currentCompoundWords: compounds }),
   setIsListening: (val) => set({ isListening: val }),
   setSpeechTranscript: (val) => set({ speechTranscript: val }),
   setSpeechStatus: (val) => set({ speechStatus: val }),
@@ -259,10 +232,20 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
     set({ sessionFailedCardIds: nextFailed });
   },
 
-  recordProcessedCard: (cardId) => {
-    const nextProcessed = new Set(get().sessionProcessedCardIds);
-    nextProcessed.add(cardId);
-    set({ sessionProcessedCardIds: nextProcessed });
+  answerCurrentCard: (rating) => {
+    const card = get().getCurrentCard();
+    if (!card) return { wasFailedInSession: false };
+    const wasFailedInSession = get().sessionFailedCardIds.has(card.id);
+    if (rating === Rating.Again) {
+      get().recordFailedCard(card.id);
+      get().reinsertCurrentCardAhead(5, 10);
+    }
+    return { wasFailedInSession };
+  },
+
+  saveCardReview: async (cardId, rating, wasFailedInSession) => {
+    if (get().isPracticeMode) return;
+    await processCardReview(cardId, rating, { wasFailedInSession });
   },
 
   resetCurrentCardForm: () => {
@@ -273,7 +256,6 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       evaluation: null,
       speechTranscript: '',
       speechStatus: 'idle',
-      currentCompoundWords: [],
     });
   },
 
@@ -292,8 +274,7 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
         speechTranscript: '',
         speechStatus: 'idle',
         isListening: false,
-        currentCompoundWords: [],
-        isProcessing: false,
+          isProcessing: false,
       });
       return true;
     } else {

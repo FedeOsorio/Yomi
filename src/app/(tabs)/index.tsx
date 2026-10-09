@@ -46,8 +46,10 @@ import { onDataChanged } from '../../../lib/backup-service';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { Shadows, Spacing, Typography } from '../../constants/theme';
 import { FolderFilterBar } from '../../components/FolderFilterBar';
+import { useTranslation } from '../../i18n';
 
 export default function HomeScreen() {
+  const { t } = useTranslation();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const [decks, setDecks] = useState<DeckWithStats[]>([]);
@@ -188,7 +190,7 @@ export default function HomeScreen() {
 
   const handleCreateDeck = async () => {
     if (!newDeckName.trim()) {
-      Alert.alert('Atención', 'Ingresa un nombre para el mazo.');
+      Alert.alert(t('common.attention'), t('decks.alertNameRequired'));
       return;
     }
     setIsCreating(true);
@@ -204,7 +206,7 @@ export default function HomeScreen() {
       await fetchDecks();
       router.push(`/deck/${newId}`);
     } catch (e) {
-      Alert.alert('Error', 'No se pudo crear el mazo.');
+      Alert.alert(t('common.error'), t('decks.alertCreateError'));
     } finally {
       setIsCreating(false);
     }
@@ -212,12 +214,12 @@ export default function HomeScreen() {
 
   const handleDeleteDeck = (deckId: string, deckName: string) => {
     Alert.alert(
-      'Eliminar mazo',
-      `¿Estás seguro de que querés eliminar el mazo "${deckName}" y todas sus palabras guardadas? Esta acción no se puede deshacer.`,
+      t('decks.deleteDeckTitle'),
+      t('decks.deleteDeckConfirm', { name: deckName }),
       [
-        { text: 'Cancelar', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Eliminar Mazo',
+          text: t('decks.deleteDeckBtn'),
           style: 'destructive',
           onPress: async () => {
             await deleteDeck(deckId);
@@ -231,37 +233,37 @@ export default function HomeScreen() {
   const handleMoveDeckToFolder = (deck: DeckWithStats) => {
     const options = [
       {
-        text: 'Sin carpeta (General)',
+        text: t('decks.noFolderGeneral'),
         onPress: async () => {
           await assignDeckToFolder(deck.id, null);
           await fetchDecks();
         },
       },
       ...folders.map((f) => ({
-        text: f.name + (deck.folderId === f.id ? ' (Actual)' : ''),
+        text: f.name + (deck.folderId === f.id ? ` ${t('decks.currentFolder')}` : ''),
         onPress: async () => {
           await assignDeckToFolder(deck.id, f.id);
           await fetchDecks();
         },
       })),
-      { text: 'Cancelar', style: 'cancel' as const },
+      { text: t('common.cancel'), style: 'cancel' as const },
     ];
 
-    Alert.alert('Mover mazo a carpeta', `Selecciona el destino para "${deck.name}":`, options);
+    Alert.alert(t('decks.moveDeckTitle'), t('decks.moveDeckPrompt', { name: deck.name }), options);
   };
 
   const handleDeckLongPress = (item: DeckWithStats) => {
     Alert.alert(
       item.name,
-      'Opciones del mazo',
+      t('decks.deckOptions'),
       [
-        { text: 'Cancelar', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Mover a carpeta...',
+          text: t('decks.moveToFolder'),
           onPress: () => handleMoveDeckToFolder(item),
         },
         {
-          text: 'Eliminar Mazo',
+          text: t('decks.deleteDeckBtn'),
           style: 'destructive',
           onPress: () => handleDeleteDeck(item.id, item.name),
         },
@@ -292,13 +294,13 @@ export default function HomeScreen() {
           />
           <Text style={[styles.emptyText, { color: colors.textMuted }]}>
             {selectedFolderId
-              ? 'No hay mazos en esta carpeta.'
-              : 'No tienes mazos creados aún.'}
+              ? t('decks.emptyNoDecksInFolder')
+              : t('decks.emptyNoDecks')}
           </Text>
           <Text style={[styles.emptySubtext, { color: colors.textMuted }]}>
             {selectedFolderId
-              ? 'Toca + para crear un mazo aquí o mantén presionado un mazo para moverlo.'
-              : 'Toca el botón + para crear un mazo.'}
+              ? t('decks.emptyNoDecksInFolderSub')
+              : t('decks.emptyNoDecksSub')}
           </Text>
         </View>
       ) : (
@@ -390,10 +392,10 @@ export default function HomeScreen() {
                         )}
                       </View>
                       <Text style={[styles.subtext, { color: colors.textMuted }]} numberOfLines={1}>
-                        {isCustom ? 'Personalizado' : (langMeta?.label || 'Idiomas')} • {item.wordCount}{' '}
+                        {isCustom ? t('decks.custom') : (langMeta?.label || t('decks.languages'))} • {item.wordCount}{' '}
                         {item.wordCount === 1
-                          ? (isCustom ? 'tarjeta' : 'palabra')
-                          : (isCustom ? 'tarjetas' : 'palabras')}
+                          ? (isCustom ? t('decks.cardSingular') : t('decks.wordSingular'))
+                          : (isCustom ? t('decks.cardPlural') : t('decks.wordPlural'))}
                       </Text>
                     </View>
                   </View>
@@ -426,16 +428,16 @@ export default function HomeScreen() {
       >
         <Pressable style={styles.modalOverlay} onPress={() => setMenuVisible(false)}>
           <View style={[styles.menuContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <Text style={[styles.menuTitle, { color: colors.text }]}>¿Qué deseas hacer?</Text>
+            <Text style={[styles.menuTitle, { color: colors.text }]}>{t('decks.whatToDo')}</Text>
 
             <TouchableOpacity style={[styles.menuOption, { borderBottomColor: colors.border }]} onPress={handleOpenSearch}>
               <View style={[styles.menuIconBox, { backgroundColor: colors.primary }]}>
                 <Ionicons name="text-outline" size={24} color="#FFF" />
               </View>
               <View style={styles.menuTextContainer}>
-                <Text style={[styles.menuOptionTitle, { color: colors.text }]}>Agregar palabra / tarjeta</Text>
+                <Text style={[styles.menuOptionTitle, { color: colors.text }]}>{t('decks.addWordCard')}</Text>
                 <Text style={[styles.menuOptionSub, { color: colors.textMuted }]}>
-                  Busca o crea vocabulario en tus mazos
+                  {t('decks.addWordCardSub')}
                 </Text>
               </View>
             </TouchableOpacity>
@@ -445,9 +447,9 @@ export default function HomeScreen() {
                 <Ionicons name="folder-outline" size={24} color="#FFF" />
               </View>
               <View style={styles.menuTextContainer}>
-                <Text style={[styles.menuOptionTitle, { color: colors.text }]}>Crear nuevo mazo</Text>
+                <Text style={[styles.menuOptionTitle, { color: colors.text }]}>{t('decks.createNewDeck')}</Text>
                 <Text style={[styles.menuOptionSub, { color: colors.textMuted }]}>
-                  Crea tarjetas para reforzar tus estudios
+                  {t('decks.createNewDeckSub')}
                 </Text>
               </View>
             </TouchableOpacity>
@@ -463,9 +465,9 @@ export default function HomeScreen() {
                 <Ionicons name="cloud-download-outline" size={24} color="#FFF" />
               </View>
               <View style={styles.menuTextContainer}>
-                <Text style={[styles.menuOptionTitle, { color: colors.text }]}>Importar</Text>
+                <Text style={[styles.menuOptionTitle, { color: colors.text }]}>{t('decks.import')}</Text>
                 <Text style={[styles.menuOptionSub, { color: colors.textMuted }]}>
-                  Pega notas de texto, listas de vocabulario o paquetes Anki/Yomi
+                  {t('decks.importSub')}
                 </Text>
               </View>
             </TouchableOpacity>
@@ -508,14 +510,14 @@ export default function HomeScreen() {
               onStartShouldSetResponder={() => true}
             >
               <View style={styles.modalHeader}>
-                <Text style={[styles.modalTitle, { color: colors.text }]}>Crear Nuevo Mazo</Text>
+                <Text style={[styles.modalTitle, { color: colors.text }]}>{t('decks.createModalTitle')}</Text>
                 <TouchableOpacity onPress={closeCreateModal} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                   <Ionicons name="close" size={24} color={colors.textMuted} />
                 </TouchableOpacity>
               </View>
 
               {/* Selector de Tipo de Mazo */}
-              <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Tipo de mazo:</Text>
+              <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>{t('decks.deckTypeLabel')}</Text>
               <View style={styles.typeSelectorRow}>
                 <TouchableOpacity
                   style={[
@@ -554,10 +556,10 @@ export default function HomeScreen() {
                         deckType === 'language' && { color: colors.primary },
                       ]}
                     >
-                      Idiomas
+                      {t('decks.languageType')}
                     </Text>
                     <Text style={[styles.typeSubtitle, { color: colors.textMuted }]}>
-                      Con diccionario asistido
+                      {t('decks.languageTypeSub')}
                     </Text>
                   </View>
                 </TouchableOpacity>
@@ -599,23 +601,23 @@ export default function HomeScreen() {
                         deckType === 'custom' && { color: '#10B981' },
                       ]}
                     >
-                      Personalizado
+                      {t('decks.customType')}
                     </Text>
                     <Text style={[styles.typeSubtitle, { color: colors.textMuted }]}>
-                      Pregunta y respuesta libre
+                      {t('decks.customTypeSub')}
                     </Text>
                   </View>
                 </TouchableOpacity>
               </View>
 
               {/* Input Nombre */}
-              <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Nombre del mazo:</Text>
+              <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>{t('decks.deckNameLabel')}</Text>
               <TextInput
                 style={[styles.modalInput, { backgroundColor: colors.surfaceHighlight, color: colors.text, borderColor: colors.border }]}
                 placeholder={
                   deckType === 'custom'
-                    ? 'Ej. Farmacología, Derecho Constitucional'
-                    : 'Ej. Japonés N5, Vocabulario HSK 1'
+                    ? t('decks.placeholderCustom')
+                    : t('decks.placeholderLanguage')
                 }
                 placeholderTextColor={colors.textMuted}
                 value={newDeckName}
@@ -626,7 +628,7 @@ export default function HomeScreen() {
               <View style={styles.dynamicSectionContainer}>
                 {deckType === 'language' ? (
                   <View style={styles.languageSectionBox}>
-                    <Text style={[styles.fieldLabel, { color: colors.textMuted, marginBottom: 6 }]}>Idioma de estudio:</Text>
+                    <Text style={[styles.fieldLabel, { color: colors.textMuted, marginBottom: 6 }]}>{t('decks.studyLanguageLabel')}</Text>
                     <View style={styles.langGrid}>
                       {SUPPORTED_LANGUAGES.map((lang) => {
                         const isSelected = selectedLang === lang.code;
@@ -669,7 +671,7 @@ export default function HomeScreen() {
                       style={{ marginRight: 10 }}
                     />
                     <Text style={[styles.customNoticeText, { color: colors.text }]}>
-                      Podrás armar preguntas y respuestas para ayudarte en tus estudios.
+                      {t('decks.customDeckNotice')}
                     </Text>
                   </View>
                 )}
@@ -681,7 +683,7 @@ export default function HomeScreen() {
                 disabled={isCreating}
               >
                 <Text style={styles.createDeckSubmitText}>
-                  {isCreating ? 'Creando...' : 'Crear Mazo'}
+                  {isCreating ? t('decks.creating') : t('decks.createBtn')}
                 </Text>
               </TouchableOpacity>
             </Animated.View>

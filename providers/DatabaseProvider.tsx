@@ -4,6 +4,7 @@ import { SQLiteProvider, useSQLiteContext } from 'expo-sqlite';
 import { useMigrations } from 'drizzle-orm/expo-sqlite/migrator';
 import { db, initUserDb, initDictDb } from '../db';
 import migrations from '../db/migrations/migrations';
+import { backfillMissingReadings, runDataRepair } from '../lib/data-repair';
 
 export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return (
@@ -42,6 +43,8 @@ const InnerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =>
 
   // Correr migraciones exclusivamente sobre user_data.db
   const { success: migrationsReady, error: migrationsError } = useMigrations(db, migrations);
+  // Reparaciones de datos de una sola vez (ver lib/data-repair.ts): la app espera a que terminen
+  const [dataReady, setDataReady] = useState(false);
 
   useEffect(() => {
     if (migrationsReady) {
@@ -63,6 +66,10 @@ const InnerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =>
         } catch (e) {
           console.warn('Verificación tabla folders:', e);
         }
+        await runDataRepair();
+        setDataReady(true);
+        // Puede usar internet: en segundo plano, sin bloquear la app
+        backfillMissingReadings();
       })();
     }
   }, [migrationsReady, userExpoDb]);
@@ -77,7 +84,7 @@ const InnerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =>
     );
   }
 
-  if (!migrationsReady) {
+  if (!migrationsReady || !dataReady) {
     return (
       <View style={styles.center}>
         <Text style={styles.loadingText}>Inicializando base de datos...</Text>

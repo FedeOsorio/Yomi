@@ -1,4 +1,4 @@
-import React, { memo } from 'react';
+import { memo } from 'react';
 import { Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Shadows, Spacing } from '../../constants/theme';
@@ -54,17 +54,17 @@ export const ReviewMethodModal = memo(function ReviewMethodModal({
               </Text>
               <Text style={[styles.modalSub, { color: pendingSelection?.hasDue ? colors.primary : '#10B981' }]}>
                 {pendingSelection?.hasDue
-                  ? 'Repaso Oficial SRS (FSRS v5)'
-                  : 'Mazo al día • Modo Práctica Libre'}
+                  ? t('review.srsOfficial')
+                  : t('review.freePracticeMode')}
               </Text>
             </View>
-            <TouchableOpacity onPress={onClose} style={styles.modalCloseBtn}>
+            <TouchableOpacity onPress={onClose} style={styles.modalCloseBtn} hitSlop={8}>
               <Ionicons name="close" size={22} color={colors.textMuted} />
             </TouchableOpacity>
           </View>
 
           <Text style={[styles.modalSectionLabel, { color: colors.textMuted }]}>
-            ¿CÓMO QUIERES ESTUDIAR HOY?
+            {t('review.howToStudy')}
           </Text>
 
           {/* Opción 1: Modo Clásico (Teclado) */}
@@ -77,9 +77,9 @@ export const ReviewMethodModal = memo(function ReviewMethodModal({
               <Ionicons name="create-outline" size={24} color={colors.text} />
             </View>
             <View style={styles.methodTextCol}>
-              <Text style={[styles.methodTitle, { color: colors.text }]}>Modo Clásico (Escritura)</Text>
-              <Text style={[styles.methodDesc, { color: colors.textMuted }]}>
-                Escribe la lectura o el significado con el teclado para fijar la memoria.
+              <Text style={[styles.methodTitle, { color: colors.text }]} numberOfLines={1}>{t('review.classicMode')}</Text>
+              <Text style={[styles.methodDesc, { color: colors.textMuted }]} numberOfLines={2}>
+                {t('review.classicModeDesc')}
               </Text>
             </View>
             <View style={styles.trailingIconBox}>
@@ -104,13 +104,10 @@ export const ReviewMethodModal = memo(function ReviewMethodModal({
               <Ionicons name="mic" size={24} color="#FFF" />
             </View>
             <View style={styles.methodTextCol}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Text style={[styles.methodTitle, { color: colors.text }]}>Modo Manos Libres (Voz)</Text>
-                <View style={[styles.newBadge, { backgroundColor: colors.primary }]}>
-                  <Text style={styles.newBadgeText}>NUEVO</Text>
-                </View>
+              <View style={styles.methodTitleRow}>
+                <Text style={[styles.methodTitle, { color: colors.text, marginBottom: 0 }]} numberOfLines={1}>{t('review.handsFreeMode')}</Text>
               </View>
-              <Text style={[styles.methodDesc, { color: colors.textMuted }]}>
+              <Text style={[styles.methodDesc, { color: colors.textMuted }]} numberOfLines={2}>
                 {t('review.voiceMethodDesc')}
               </Text>
             </View>
@@ -123,14 +120,11 @@ export const ReviewMethodModal = memo(function ReviewMethodModal({
           {isJapanese && onSelectConjugation && (
             <>
               <View style={[styles.sectionDivider, { backgroundColor: colors.border }]} />
-              <Text style={[styles.modalSectionLabel, { color: colors.textMuted, marginTop: 4 }]}>
-                GRAMÁTICA Y FORMAS
-              </Text>
               <TouchableOpacity
                 style={[
                   styles.methodOptionCard,
                   {
-                    backgroundColor: 'rgba(59, 130, 246, 0.08)',
+                    backgroundColor: colors.primary + '12',
                     borderColor: colors.primary,
                   },
                 ]}
@@ -141,9 +135,9 @@ export const ReviewMethodModal = memo(function ReviewMethodModal({
                   <Ionicons name="sparkles" size={24} color="#FFF" />
                 </View>
                 <View style={styles.methodTextCol}>
-                  <Text style={[styles.methodTitle, { color: colors.text }]}>Práctica de Conjugaciones</Text>
-                  <Text style={[styles.methodDesc, { color: colors.textMuted }]}>
-                    Ejercitá todas las formas de verbos y adjetivos
+                  <Text style={[styles.methodTitle, { color: colors.text }]} numberOfLines={1}>{t('review.conjugationMode')}</Text>
+                  <Text style={[styles.methodDesc, { color: colors.textMuted }]} numberOfLines={2}>
+                    {t('review.conjugationModeDesc')}
                   </Text>
                 </View>
                 <View style={styles.trailingIconBox}>
@@ -188,7 +182,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   modalCloseBtn: {
-    padding: 4,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: Spacing.sm,
   },
   modalSectionLabel: {
     fontSize: 11,
@@ -203,7 +202,8 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     marginBottom: Spacing.sm,
-    minHeight: 78,
+    // Altura fija: las tres opciones miden lo mismo aunque sus textos tengan distinto largo
+    height: 84,
   },
   methodIconBox: {
     width: 44,
@@ -215,8 +215,13 @@ const styles = StyleSheet.create({
   },
   methodTextCol: {
     flex: 1,
-    marginRight: Spacing.xs,
+    marginRight: Spacing.sm,
     justifyContent: 'center',
+  },
+  methodTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 2,
   },
   methodTitle: {
     fontSize: 15,
@@ -226,7 +231,6 @@ const styles = StyleSheet.create({
   methodDesc: {
     fontSize: 12,
     lineHeight: 17,
-    minHeight: 34,
   },
   trailingIconBox: {
     width: 24,
@@ -247,17 +251,7 @@ const styles = StyleSheet.create({
   },
   sectionDivider: {
     height: 1,
-    marginVertical: Spacing.sm,
-  },
-  grammarBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 6,
-    marginLeft: 6,
-  },
-  grammarBadgeText: {
-    color: '#FFF',
-    fontSize: 9,
-    fontWeight: 'bold',
+    marginTop: Spacing.xs,
+    marginBottom: Spacing.md,
   },
 });

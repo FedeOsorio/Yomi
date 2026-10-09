@@ -19,7 +19,7 @@ import { getQuickHskLevel } from '../../../lib/hsk-data';
 import { cleanAndFormatMeanings, extractKanjis, parseFurigana } from '../../../lib/japanese-search';
 import { classifyJapaneseWord, formatJapaneseReading, toNormalizedHiragana } from '../../../lib/japanese-utils';
 import { getKanjiEssentialReading, getKanjiJlptLevel, getQuickJlptLevel, JLPT_KANJI_READINGS } from '../../../lib/jlpt-data';
-import { formatNextReviewTime, healCorruptedSrsIntervals } from '../../../lib/srs-engine';
+import { formatNextReviewTime } from '../../../lib/srs-engine';
 import { getStorageItem, setStorageItem } from '../../../lib/storage-service';
 import {
   CompoundWord,
@@ -34,6 +34,7 @@ import {
   WordDetailWithRelations,
 } from '../../../lib/word-service';
 import { useTheme } from '../../../providers/ThemeProvider';
+import { parseAux } from '../../../lib/word-aux';
 import { KanjiStrokeViewer, preloadStrokeSvg } from '../../components/kanji/KanjiStrokeViewer';
 import { Shadows, Spacing, Typography } from '../../constants/theme';
 
@@ -58,7 +59,6 @@ export default function WordDetailScreen() {
   const fetchDetail = async () => {
     if (typeof id === 'string') {
       setLoading(true);
-      await healCorruptedSrsIntervals().catch(() => { });
       const res = await getWordDetailWithRelations(id);
       setData(res);
 
@@ -76,12 +76,10 @@ export default function WordDetailScreen() {
         let currentSelected: string[] = allMeanings;
 
         if (res.word.auxiliaryInfo) {
-          try {
-            const parsed = JSON.parse(res.word.auxiliaryInfo);
-            if (Array.isArray(parsed.selectedMeanings) && parsed.selectedMeanings.length > 0) {
-              currentSelected = parsed.selectedMeanings;
-            }
-          } catch (e) { }
+          const { selectedMeanings } = parseAux(res.word.auxiliaryInfo);
+          if (Array.isArray(selectedMeanings) && selectedMeanings.length > 0) {
+            currentSelected = selectedMeanings;
+          }
         } else if (res.srsItem?.displayMeaning) {
           try {
             const srsMeanings = JSON.parse(res.srsItem.displayMeaning);
@@ -412,12 +410,7 @@ export default function WordDetailScreen() {
     ? formatJapaneseReading(rawReading.replace(/\s*\([^)]*\)/g, '').trim())
     : rawReading;
 
-  let parsedAux: Record<string, any> = {};
-  if (word.auxiliaryInfo) {
-    try {
-      parsedAux = JSON.parse(word.auxiliaryInfo);
-    } catch { }
-  }
+  const parsedAux = parseAux(word.auxiliaryInfo);
 
   const cleanWord = (word.simplified || '').trim();
   const endsWithKanji = /[\u4e00-\u9faf]$/.test(cleanWord);
@@ -493,7 +486,7 @@ export default function WordDetailScreen() {
       });
       speakText(clean, lang, clean);
     } catch (e) {
-      Alert.alert('Error', 'No se pudo actualizar la lectura.');
+      Alert.alert(t('common.error'), t('wordDetail.failedUpdateReading'));
     }
   };
 
@@ -529,15 +522,15 @@ export default function WordDetailScreen() {
   const getSrsStateLabel = (stateNum?: number) => {
     switch (stateNum) {
       case State.New:
-        return { label: 'Nueva', color: '#3B82F6' };
+        return { label: t('wordDetail.srsNew'), color: '#3B82F6' };
       case State.Learning:
-        return { label: 'Aprendiendo', color: '#F59E0B' };
+        return { label: t('wordDetail.srsLearning'), color: '#F59E0B' };
       case State.Review:
-        return { label: 'En Repaso', color: '#10B981' };
+        return { label: t('wordDetail.srsReview'), color: '#10B981' };
       case State.Relearning:
-        return { label: 'Reaprendiendo', color: '#EF4444' };
+        return { label: t('wordDetail.srsRelearning'), color: '#EF4444' };
       default:
-        return { label: 'Sin repasar', color: colors.textMuted };
+        return { label: t('wordDetail.outOfReview'), color: colors.textMuted };
     }
   };
 
@@ -557,7 +550,7 @@ export default function WordDetailScreen() {
           <Text style={[styles.brandText, { color: colors.primary }]}>Yomi</Text>
           <Text style={[styles.brandSep, { color: colors.textMuted }]}> • </Text>
           <Text style={[styles.deckName, { color: colors.text }]} numberOfLines={1}>
-            {isCustomDeck ? 'Detalle de Tarjeta' : 'Detalle de Palabra'}
+            {isCustomDeck ? t('customCard.editCard') : t('wordDetail.title')}
           </Text>
         </View>
 
@@ -576,7 +569,7 @@ export default function WordDetailScreen() {
           <View style={styles.wordSectionContainer}>
             {isCustomDeck ? (
               <View style={styles.customQuestionBox}>
-                <Text style={[styles.customQuestionLabel, { color: colors.textMuted }]}>Pregunta (Frente):</Text>
+                <Text style={[styles.customQuestionLabel, { color: colors.textMuted }]}>{t('customCard.questionFront')}:</Text>
                 <Text style={[styles.customQuestionTitle, { color: colors.text }]}>
                   {word.simplified}
                 </Text>
@@ -624,7 +617,7 @@ export default function WordDetailScreen() {
                       activeOpacity={0.6}
                       onPress={handlePlayAudio}
                       hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                      accessibilityLabel="Escuchar pronunciación"
+                      accessibilityLabel={t('wordDetail.reading')}
                     >
                       {!isAudioReady ? (
                         <ActivityIndicator size="small" color={colors.primary} />
@@ -658,7 +651,7 @@ export default function WordDetailScreen() {
                     <View style={[styles.metaSubtitlesContainer, { borderTopColor: colors.border, borderBottomColor: colors.border }]}>
                       {showLevel && (
                         <View style={levelItemStyle}>
-                          <Text style={[styles.metaSubtitleLabel, { color: colors.textMuted }]}>Nivel</Text>
+                          <Text style={[styles.metaSubtitleLabel, { color: colors.textMuted }]}>{t('wordDetail.level')}</Text>
                           <Text
                             style={[styles.metaSubtitleValue, { color: colors.primary }]}
                             numberOfLines={1}
@@ -679,7 +672,7 @@ export default function WordDetailScreen() {
 
                       {showCategory && (
                         <View style={categoryItemStyle}>
-                          <Text style={[styles.metaSubtitleLabel, { color: colors.textMuted }]}>Categoría</Text>
+                          <Text style={[styles.metaSubtitleLabel, { color: colors.textMuted }]}>{t('wordDetail.category')}</Text>
                           <Text
                             style={[styles.metaSubtitleValue, { color: colors.text }]}
                             numberOfLines={1}
@@ -696,7 +689,7 @@ export default function WordDetailScreen() {
 
                       {showBase && (
                         <View style={baseItemStyle}>
-                          <Text style={[styles.metaSubtitleLabel, { color: colors.textMuted }]}>Forma Base</Text>
+                          <Text style={[styles.metaSubtitleLabel, { color: colors.textMuted }]}>{t('wordDetail.baseForm')}</Text>
                           <Text
                             style={[styles.metaSubtitleValue, { color: '#8B5CF6' }]}
                             numberOfLines={1}
@@ -715,14 +708,14 @@ export default function WordDetailScreen() {
                   <View style={[styles.kanjiReadingsSection, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}>
                     <View style={styles.kanjiReadingsHeader}>
                       <Text style={[styles.kanjiReadingsTitle, { color: colors.textMuted }]}>
-                        Lectura activa del Kanji
+                        {t('wordDetail.activeKanjiReading')}
                       </Text>
                       <TouchableOpacity
                         style={styles.manualEditBtn}
                         onPress={handleStartEditReading}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                       >
-                        <Text style={[styles.manualEditBtnText, { color: colors.primary }]}>Editar manual</Text>
+                        <Text style={[styles.manualEditBtnText, { color: colors.primary }]}>{t('wordDetail.manualEdit')}</Text>
                       </TouchableOpacity>
                     </View>
 
@@ -807,10 +800,10 @@ export default function WordDetailScreen() {
           <View style={styles.sectionBox}>
             <View style={styles.meaningHeaderRow}>
               <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>
-                {isCustomDeck ? 'Respuesta (Reverso):' : 'Significados para repasar:'}
+                {isCustomDeck ? `${t('customCard.answerBack')}:` : `${t('wordDetail.meanings')}:`}
               </Text>
               {!isCustomDeck && (
-                <Text style={[styles.meaningHint, { color: colors.textMuted }]}>Toca para incluir/excluir</Text>
+                <Text style={[styles.meaningHint, { color: colors.textMuted }]}>{t('wordDetail.meaningsHelp')}</Text>
               )}
             </View>
             <View style={styles.meaningsContainer}>
@@ -890,7 +883,7 @@ export default function WordDetailScreen() {
         {isIdeographic && (
           <View style={[styles.sectionCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <View style={styles.sectionHeaderRow}>
-              <Text style={[styles.sectionTitle, { color: colors.text, marginLeft: 0 }]}>Trazado y Caracteres</Text>
+              <Text style={[styles.sectionTitle, { color: colors.text, marginLeft: 0 }]}>{t('wordDetail.strokeAndChars')}</Text>
             </View>
 
             <View style={[styles.strokeBox, { backgroundColor: colors.surfaceHighlight }]}>
@@ -902,7 +895,7 @@ export default function WordDetailScreen() {
                 {word.simplified}
               </Text>
               <Text style={[styles.strokeTip, { color: colors.textMuted }]}>
-                Total de caracteres: {word.simplified.length} {word.traditional && word.traditional !== word.simplified ? `| Tradicional: ${word.traditional}` : ''}
+                {t('wordDetail.totalCharacters', { count: word.simplified.length })} {word.traditional && word.traditional !== word.simplified ? `| ${t('wordDetail.traditional', { char: word.traditional })}` : ''}
               </Text>
             </View>
 
@@ -910,7 +903,7 @@ export default function WordDetailScreen() {
             {kanjisList.length > 0 && (
               <View style={styles.kanjiBreakdownContainer}>
                 <Text style={[styles.kanjiBreakdownLabel, { color: colors.textMuted }]}>
-                  {isChinese ? `Desglose de Hanzi (${kanjisList.length}):` : `Desglose de Kanjis (${kanjisList.length}):`}
+                  {isChinese ? t('wordDetail.hanziBreakdown', { count: kanjisList.length }) : t('wordDetail.kanjiBreakdown', { count: kanjisList.length })}
                 </Text>
                 {kanjisList.map((char) => {
                   const charLevel = isChinese
@@ -948,14 +941,14 @@ export default function WordDetailScreen() {
                               </Text>
                             </View>
                           ) : (
-                            <Text style={[styles.kanjiNoLevel, { color: colors.textMuted }]}>Sin nivel específico</Text>
+                            <Text style={[styles.kanjiNoLevel, { color: colors.textMuted }]}>{t('wordDetail.noSpecificLevel')}</Text>
                           )}
                         </View>
                       </View>
 
                       <View style={[styles.kanjiActionBtn, { backgroundColor: colors.primary }]}>
                         <Ionicons name="play" size={14} color="#FFF" style={{ marginRight: 4 }} />
-                        <Text style={styles.kanjiActionBtnText}>Ver trazado</Text>
+                        <Text style={styles.kanjiActionBtnText}>{t('wordDetail.viewStroke')}</Text>
                       </View>
                     </TouchableOpacity>
                   );
@@ -970,17 +963,17 @@ export default function WordDetailScreen() {
           <View style={[styles.sectionCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <View style={styles.sectionHeaderRow}>
               <Ionicons name="library-outline" size={20} color={colors.primary} />
-              <Text style={[styles.sectionTitle, { color: colors.text }]}>Palabras comunes con este carácter</Text>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('wordDetail.compounds')}</Text>
             </View>
             <Text style={[styles.sectionSub, { color: colors.textMuted }]}>
-              {compoundsLoading ? 'Consultando diccionario...' : 'Ejemplos de uso frecuente en el diccionario:'}
+              {compoundsLoading ? t('wordDetail.queryingDictionary') : t('wordDetail.dictionaryUsageExamples')}
             </Text>
 
             {compoundsLoading ? (
               <View style={styles.compoundsLoadingBox}>
                 <ActivityIndicator size="small" color={colors.primary} />
                 <Text style={[styles.compoundsLoadingText, { color: colors.textMuted }]}>
-                  Buscando palabras comunes en el diccionario...
+                  {t('wordDetail.searchingDictionary')}
                 </Text>
               </View>
             ) : (
@@ -1004,12 +997,12 @@ export default function WordDetailScreen() {
           <View style={[styles.srsCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <View style={styles.sectionHeaderRow}>
               <Ionicons name="analytics-outline" size={20} color={colors.primary} />
-              <Text style={[styles.sectionTitle, { color: colors.text }]}>Estado de Aprendizaje</Text>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('wordDetail.srsState')}</Text>
             </View>
 
             <View style={styles.srsGrid}>
               <View style={[styles.srsStat, { backgroundColor: colors.surfaceHighlight }]}>
-                <Text style={[styles.srsStatLabel, { color: colors.textMuted }]}>Estado</Text>
+                <Text style={[styles.srsStatLabel, { color: colors.textMuted }]}>{t('wordDetail.state')}</Text>
                 <View style={[styles.srsBadge, { backgroundColor: srsStateInfo.color + '22' }]}>
                   <Text style={[styles.srsBadgeText, { color: srsStateInfo.color }]}>
                     {srsStateInfo.label}
@@ -1018,17 +1011,17 @@ export default function WordDetailScreen() {
               </View>
 
               <View style={[styles.srsStat, { backgroundColor: colors.surfaceHighlight }]}>
-                <Text style={[styles.srsStatLabel, { color: colors.textMuted }]}>Repasos</Text>
-                <Text style={[styles.srsStatValue, { color: colors.text }]}>{srsItem.reps} veces</Text>
+                <Text style={[styles.srsStatLabel, { color: colors.textMuted }]}>{t('wordDetail.srsReps')}</Text>
+                <Text style={[styles.srsStatValue, { color: colors.text }]}>{t('wordDetail.times', { count: srsItem.reps })}</Text>
               </View>
 
               <View style={[styles.srsStat, { backgroundColor: colors.surfaceHighlight }]}>
-                <Text style={[styles.srsStatLabel, { color: colors.textMuted }]}>Dificultad</Text>
+                <Text style={[styles.srsStatLabel, { color: colors.textMuted }]}>{t('wordDetail.difficulty')}</Text>
                 <Text style={[styles.srsStatValue, { color: colors.text }]}>{srsItem.difficulty?.toFixed(1) || '0.0'}</Text>
               </View>
 
               <View style={[styles.srsStat, { backgroundColor: colors.surfaceHighlight }]}>
-                <Text style={[styles.srsStatLabel, { color: colors.textMuted }]}>Próximo repaso</Text>
+                <Text style={[styles.srsStatLabel, { color: colors.textMuted }]}>{t('wordDetail.srsNextReview')}</Text>
                 <Text style={[styles.srsStatValue, { color: colors.text }]}>
                   {formatNextReviewTime(srsItem.due)}
                 </Text>
@@ -1081,7 +1074,7 @@ export default function WordDetailScreen() {
               style={[styles.modalCloseFullBtn, { backgroundColor: colors.primary }]}
               onPress={() => setSelectedKanji(null)}
             >
-              <Text style={styles.modalCloseFullBtnText}>Cerrar Ventana</Text>
+              <Text style={styles.modalCloseFullBtnText}>{t('wordDetail.closeWindow')}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1098,7 +1091,7 @@ export default function WordDetailScreen() {
           <View style={[styles.editModalCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <View style={styles.editModalHeader}>
               <Text style={[styles.editModalTitle, { color: colors.text }]}>
-                {isCustomDeck ? 'Editar Respuesta' : 'Editar Significado'}
+                {isCustomDeck ? t('customCard.editCard') : t('wordDetail.editAnswer')}
               </Text>
               <TouchableOpacity onPress={() => setEditingMeaning(null)} style={styles.modalCloseBtn}>
                 <Ionicons name="close" size={20} color={colors.textMuted} />
@@ -1116,7 +1109,7 @@ export default function WordDetailScreen() {
               ]}
               value={editMeaningText}
               onChangeText={setEditMeaningText}
-              placeholder={isCustomDeck ? 'Ingresa la respuesta...' : 'Ingresa el significado...'}
+              placeholder={isCustomDeck ? t('wordDetail.enterAnswerPlaceholder') : t('wordDetail.enterMeaningPlaceholder')}
               placeholderTextColor={colors.textMuted}
               multiline
               autoFocus
@@ -1127,14 +1120,14 @@ export default function WordDetailScreen() {
                 style={[styles.editModalCancelBtn, { borderColor: colors.border }]}
                 onPress={() => setEditingMeaning(null)}
               >
-                <Text style={[styles.editModalCancelText, { color: colors.textMuted }]}>Cancelar</Text>
+                <Text style={[styles.editModalCancelText, { color: colors.textMuted }]}>{t('common.cancel')}</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={[styles.editModalSaveBtn, { backgroundColor: colors.primary }]}
                 onPress={handleSaveEditedMeaning}
               >
-                <Text style={styles.editModalSaveText}>Guardar</Text>
+                <Text style={styles.editModalSaveText}>{t('common.save')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1151,14 +1144,14 @@ export default function WordDetailScreen() {
         <View style={styles.modalOverlay}>
           <View style={[styles.editModalCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <View style={styles.editModalHeader}>
-              <Text style={[styles.editModalTitle, { color: colors.text }]}>Editar Lectura</Text>
+              <Text style={[styles.editModalTitle, { color: colors.text }]}>{t('wordDetail.editReading')}</Text>
               <TouchableOpacity onPress={() => setIsEditingReading(false)} style={styles.modalCloseBtn}>
                 <Ionicons name="close" size={20} color={colors.textMuted} />
               </TouchableOpacity>
             </View>
 
             <Text style={[styles.editModalSubtitle, { color: colors.textMuted }]}>
-              Modifica la pronunciación para audio, furigana y repaso.
+              {t('wordDetail.modifyPronunciationHelp')}
             </Text>
 
             {(onReadingCandidate || kunReadingCandidate) && (
@@ -1214,14 +1207,14 @@ export default function WordDetailScreen() {
                 style={[styles.editModalCancelBtn, { borderColor: colors.border }]}
                 onPress={() => setIsEditingReading(false)}
               >
-                <Text style={[styles.editModalCancelText, { color: colors.textMuted }]}>Cancelar</Text>
+                <Text style={[styles.editModalCancelText, { color: colors.textMuted }]}>{t('common.cancel')}</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={[styles.editModalSaveBtn, { backgroundColor: colors.primary }]}
                 onPress={handleSaveEditedReading}
               >
-                <Text style={styles.editModalSaveText}>Guardar</Text>
+                <Text style={styles.editModalSaveText}>{t('common.save')}</Text>
               </TouchableOpacity>
             </View>
           </View>

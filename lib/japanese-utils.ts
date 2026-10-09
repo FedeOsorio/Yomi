@@ -124,25 +124,6 @@ export const JA_NUMBERS: Record<string, { kana: string; kanji: string }> = {
   '1000000': { kana: 'ひゃくまん', kanji: '百万' },
 };
 
-export const JA_CURRENCY_MAP: Record<string, { kanji: string; kana: string; romaji: string }> = {
-  '1円': { kanji: '一円', kana: 'いちえん', romaji: 'ichien' },
-  '5円': { kanji: '五円', kana: 'ごえん', romaji: 'goen' },
-  '10円': { kanji: '十円', kana: 'じゅうえん', romaji: 'juuen' },
-  '50円': { kanji: '五十円', kana: 'ごじゅうえん', romaji: 'gojuuen' },
-  '100円': { kanji: '百円', kana: 'ひゃくえん', romaji: 'hyakuen' },
-  '500円': { kanji: '五百円', kana: 'ごひゃくえん', romaji: 'gohyakuen' },
-  '1000円': { kanji: '千円', kana: 'せんえん', romaji: 'senen' },
-  '2000円': { kanji: '二千円', kana: 'にせんえん', romaji: 'nisenen' },
-  '5000円': { kanji: '五千円', kana: 'ごせんえん', romaji: 'gosenen' },
-  '10000円': { kanji: '一万円', kana: 'いちまんえん', romaji: 'ichimanen' },
-  '1万円': { kanji: '一万円', kana: 'いちまんえん', romaji: 'ichimanen' },
-  '千円': { kanji: '千円', kana: 'せんえん', romaji: 'senen' },
-  '百円': { kanji: '百円', kana: 'ひゃくえん', romaji: 'hyakuen' },
-  '一万円': { kanji: '一万円', kana: 'いちまんえん', romaji: 'ichimanen' },
-  '五百円': { kanji: '五百円', kana: 'ごひゃくえん', romaji: 'gohyakuen' },
-  '五千円': { kanji: '五千円', kana: 'ごせんえん', romaji: 'gosenen' },
-};
-
 export const ZH_NUMBERS: Record<string, { pinyin: string; hanzi: string }> = {
   '0': { pinyin: 'ling2', hanzi: '零' },
   '1': { pinyin: 'yi1', hanzi: '一' },
@@ -158,58 +139,12 @@ export const ZH_NUMBERS: Record<string, { pinyin: string; hanzi: string }> = {
 };
 
 /**
- * Normaliza artefactos numéricos generados por Google STT (ej. "5chi" -> "kuchi", "1tsu" -> "ひとつ").
- */
-export function expandNumberArtifacts(str: string): string {
-  if (!str) return '';
-  return str
-    .replace(/^5chi$/i, 'kuchi')
-    .replace(/^5ち$/i, 'くち')
-    .replace(/5chi/gi, 'kuchi')
-    .replace(/5ち/g, 'くち')
-    .replace(/1tsu/gi, 'ひとつ')
-    .replace(/2tsu/gi, 'ふたつ')
-    .replace(/3tsu/gi, 'みっつ')
-    .replace(/4tsu/gi, 'よっつ')
-    .replace(/5tsu/gi, 'いつつ')
-    .replace(/6tsu/gi, 'むっつ')
-    .replace(/7tsu/gi, 'ななつ')
-    .replace(/8tsu/gi, 'やっつ')
-    .replace(/9tsu/gi, 'ここのつ')
-    .replace(/10tsu/gi, 'とお')
-    .replace(/1つ/g, 'ひとつ')
-    .replace(/2つ/g, 'ふたつ')
-    .replace(/3つ/g, 'みっつ')
-    .replace(/4つ/g, 'よっつ')
-    .replace(/5つ/g, 'いつつ')
-    .replace(/6つ/g, 'むっつ')
-    .replace(/7つ/g, 'ななつ')
-    .replace(/8つ/g, 'やっつ')
-    .replace(/9つ/g, 'ここのつ')
-    .replace(/10つ/g, 'とお')
-    // Artefactos de ASR generados por Google para "kai" (contador 回 / 階 / 何回 / 1何)
-    .replace(/^1何$/i, 'かい')
-    .replace(/^1nani$/i, 'かい')
-    .replace(/^1kai$/i, 'かい')
-    .replace(/^1回$/i, 'かい')
-    .replace(/^1階$/i, 'かい')
-    .replace(/1何/g, 'かい')
-    .replace(/1nani/gi, 'かい')
-    .replace(/1kai/gi, 'かい')
-    .replace(/1回/g, 'かい')
-    .replace(/1階/g, 'かい')
-    .replace(/一回/g, 'かい')
-    .replace(/一階/g, 'かい')
-    .replace(/何回/g, 'かい');
-}
-
-/**
  * Convierte una cadena de texto en Romaji a Hiragana (ej. "hon" -> "ほん", "arigatou" -> "ありがとう", "o-i" -> "おおい").
  */
 export function romajiToHiragana(romaji: string): string {
   if (!romaji) return '';
 
-  let text = expandNumberArtifacts(romaji.toLowerCase().trim());
+  let text = romaji.toLowerCase().trim();
 
   // 1. Normalizar vocales con macron de romanización (ej. ō -> ou, ū -> uu, etc.)
   text = text
@@ -311,59 +246,38 @@ export function containsJapanese(text: string): boolean {
 }
 
 /**
- * Determina con precisión el idioma real de una tarjeta o mazo.
- * Si el texto o la lectura contienen caracteres Kana (Hiragana o Katakana),
- * o si coinciden con kanjis japoneses conocidos o lecturas japonesas,
- * es 100% Japonés ('ja-JP'), evitando que el micrófono se configure en Chino
- * si el mazo fue creado con 'zh-CN' por defecto en versiones previas.
+ * Idioma de un texto suelto según su escritura. Se usa en mazos personalizados, donde cada
+ * pregunta y respuesta puede estar en cualquier idioma (p. ej. pregunta en español, respuesta en japonés).
+ * El alfabeto latino no permite distinguir español / inglés / francés: ahí se usa `fallback`.
  */
-export function getEffectiveCardLanguage(card?: {
-  displayText?: string | null;
-  displayReading?: string | null;
-  auxiliaryInfo?: string | null;
-  languageCode?: string | null;
-  deckType?: string | null;
-} | null): string {
-  if (!card) return 'ja-JP';
-
-  const reading = (card.displayReading || '').trim();
-  const text = (card.displayText || '').trim();
-  const aux = (card.auxiliaryInfo || '').trim();
-
-  // 1. Si la lectura, el texto o la info auxiliar contienen Kana (Hiragana o Katakana), es indiscutiblemente Japonés
-  if (/[\u3040-\u30ff]/.test(reading) || /[\u3040-\u30ff]/.test(text) || /[\u3040-\u30ff]/.test(aux)) {
-    return 'ja-JP';
+export function detectTextLanguage(text: string | null | undefined, fallback = 'es-ES'): string {
+  const t = (text || '').trim();
+  if (/[\u3040-\u30ff]/.test(t)) return 'ja-JP';
+  if (/[\uac00-\ud7af\u1100-\u11ff]/.test(t)) return 'ko-KR';
+  if (/[\u0400-\u04ff]/.test(t)) return 'ru-RU';
+  const han = t.match(/[\u4e00-\u9fff]/g);
+  if (han) {
+    // Solo ideogramas: si alguno no existe en japonés (你, 们, 这…) es chino; si no, japonés
+    return han.some((c) => !UNIVERSAL_KANJI_READINGS_MAP[c]) ? 'zh-CN' : 'ja-JP';
   }
-
-  // 2. Si la tarjeta o mazo tiene un languageCode explícito configurado
-  if (card.languageCode) {
-    if (card.languageCode.startsWith('zh')) return 'zh-CN';
-    if (card.languageCode.startsWith('ja')) return 'ja-JP';
-    if (card.languageCode.startsWith('es')) return 'es-ES';
-    if (card.languageCode.startsWith('en')) return 'en-US';
-  }
-
-  // 3. Si explícitamente se configuró como mazo personalizado o español y NO contiene caracteres japoneses
-  if (card.deckType === 'custom' || card.languageCode === 'custom' || card.languageCode === 'es-ES') {
-    return 'es-ES';
-  }
-
-  // 4. Si la lectura contiene marcas de tono Pinyin chinas (ā, á, ǎ, à, etc.) o números de tono
-  const hasChinesePinyin = /[āáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜ]/.test(reading) || /\b[a-z]+[1-5]\b/i.test(reading);
-  if (hasChinesePinyin) {
-    return 'zh-CN';
-  }
-
-  // 5. Si el texto contiene caracteres Kanji registrados en nuestro mapa de lecturas japonés
-  for (let i = 0; i < text.length; i++) {
-    if (UNIVERSAL_KANJI_READINGS_MAP[text[i]]) return 'ja-JP';
-  }
-
-  // 6. Fallback por defecto seguro: si la tarjeta no tiene indicios de chino u otro idioma, asumir Japonés
-  return 'ja-JP';
+  return fallback;
 }
 
-
+/**
+ * Idioma de una tarjeta.
+ * - Mazo de idioma: el idioma del mazo (un mazo nunca mezcla idiomas).
+ * - Mazo personalizado: no se asume nada; se detecta por la escritura de la pregunta.
+ */
+export function getEffectiveCardLanguage(
+  card?: { languageCode?: string | null; deckType?: string | null; displayText?: string | null } | null
+): string {
+  if (card?.deckType === 'custom' || card?.languageCode === 'custom') return detectTextLanguage(card.displayText);
+  const code = (card?.languageCode || '').trim();
+  if (!code) return 'ja-JP';
+  const base = code.toLowerCase().split('-')[0];
+  const canonical: Record<string, string> = { ja: 'ja-JP', zh: 'zh-CN', en: 'en-US', es: 'es-ES' };
+  return canonical[base] ?? code;
+}
 
 /**
  * Convierte caracteres Katakana a Hiragana.
@@ -424,27 +338,6 @@ export function hiraganaToRomaji(kana: string): string {
     }
   }
   return result;
-}
-
-// Exportados para compatibilidad de tipos (obsoletos: reemplazados por READING_TO_KANJI_INDEX y kanji-readings-db universal)
-export const ASR_MONOSYLLABLE_MAP: Record<string, string> = {};
-export const ASR_HOMOPHONE_KANJI_MAP: Record<string, string> = {};
-
-// Índice invertido universal: reading (kana) -> kanji[] para los 2.678 kanji
-const READING_TO_KANJI_INDEX = new Map<string, string[]>();
-for (const [kanji, readings] of Object.entries(UNIVERSAL_KANJI_READINGS_MAP)) {
-  for (const r of readings) {
-    const list = READING_TO_KANJI_INDEX.get(r);
-    if (list) {
-      list.push(kanji);
-    } else {
-      READING_TO_KANJI_INDEX.set(r, [kanji]);
-    }
-  }
-}
-
-export function getKanjiHomophonesForReading(kanaReading: string): string[] {
-  return READING_TO_KANJI_INDEX.get(kanaReading) || [];
 }
 
 /**
@@ -514,25 +407,21 @@ export function kanjiToHiragana(text: string): string {
  */
 export function toNormalizedHiragana(text: string): string {
   if (!text) return '';
-  const cleanInput = text.toLowerCase().trim();
+  // 1. Kanji conocidos → su lectura principal
+  let result = kanjiToHiragana(text.toLowerCase().trim());
 
-  let result = expandNumberArtifacts(cleanInput);
-
-  // 2. Si contiene kanji conocidos o números de transcripción de voz, resolver fonéticamente
-  result = kanjiToHiragana(result);
-
-  // 3. Si contiene caracteres romaji (a-z) o dígitos, convertir a hiragana
-  if (/[a-z0-9]/.test(result)) {
+  // 2. Romaji → hiragana
+  if (/[a-z]/.test(result)) {
     result = romajiToHiragana(result);
   }
 
-  // 4. Convertir katakana a hiragana
+  // 3. Convertir katakana a hiragana
   result = katakanaToHiragana(result);
 
-  // 5. Expandir chōonpu (ー / -) a su sonido de vocal largo
+  // 4. Expandir chōonpu (ー / -) a su sonido de vocal largo
   result = expandChoonpu(result);
 
-  // 6. Normalizar vocales pequeñas (ej. 'うぇ' de 'ウェ' -> 'うえ') para coincidencia fonética precisa
+  // 5. Normalizar vocales pequeñas (ej. 'うぇ' de 'ウェ' -> 'うえ') para coincidencia fonética precisa
   result = result.replace(/[ぁぃぅぇぉゎ]/g, (ch) => {
     switch (ch) {
       case 'ぁ': return 'あ';
@@ -545,10 +434,7 @@ export function toNormalizedHiragana(text: string): string {
     }
   });
 
-  // 7. Eliminar dígitos iniciales si quedaron tras artefactos numéricos seguidos de kana (ej. '1かい' -> 'かい')
-  result = result.replace(/^[0-9]+([\u3040-\u309f])/, '$1');
-
-  // 8. Eliminar signos de puntuación, puntos japoneses, guiones, espacios y cualquier letra latina residual
+  // 6. Eliminar signos de puntuación, puntos japoneses, guiones, espacios y cualquier letra latina residual
   return result.replace(/[\s.,!?;:。、！？・\-_~～\u30fc]/g, '').replace(/[a-zA-Z]/g, '');
 }
 
@@ -600,80 +486,6 @@ export function expandKanjiToHiraganaCandidates(text: string): string[] {
   return Array.from(results);
 }
 
-
-/**
- * Normaliza dígrafos de 拗音 (Youon - sonidos contraídos como きゃ, ひゃ, しゅ, ちょ)
- * a su forma fonética expandida (きや, ひや, しゆ, ちよ) para salvar la diferencia
- * entre la pronunciación no nativa y el reconocimiento de voz acústico de Google STT.
- */
-export function normalizeYouon(kana: string): string {
-  if (!kana) return '';
-  return kana
-    .replace(/きゃ/g, 'きや').replace(/きゅ/g, 'きゆ').replace(/きょ/g, 'きよ')
-    .replace(/しゃ/g, 'しや').replace(/しゅ/g, 'しゆ').replace(/しょ/g, 'しよ')
-    .replace(/ちゃ/g, 'ちや').replace(/ちゅ/g, 'ちゆ').replace(/ちょ/g, 'ちよ')
-    .replace(/にゃ/g, 'にや').replace(/にゅ/g, 'にゆ').replace(/にょ/g, 'によ')
-    .replace(/ひゃ/g, 'ひや').replace(/ひゅ/g, 'ひゆ').replace(/ひょ/g, 'ひよ')
-    .replace(/みゃ/g, 'みや').replace(/みゅ/g, 'みゆ').replace(/みょ/g, 'みよ')
-    .replace(/りゃ/g, 'りや').replace(/りゅ/g, 'りゆ').replace(/りょ/g, 'りよ')
-    .replace(/ぎゃ/g, 'ぎや').replace(/ぎゅ/g, 'ぎゆ').replace(/ぎょ/g, 'ぎよ')
-    .replace(/じゃ/g, 'じや').replace(/じゅ/g, 'じゆ').replace(/じょ/g, 'じよ')
-    .replace(/びゃ/g, 'びや').replace(/びゅ/g, 'びゆ').replace(/びょ/g, 'びよ')
-    .replace(/ぴゃ/g, 'ぴや').replace(/ぴゅ/g, 'ぴゆ').replace(/ぴょ/g, 'ぴよ');
-}
-
-/**
- * Genera un conjunto rico de variantes fonéticas, kanji homófonos, alargamientos vocálicos y
- * expresiones de cópula (ej. 〜です, 〜の) para sesgar el reconocedor de voz de Google STT
- * en palabras cortas o monosílabos (≤ 2 moras) como 目 [め], 手 [て], 木 [き], 日 [ひ], 上 [うえ], etc.
- */
-export function getMonosyllableVariants(reading: string, displayText?: string): string[] {
-  if (!reading) return [];
-  const hira = toNormalizedHiragana(reading);
-  if (!hira || hira.length > 2) return [];
-
-  const variants = new Set<string>();
-  const cleanDisplay = (displayText || '').trim();
-
-  // 1. Formas básicas kana
-  variants.add(hira);
-  const kata = hira.replace(/[\u3041-\u3096]/g, (ch) =>
-    String.fromCharCode(ch.charCodeAt(0) + 0x60)
-  );
-  if (kata) variants.add(kata);
-
-  // 2. Formas con sonido prolongado (Google STT casi siempre percibe monosílabos como prolongados)
-  variants.add(hira + 'ー');
-  if (kata) variants.add(kata + 'ー');
-  const expandedHira = expandChoonpu(hira + 'ー');
-  if (expandedHira) variants.add(expandedHira);
-
-  // 3. Cópula cortés y partículas (aumenta drásticamente el n-gram prior en Google SpeechRecognizer)
-  variants.add(hira + 'です');
-  variants.add(hira + 'の');
-  if (cleanDisplay) {
-    variants.add(cleanDisplay);
-    variants.add(cleanDisplay + 'です');
-    variants.add(cleanDisplay + 'の');
-  }
-
-  // 4. Homófonos de kanji de todo el catálogo universal de 2.678 Kanjis (N5 a N1)
-  const homophones = READING_TO_KANJI_INDEX.get(hira);
-  if (homophones) {
-    for (const k of homophones) {
-      variants.add(k);
-      variants.add(k + 'です');
-    }
-  }
-
-  // 5. Romaji sistemático para biasing fonético nativo
-  const rom = hiraganaToRomaji(hira);
-  if (rom) {
-    variants.add(rom);
-  }
-
-  return Array.from(variants);
-}
 
 /**
  * Conjunto de sustantivos, pronombres, adverbios y expresiones comunes en Kana
@@ -1480,31 +1292,6 @@ export function formatJapaneseReading(reading: string): string {
   return clean;
 }
 
-const DOW_DATA = [
-  { kanji: '月曜日', short: '月曜', kana: 'げつようび' },
-  { kanji: '火曜日', short: '火曜', kana: 'かようび' },
-  { kanji: '水曜日', short: '水曜', kana: 'すいようび' },
-  { kanji: '木曜日', short: '木曜', kana: 'もくようび' },
-  { kanji: '金曜日', short: '金曜', kana: 'きんようび' },
-  { kanji: '土曜日', short: '土曜', kana: 'どようび' },
-  { kanji: '日曜日', short: '日曜', kana: 'にちようび' },
-];
-
-const MONTH_DATA = [
-  { num: 1, kanji: '一月', kana: 'いちがつ' },
-  { num: 2, kanji: '二月', kana: 'にがつ' },
-  { num: 3, kanji: '三月', kana: 'さんがつ' },
-  { num: 4, kanji: '四月', kana: 'しがつ' },
-  { num: 5, kanji: '五月', kana: 'ごがつ' },
-  { num: 6, kanji: '六月', kana: 'ろくがつ' },
-  { num: 7, kanji: '七月', kana: 'しちがつ', altKana: 'なながつ' },
-  { num: 8, kanji: '八月', kana: 'はちがつ' },
-  { num: 9, kanji: '九月', kana: 'くがつ' },
-  { num: 10, kanji: '十月', kana: 'じゅうがつ' },
-  { num: 11, kanji: '十一月', kana: 'じゅういちがつ' },
-  { num: 12, kanji: '十二月', kana: 'じゅうにがつ' },
-];
-
 export const DAY_DATA = [
   { day: 1, kanji: '一日', morpheme: 'ついたち', kana: 'ついたち', altKanji: '1日' },
   { day: 2, kanji: '二日', morpheme: 'ふつか', kana: 'ふつか', altKanji: '2日' },
@@ -1538,72 +1325,3 @@ export const DAY_DATA = [
   { day: 30, kanji: '三十日', morpheme: '三 十 日', kana: 'さんじゅうにち', altKanji: '30日' },
   { day: 31, kanji: '三十一日', morpheme: '三 十 一 日', kana: 'さんじゅういちにち', altKanji: '31日' },
 ];
-
-/**
- * Normaliza números arábigos a kanji en expresiones de tiempo/calendario japonesas
- * (ej. "3日" -> "三日", "1月" -> "一月", "14日" -> "十四日").
- */
-export function normalizeJapaneseCalendarText(text: string): string {
-  if (!text) return '';
-  let res = text;
-  res = res.replace(/(1[0-2]|[1-9])月/g, (_, num) => {
-    const k = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二'][parseInt(num, 10) - 1];
-    return `${k}月`;
-  });
-  res = res.replace(/(3[0-1]|[1-2][0-9]|[1-9])日/g, (_, num) => {
-    const n = parseInt(num, 10);
-    const kanjiDigits = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
-    let k = '';
-    if (n <= 10) k = kanjiDigits[n - 1];
-    else if (n < 20) k = '十' + (n === 10 ? '' : kanjiDigits[(n % 10) - 1]);
-    else if (n === 20) k = '二十';
-    else if (n < 30) k = '二十' + kanjiDigits[(n % 10) - 1];
-    else if (n === 30) k = '三十';
-    else if (n === 31) k = '三十一';
-    return `${k}日`;
-  });
-  return res;
-}
-
-/**
- * Expande dinámicamente un término de calendario japonés (días de semana, meses o días del mes)
- * a todas sus formas equivalentes: Kanji, morfemas separados para Kaldi/Vosk, y lecturas Kana.
- */
-export function getJapaneseCalendarExpansions(input: string): string[] {
-  const clean = (input || '').trim();
-  if (!clean) return [];
-  const results = new Set<string>();
-
-  // 1. Días de la semana
-  for (const dow of DOW_DATA) {
-    if (clean === dow.kanji || clean === dow.short || clean === dow.kana) {
-      results.add(dow.kanji);
-      results.add(dow.short);
-      results.add(dow.kana);
-    }
-  }
-
-  // 2. Meses
-  for (const m of MONTH_DATA) {
-    const arabic = `${m.num}月`;
-    if (clean === arabic || clean === m.kanji || clean === m.kana || (m.altKana && clean === m.altKana)) {
-      results.add(m.kanji);
-      results.add(m.kana);
-      if (m.altKana) results.add(m.altKana);
-    }
-  }
-
-  // 3. Días del mes (1 a 31)
-  for (const d of DAY_DATA) {
-    if (clean === d.altKanji || clean === d.kanji || clean === d.kana) {
-      // Priorizar la fonética exacta de la lectura (d.morpheme y d.kana) para que Vosk
-      // reconozca estrictamente la lectura correcta (ej. "みっ か" para 3日)
-      results.add(d.morpheme);
-      results.add(d.kana);
-    }
-  }
-
-  return Array.from(results);
-}
-
-

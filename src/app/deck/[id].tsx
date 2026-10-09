@@ -11,13 +11,15 @@ import { speakText } from '../../../lib/audio-service';
 import { ALL_LANGUAGES, deleteDeck } from '../../../lib/deck-service';
 import { getQuickHskLevel } from '../../../lib/hsk-data';
 import { cleanAndFormatMeanings } from '../../../lib/japanese-search';
-import { classifyJapaneseWord, isJapaneseDictionaryForm, formatJapaneseReading } from '../../../lib/japanese-utils';
+import { classifyJapaneseWord, detectTextLanguage, isJapaneseDictionaryForm, formatJapaneseReading } from '../../../lib/japanese-utils';
 import { getQuickJlptLevel } from '../../../lib/jlpt-data';
 import { addCardToReview, deleteWord, generateConjugationsForDeck, removeCardFromReviewByWordId, resolveJapaneseBaseForm } from '../../../lib/word-service';
+import { parseAux } from '../../../lib/word-aux';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { ConjugationPracticeModal } from '../../components/ConjugationPracticeModal';
 import { CustomCardData, CustomCardModal } from '../../components/CustomCardModal';
 import { Shadows, Spacing, Typography } from '../../constants/theme';
+import { useTranslation } from '../../i18n';
 
 interface DeckWordCardProps {
   item: any;
@@ -40,6 +42,7 @@ const DeckWordCard = memo(function DeckWordCard({
   onToggleReview,
   isCustomDeck,
 }: DeckWordCardProps) {
+  const { t } = useTranslation();
   return (
     <TouchableOpacity
       style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
@@ -115,7 +118,7 @@ const DeckWordCard = memo(function DeckWordCard({
       {!isCustomDeck && (
         <View style={[styles.cardFooter, { borderTopColor: colors.border }]}>
           <Text style={[styles.viewDetailText, { color: colors.primary }]}>
-            Ver detalle y trazado
+            {t('deckDetail.viewDetailAndStroke')}
           </Text>
           <Ionicons name="chevron-forward" size={13} color={colors.primary} />
         </View>
@@ -131,7 +134,7 @@ const DeckWordCard = memo(function DeckWordCard({
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Text style={[styles.viewDetailText, { color: '#10B981' }]}>
-            + Agregar al repaso
+            {t('deckDetail.addToReview')}
           </Text>
           <Ionicons name="add" size={15} color="#10B981" />
         </TouchableOpacity>
@@ -141,6 +144,7 @@ const DeckWordCard = memo(function DeckWordCard({
 });
 
 export default function DeckDetailScreen() {
+  const { t } = useTranslation();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -174,37 +178,20 @@ export default function DeckDetailScreen() {
       const isChineseDeck = deckObj?.languageCode?.startsWith('zh');
 
       const processed = result.map((w) => {
-        let level: string | undefined = undefined;
-        let category: string | undefined = undefined;
-        let conjugationEnabled: boolean | undefined = undefined;
+        const aux = parseAux(w.auxiliaryInfo);
+        let level: string | undefined = aux.level;
+        let category: string | undefined = aux.category;
+        let conjugationEnabled: boolean | undefined =
+          aux.conjugationEnabled !== undefined ? Boolean(aux.conjugationEnabled) : undefined;
         const cleanWord = (w.simplified || '').trim();
         const endsWithKanji = /[\u4e00-\u9faf]$/.test(cleanWord);
-        let dictionaryForm: { kanji: string; reading?: string } | undefined = undefined;
-        let rawKun = '';
-
-        if (w.auxiliaryInfo) {
-          try {
-            const parsed = JSON.parse(w.auxiliaryInfo);
-            level = parsed.level;
-            category = parsed.category;
-            rawKun = parsed.kunReading || '';
-            if (parsed.conjugationEnabled !== undefined) {
-              conjugationEnabled = Boolean(parsed.conjugationEnabled);
-            }
-            if (parsed.dictionaryForm) {
-              const df = parsed.dictionaryForm;
-              if (
-                df.kanji &&
-                df.kanji.length >= 2 &&
-                df.kanji !== 'u' &&
-                df.kanji !== 'う' &&
-                !/[\u4e00-\u9faf]$/.test(df.kanji)
-              ) {
-                dictionaryForm = df;
-              }
-            }
-          } catch { }
-        }
+        const rawKun = aux.kunReading || '';
+        // Forma de diccionario guardada, descartando valores corruptos de versiones viejas (p. ej. "u")
+        const df = aux.dictionaryForm;
+        let dictionaryForm: { kanji: string; reading?: string } | undefined =
+          df?.kanji && df.kanji.length >= 2 && df.kanji !== 'u' && df.kanji !== 'う' && !/[\u4e00-\u9faf]$/.test(df.kanji)
+            ? df
+            : undefined;
 
         // Auto-resolución JLPT o HSK
         if (!level) {
@@ -297,12 +284,12 @@ export default function DeckDetailScreen() {
 
   const handleDeleteWord = useCallback((wordId: string, wordText: string) => {
     Alert.alert(
-      'Eliminar palabra',
-      `¿Estás seguro de que querés eliminar "${wordText}" del mazo y de tus repasos?`,
+      t('deckDetail.deleteWordTitle'),
+      t('deckDetail.deleteWordConfirm', { text: wordText }),
       [
-        { text: 'Cancelar', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Eliminar',
+          text: t('common.delete'),
           style: 'destructive',
           onPress: async () => {
             await deleteWord(wordId);
@@ -311,7 +298,7 @@ export default function DeckDetailScreen() {
         },
       ]
     );
-  }, [fetchWords]);
+  }, [fetchWords, t]);
 
   const handleEditCard = useCallback((item: any) => {
     const rawAnswer = Array.isArray(item.displayMeanings)
@@ -334,9 +321,9 @@ export default function DeckDetailScreen() {
       }
       await fetchWords();
     } catch (e) {
-      Alert.alert('Error', 'No se pudo actualizar el estado de repaso.');
+      Alert.alert(t('common.error'), t('deckDetail.updateReviewError'));
     }
-  }, [fetchWords]);
+  }, [fetchWords, t]);
 
   const [menuVisible, setMenuVisible] = useState(false);
 
@@ -345,45 +332,47 @@ export default function DeckDetailScreen() {
     if (!id) return;
     try {
       const res = await generateConjugationsForDeck(id);
-      let msg = `Se analizaron ${res.totalAnalyzed} palabras.\n\n` +
-        `• Verbos detectados: ${res.verbsFound}\n` +
-        `• Adjetivos detectados: ${res.adjectivesFound}\n` +
-        `• Total conjugables: ${res.totalConjugable}`;
+      let msg = t('deckDetail.conjugationsCountMsg', {
+        total: res.totalAnalyzed,
+        verbs: res.verbsFound,
+        adjectives: res.adjectivesFound,
+        conjugable: res.totalConjugable,
+      });
 
       if (res.deconjugatedCount > 0) {
-        msg += `\n• Formas conjugadas convertidas a base: ${res.deconjugatedCount}`;
+        msg += t('deckDetail.deconjugatedMsg', { count: res.deconjugatedCount });
       }
 
       if (res.totalConjugable === 0) {
-        msg += '\n\nNo se detectaron verbos o adjetivos nuevos para conjugar.';
+        msg += t('deckDetail.noConjugationsFound');
       }
 
       await fetchWords();
 
       if (res.totalConjugable > 0) {
         Alert.alert(
-          'Conjugaciones generadas',
+          t('deckDetail.conjugationsGenerated'),
           msg,
           [
-            { text: 'Aceptar', style: 'cancel' },
+            { text: t('common.ok'), style: 'cancel' },
             {
-              text: 'Practicar ahora',
+              text: t('deckDetail.practiceNow'),
               onPress: () => setConjugationModalVisible(true),
             },
           ]
         );
       } else {
-        Alert.alert('Generar conjugaciones', msg);
+        Alert.alert(t('deckDetail.generateConjugations'), msg);
       }
     } catch (e) {
-      Alert.alert('Error', 'No se pudieron generar las conjugaciones.');
+      Alert.alert(t('common.error'), t('deckDetail.generateConjugationsError'));
     }
   };
 
   const handleExportDeck = async () => {
     setMenuVisible(false);
     if (!deckInfo || deckWords.length === 0) {
-      Alert.alert('Aviso', 'El mazo no tiene palabras para exportar.');
+      Alert.alert(t('common.notice'), t('deckDetail.noWordsToExport'));
       return;
     }
 
@@ -399,7 +388,7 @@ export default function DeckDetailScreen() {
         message: yomiJson,
       });
     } catch (e) {
-      Alert.alert('Error', 'No se pudo exportar el mazo.');
+      Alert.alert(t('common.error'), t('deckDetail.exportError'));
     }
   };
 
@@ -407,12 +396,12 @@ export default function DeckDetailScreen() {
     setMenuVisible(false);
     if (!id || !deckInfo) return;
     Alert.alert(
-      'Eliminar mazo',
-      `¿Estás seguro de que querés eliminar el mazo "${deckInfo.name}" y todas las palabras/repasos que contiene? Esta acción no se puede deshacer.`,
+      t('deckDetail.deleteDeck'),
+      t('deckDetail.deleteDeckConfirm', { name: deckInfo.name }),
       [
-        { text: 'Cancelar', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Eliminar Mazo',
+          text: t('deckDetail.deleteDeck'),
           style: 'destructive',
           onPress: async () => {
             await deleteDeck(id);
@@ -424,7 +413,8 @@ export default function DeckDetailScreen() {
   };
 
   const handleSpeak = useCallback((text: string, reading?: string) => {
-    const lang = isCustomDeck ? 'es-ES' : (deckInfo?.languageCode || 'zh-CN');
+    // Mazo personalizado: cada texto puede estar en cualquier idioma, se detecta por su escritura
+    const lang = isCustomDeck ? detectTextLanguage(text) : (deckInfo?.languageCode || 'zh-CN');
     speakText(text, lang, reading);
   }, [isCustomDeck, deckInfo?.languageCode]);
 
@@ -470,7 +460,7 @@ export default function DeckDetailScreen() {
             </Text>
           )}
           <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
-            {deckInfo?.name || 'Mazo'}
+            {deckInfo?.name || t('deckDetail.deck')}
           </Text>
         </View>
 
@@ -479,7 +469,7 @@ export default function DeckDetailScreen() {
           <TouchableOpacity
             style={styles.moreMenuBtn}
             onPress={() => setMenuVisible(true)}
-            accessibilityLabel="Opciones del mazo"
+            accessibilityLabel={t('decks.deckOptions')}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <Ionicons name="ellipsis-vertical" size={22} color={colors.text} />
@@ -496,7 +486,7 @@ export default function DeckDetailScreen() {
       >
         <Pressable style={styles.modalOverlay} onPress={() => setMenuVisible(false)}>
           <View style={[styles.menuDropdown, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <Text style={[styles.menuDropdownTitle, { color: colors.textMuted }]}>Opciones de {deckInfo?.name}</Text>
+            <Text style={[styles.menuDropdownTitle, { color: colors.textMuted }]}>{t('deckDetail.optionsFor', { name: deckInfo?.name })}</Text>
 
             {deckWords.length > 0 && (
               <TouchableOpacity
@@ -507,7 +497,7 @@ export default function DeckDetailScreen() {
                 }}
               >
                 <Ionicons name="flash" size={20} color={colors.primary} style={{ marginRight: 10 }} />
-                <Text style={[styles.menuDropdownText, { color: colors.text, fontWeight: 'bold' }]}>Repasar mazo</Text>
+                <Text style={[styles.menuDropdownText, { color: colors.text, fontWeight: 'bold' }]}>{t('deckDetail.reviewDeck')}</Text>
               </TouchableOpacity>
             )}
 
@@ -520,7 +510,7 @@ export default function DeckDetailScreen() {
                 }}
               >
                 <Ionicons name="sparkles" size={20} color={colors.primary} style={{ marginRight: 10 }} />
-                <Text style={[styles.menuDropdownText, { color: colors.text }]}>Práctica de Conjugaciones</Text>
+                <Text style={[styles.menuDropdownText, { color: colors.text }]}>{t('deckDetail.conjugationPractice')}</Text>
               </TouchableOpacity>
             )}
 
@@ -530,7 +520,7 @@ export default function DeckDetailScreen() {
                 onPress={handleGenerateConjugations}
               >
                 <Ionicons name="sparkles-outline" size={20} color={colors.primary} style={{ marginRight: 10 }} />
-                <Text style={[styles.menuDropdownText, { color: colors.text }]}>Generar conjugaciones</Text>
+                <Text style={[styles.menuDropdownText, { color: colors.text }]}>{t('deckDetail.generateConjugations')}</Text>
               </TouchableOpacity>
             )}
 
@@ -543,7 +533,7 @@ export default function DeckDetailScreen() {
                 }}
               >
                 <Ionicons name="cloud-download-outline" size={20} color="#10B981" style={{ marginRight: 10 }} />
-                <Text style={[styles.menuDropdownText, { color: colors.text }]}>Importar</Text>
+                <Text style={[styles.menuDropdownText, { color: colors.text }]}>{t('deckDetail.importCustom')}</Text>
               </TouchableOpacity>
             ) : (
               <TouchableOpacity
@@ -554,7 +544,7 @@ export default function DeckDetailScreen() {
                 }}
               >
                 <Ionicons name="cloud-download-outline" size={20} color={colors.primary} style={{ marginRight: 10 }} />
-                <Text style={[styles.menuDropdownText, { color: colors.text }]}>Importar palabras (Anki / Yomi)</Text>
+                <Text style={[styles.menuDropdownText, { color: colors.text }]}>{t('deckDetail.importWords')}</Text>
               </TouchableOpacity>
             )}
 
@@ -563,7 +553,7 @@ export default function DeckDetailScreen() {
               onPress={handleExportDeck}
             >
               <Ionicons name="share-outline" size={20} color="#8B5CF6" style={{ marginRight: 10 }} />
-              <Text style={[styles.menuDropdownText, { color: colors.text }]}>Exportar mazo (Yomi)</Text>
+              <Text style={[styles.menuDropdownText, { color: colors.text }]}>{t('deckDetail.exportDeck')}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -571,7 +561,7 @@ export default function DeckDetailScreen() {
               onPress={handleDeleteDeck}
             >
               <Ionicons name="trash-outline" size={20} color={colors.danger} style={{ marginRight: 10 }} />
-              <Text style={[styles.menuDropdownText, { color: colors.danger }]}>Eliminar mazo</Text>
+              <Text style={[styles.menuDropdownText, { color: colors.danger }]}>{t('deckDetail.deleteDeck')}</Text>
             </TouchableOpacity>
           </View>
         </Pressable>
@@ -581,7 +571,7 @@ export default function DeckDetailScreen() {
         <View style={styles.emptyContainer}>
           <Ionicons name={isCustomDeck ? 'layers-outline' : 'book-outline'} size={48} color={colors.textMuted} />
           <Text style={[styles.emptyText, { color: colors.textMuted }]}>
-            {isCustomDeck ? 'Este mazo no tiene tarjetas aún.' : 'Este mazo no tiene palabras aún.'}
+            {isCustomDeck ? t('deckDetail.emptyCustom') : t('deckDetail.emptyWords')}
           </Text>
           <View style={styles.emptyActionsRow}>
             <TouchableOpacity
@@ -590,7 +580,7 @@ export default function DeckDetailScreen() {
             >
               <Ionicons name="add" size={18} color="#FFF" style={{ marginRight: 4 }} />
               <Text style={styles.emptyAddBtnText}>
-                {isCustomDeck ? 'Agregar tarjeta' : 'Agregar primera palabra'}
+                {isCustomDeck ? t('deckDetail.addCard') : t('deckDetail.addFirstWord')}
               </Text>
             </TouchableOpacity>
 
@@ -604,7 +594,7 @@ export default function DeckDetailScreen() {
               >
                 <Ionicons name="cloud-download-outline" size={16} color="#10B981" style={{ marginRight: 6 }} />
                 <Text style={[styles.emptyImportBtnText, { color: '#10B981' }]}>
-                  Importar
+                  {t('deckDetail.importCustom')}
                 </Text>
               </TouchableOpacity>
             )}
@@ -643,7 +633,7 @@ export default function DeckDetailScreen() {
         }}
       >
         <Text style={styles.fabExtendedText}>
-          {isCustomDeck ? '+ Añadir tarjeta' : '+ Añadir palabra'}
+          {isCustomDeck ? t('deckDetail.addCardFab') : t('deckDetail.addWordFab')}
         </Text>
       </TouchableOpacity>
 

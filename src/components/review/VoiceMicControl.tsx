@@ -1,8 +1,9 @@
-import React, { memo } from 'react';
+import { memo } from 'react';
 import { ActivityIndicator, Animated, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
 import { Spacing } from '../../constants/theme';
+import { useTranslation } from '../../i18n';
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 const CIRCLE_RADIUS = 46;
@@ -34,6 +35,7 @@ export const VoiceMicControl = memo(function VoiceMicControl({
   colors,
   onPress,
 }: VoiceMicControlProps) {
+  const { t } = useTranslation();
   const isStarting = speechStatus === 'starting';
   const isButtonDisabled = isStarting || Boolean(busyLabel);
 
@@ -113,7 +115,7 @@ export const VoiceMicControl = memo(function VoiceMicControl({
         >
           <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: 8 }} />
           <Text style={[styles.startPromptPillText, { color: colors.textMuted }]}>
-            Iniciando micrófono...
+            {t('review.startingMic')}
           </Text>
         </View>
       ) : busyLabel ? (
@@ -135,14 +137,14 @@ export const VoiceMicControl = memo(function VoiceMicControl({
           onPress={onPress}
         >
           <Ionicons name="play" size={14} color="#FFF" style={{ marginRight: 6 }} />
-          <Text style={styles.startPromptPillText}>Presiona para comenzar</Text>
+          <Text style={styles.startPromptPillText}>{t('review.pressToStart')}</Text>
         </TouchableOpacity>
       ) : (
         <Text style={[styles.floatingMicHintText, { color: colors.textMuted }]}>
           {speechStatus === 'listening'
-            ? 'Escuchando tu pronunciación...'
+            ? t('review.listeningYourPronunciation')
             : speechStatus === 'evaluating'
-              ? 'Evaluando respuesta...'
+              ? t('review.evaluatingAnswer')
               : ''}
         </Text>
       )}

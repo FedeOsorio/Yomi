@@ -215,9 +215,9 @@ export default function SearchScreen() {
     try {
       const hskNum = getQuickHskLevel(entry.simplified);
       await saveWords(selectedDeckId, [entry], hskNum ? `HSK ${hskNum}` : undefined);
-      Alert.alert('¡Guardado!', `"${entry.simplified}" fue agregada a "${currentDeck?.name}".`);
+      Alert.alert(t('common.success'), t('search.wordSavedToast', { word: entry.simplified }));
     } catch (e) {
-      Alert.alert('Error', 'No se pudo guardar la palabra.');
+      Alert.alert(t('common.error'), t('search.couldNotSaveWord'));
     }
   };
 
@@ -230,10 +230,10 @@ export default function SearchScreen() {
       Boolean(entry.category && (entry.category.startsWith('Verbo') || entry.category.startsWith('Adjetivo')));
 
     const itemTypeLabel = entry.category?.startsWith('Verbo')
-      ? 'el verbo'
+      ? t('search.itemVerb')
       : entry.category?.startsWith('Adjetivo')
-        ? 'el adjetivo'
-        : 'la palabra';
+        ? t('search.itemAdj')
+        : t('search.itemWord');
 
     const executeSave = async (withConjugation: boolean) => {
       try {
@@ -260,8 +260,15 @@ export default function SearchScreen() {
 
           const levelLabel = entry.level ? ` [JLPT ${entry.level}]` : '';
           Alert.alert(
-            '¡Guardado doble!',
-            `Se agregaron "${entry.kanji}" (${entry.reading}) y la forma diccionario "${entry.dictionaryForm.kanji}" (${entry.dictionaryForm.reading})${levelLabel} a "${currentDeck?.name}".`
+            t('search.doubleSaveTitle'),
+            t('search.doubleSaveMsg', {
+              word: entry.kanji,
+              reading: entry.reading,
+              dictWord: entry.dictionaryForm.kanji,
+              dictReading: entry.dictionaryForm.reading,
+              level: levelLabel,
+              deck: currentDeck?.name,
+            })
           );
         } else {
           // Solo habilitar conjugación si es una forma base/diccionario
@@ -276,27 +283,27 @@ export default function SearchScreen() {
           });
           const levelLabel = entry.level ? ` [JLPT ${entry.level}]` : '';
           Alert.alert(
-            '¡Guardado!',
-            `"${entry.kanji}" (${entry.reading})${levelLabel} fue agregada a "${currentDeck?.name}".`
+            t('common.success'),
+            t('search.wordSavedToast', { word: `${entry.kanji} (${entry.reading})${levelLabel}` })
           );
         }
       } catch (e) {
-        Alert.alert('Error', 'No se pudo guardar la palabra.');
+        Alert.alert(t('common.error'), t('search.couldNotSaveWord'));
       }
     };
 
     if (isConjugable) {
       Alert.alert(
-        `¿Quieres agregar ${itemTypeLabel} al ejercicio de conjugación?`,
-        'Al presionar Sí, se guardará la tarjeta que elegiste y también la forma diccionario para la práctica.',
+        t('search.conjugationPromptTitle', { itemType: itemTypeLabel }),
+        t('search.conjugationPromptDetail'),
         [
           {
-            text: 'No',
+            text: t('common.cancel'),
             style: 'cancel',
             onPress: () => executeSave(false),
           },
           {
-            text: 'Sí',
+            text: t('common.confirm'),
             onPress: () => executeSave(true),
           },
         ]
@@ -314,11 +321,11 @@ export default function SearchScreen() {
         text: query.trim(),
         meanings: genericTranslation.trim() || query.trim(),
       });
-      Alert.alert('¡Guardado!', `"${query.trim()}" fue agregada a "${currentDeck?.name}".`, [
-        { text: 'OK', onPress: () => router.back() }
+      Alert.alert(t('common.success'), t('search.wordSavedToast', { word: query.trim() }), [
+        { text: t('common.ok'), onPress: () => router.back() }
       ]);
     } catch (e) {
-      Alert.alert('Error', 'No se pudo guardar la palabra.');
+      Alert.alert(t('common.error'), t('search.couldNotSaveWord'));
     }
   };
 
@@ -372,14 +379,14 @@ export default function SearchScreen() {
         <View style={styles.brandTitleContainer}>
           <Text style={[styles.brandText, { color: colors.primary }]}>Yomi</Text>
           <Text style={[styles.brandSep, { color: colors.textMuted }]}> • </Text>
-          <Text style={[styles.topTitle, { color: colors.text }]}>Buscar Palabra</Text>
+          <Text style={[styles.topTitle, { color: colors.text }]}>{t('search.title')}</Text>
         </View>
       </View>
 
       <View style={{ flex: 1, paddingHorizontal: Spacing.md }}>
         {/* Selector de Mazo (Dropdown) */}
         <View style={styles.deckPickerSection}>
-          <Text style={[styles.deckPickerLabel, { color: colors.textMuted }]}>Mazo de destino:</Text>
+          <Text style={[styles.deckPickerLabel, { color: colors.textMuted }]}>{t('search.targetDeckLabel')}</Text>
           <TouchableOpacity
             style={[
               styles.deckDropdownBtn,
@@ -391,7 +398,7 @@ export default function SearchScreen() {
             <View style={styles.deckDropdownContent}>
               <Text style={styles.deckDropdownFlag}>{currentLangMeta?.flag || '📚'}</Text>
               <Text style={[styles.deckDropdownText, { color: colors.text }]} numberOfLines={1}>
-                {currentDeck?.name || 'Seleccionar mazo'}
+                {currentDeck?.name || t('search.selectDeck')}
               </Text>
             </View>
             <Ionicons name="chevron-down" size={18} color={colors.textMuted} />
@@ -451,7 +458,7 @@ export default function SearchScreen() {
               query.trim().length > 0 && !isSearching ? (
                 <View style={styles.emptySearchBox}>
                   <Text style={[styles.emptySearchText, { color: colors.textMuted }]}>
-                    No se encontraron coincidencias para "{query}".
+                    {t('search.noMatchesFor', { query })}
                   </Text>
                   <TouchableOpacity
                     style={[styles.manualAddBtn, { backgroundColor: colors.primary }]}
@@ -471,7 +478,7 @@ export default function SearchScreen() {
                     }}
                   >
                     <Ionicons name="add-circle" size={18} color="#FFF" style={{ marginRight: 6 }} />
-                    <Text style={styles.manualAddBtnText}>Guardar "{query}" como tarjeta</Text>
+                    <Text style={styles.manualAddBtnText}>{t('search.saveWordAsCard', { word: query })}</Text>
                   </TouchableOpacity>
                 </View>
               ) : null
@@ -581,12 +588,12 @@ export default function SearchScreen() {
                 <View style={[styles.builderHeaderBox, { backgroundColor: colors.surfaceHighlight }]}>
                   <Ionicons name="sparkles" size={20} color={colors.primary} />
                   <Text style={[styles.builderHeaderText, { color: colors.text }]}>
-                    Palabra armada por sílabas. Seleccioná los caracteres deseados:
+                    {t('search.builderSyllableHeader')}
                   </Text>
                 </View>
 
                 <View style={[styles.previewBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                  <Text style={[styles.previewLabel, { color: colors.textMuted }]}>Resultado:</Text>
+                  <Text style={[styles.previewLabel, { color: colors.textMuted }]}>{t('search.builderResult')}</Text>
                   <Text style={[styles.previewHanzi, { color: colors.primary }]}>{builtHanzi}</Text>
                   <Text style={[styles.previewPinyin, { color: colors.primaryHover }]}>{builtPinyin}</Text>
                 </View>
@@ -594,7 +601,7 @@ export default function SearchScreen() {
                 {chineseResults.syllableGroups.map((group, syllableIdx) => (
                   <View key={syllableIdx} style={styles.syllableRow}>
                     <Text style={[styles.syllableLabel, { color: colors.textMuted }]}>
-                      Sílaba #{syllableIdx + 1}: <Text style={[styles.syllableTag, { color: colors.primary }]}>{group.syllable}</Text>
+                      {t('search.builderSyllableIndex', { index: syllableIdx + 1 })}<Text style={[styles.syllableTag, { color: colors.primary }]}>{group.syllable}</Text>
                     </Text>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.candidatesScroll}>
                       {group.candidates.map((cand) => {
@@ -625,7 +632,7 @@ export default function SearchScreen() {
                 <View style={[styles.builderMeaningContainer, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}>
                   <TextInput
                     style={[styles.builderMeaningInput, { color: colors.text }]}
-                    placeholder={isTranslatingChineseMeaning ? "Obteniendo significado en español..." : "Significado en español..."}
+                    placeholder={isTranslatingChineseMeaning ? t('search.builderGettingMeaning') : t('search.builderMeaningPlaceholder')}
                     placeholderTextColor={colors.textMuted}
                     value={chineseCustomMeaning}
                     onChangeText={setChineseCustomMeaning}
@@ -643,16 +650,16 @@ export default function SearchScreen() {
                     await saveCustomWord(selectedDeckId, {
                       simplified: builtHanzi,
                       pinyinDisplay: builtPinyin,
-                      meanings: chineseCustomMeaning || 'Sin significado',
+                      meanings: chineseCustomMeaning || t('search.noMeaning'),
                       level: hskNum ? `HSK ${hskNum}` : undefined,
                     });
-                    Alert.alert('¡Palabra Creada!', `"${builtHanzi}" guardada en tu mazo.`, [
-                      { text: 'OK', onPress: () => router.back() }
+                    Alert.alert(t('search.wordCreated'), t('search.wordSavedInDeck', { word: builtHanzi }), [
+                      { text: t('common.ok'), onPress: () => router.back() }
                     ]);
                   }}
                 >
                   <Ionicons name="checkmark-circle" size={20} color="#FFF" style={{ marginRight: 8 }} />
-                  <Text style={styles.createBtnText}>Guardar en {currentDeck?.name}</Text>
+                  <Text style={styles.createBtnText}>{t('search.saveToDeck', { deck: currentDeck?.name })}</Text>
                 </TouchableOpacity>
               </ScrollView>
             ) : (
@@ -697,7 +704,7 @@ export default function SearchScreen() {
               </View>
 
               <View style={styles.translationRow}>
-                <Text style={[styles.translationLabel, { color: colors.textMuted }]}>Traducción / Significado:</Text>
+                <Text style={[styles.translationLabel, { color: colors.textMuted }]}>{t('search.translationMeaning')}</Text>
                 {isGenericTranslating ? (
                   <ActivityIndicator size="small" color={colors.primary} />
                 ) : (
@@ -705,7 +712,7 @@ export default function SearchScreen() {
                     style={[styles.editableMeaningInput, { backgroundColor: colors.surfaceHighlight, color: colors.text }]}
                     value={genericTranslation}
                     onChangeText={setGenericTranslation}
-                    placeholder="Escribí el significado..."
+                    placeholder={t('search.writeMeaningPlaceholder')}
                     placeholderTextColor={colors.textMuted}
                   />
                 )}
@@ -713,7 +720,7 @@ export default function SearchScreen() {
 
               <TouchableOpacity style={[styles.createBtn, { backgroundColor: colors.primary, marginTop: Spacing.md }]} onPress={handleSaveGeneric}>
                 <Ionicons name="add-circle" size={20} color="#FFF" style={{ marginRight: 6 }} />
-                <Text style={styles.createBtnText}>Guardar tarjeta en {currentDeck?.name}</Text>
+                <Text style={styles.createBtnText}>{t('search.saveToDeck', { deck: currentDeck?.name })}</Text>
               </TouchableOpacity>
             </View>
           </ScrollView>
@@ -736,7 +743,7 @@ export default function SearchScreen() {
               onStartShouldSetResponder={() => true}
             >
               <View style={styles.deckModalHeader}>
-                <Text style={[styles.deckModalTitle, { color: colors.text }]}>Mazo de destino</Text>
+                <Text style={[styles.deckModalTitle, { color: colors.text }]}>{t('search.targetDeckModalTitle')}</Text>
                 <TouchableOpacity onPress={() => setDeckModalVisible(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                   <Ionicons name="close" size={22} color={colors.textMuted} />
                 </TouchableOpacity>
@@ -769,7 +776,7 @@ export default function SearchScreen() {
                           {item.name}
                         </Text>
                         <Text style={[styles.deckModalItemSub, { color: colors.textMuted }]}>
-                          {item.wordCount || 0} {(item.wordCount || 0) === 1 ? 'palabra' : 'palabras'}
+                          {item.wordCount || 0} {(item.wordCount || 0) === 1 ? t('decks.wordSingular') : t('decks.wordPlural')}
                         </Text>
                       </View>
                       {isSelected && <Ionicons name="checkmark-circle" size={20} color={colors.primary} />}

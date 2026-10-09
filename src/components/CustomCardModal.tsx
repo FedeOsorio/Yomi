@@ -30,6 +30,7 @@ import { speechService } from '../../lib/speech-recognition-service';
 import { saveCustomCard, updateCustomCard } from '../../lib/word-service';
 import { useTheme } from '../../providers/ThemeProvider';
 import { Shadows, Spacing, Typography } from '../constants/theme';
+import { useTranslation } from '../i18n';
 
 const TEXT_AREA_HEIGHT = 132;
 const SWAP_DURATION = 700;
@@ -55,6 +56,7 @@ export function CustomCardModal({
   onClose,
   onCardAdded,
 }: CustomCardModalProps) {
+  const { t } = useTranslation();
   const { colors } = useTheme();
   const isEditMode = Boolean(initialCard);
   const [question, setQuestion] = useState('');
@@ -347,11 +349,11 @@ export function CustomCardModal({
 
   const handleSave = async (addAnother: boolean = false) => {
     if (!question.trim()) {
-      Alert.alert('Falta la pregunta', 'Por favor ingresa la pregunta de la tarjeta.');
+      Alert.alert(t('customCard.missingQuestion'), t('customCard.missingQuestionMsg'));
       return;
     }
     if (!answer.trim()) {
-      Alert.alert('Falta la respuesta', 'Por favor ingresa la respuesta de la tarjeta.');
+      Alert.alert(t('customCard.missingAnswer'), t('customCard.missingAnswerMsg'));
       return;
     }
 
@@ -375,7 +377,7 @@ export function CustomCardModal({
         handleClose();
       }
     } catch (e) {
-      Alert.alert('Error', 'No se pudo guardar la tarjeta. Intenta de nuevo.');
+      Alert.alert(t('common.error'), t('customCard.saveError'));
     } finally {
       setIsSaving(false);
     }
@@ -417,7 +419,7 @@ export function CustomCardModal({
               <View style={styles.headerTitleBox}>
                 <View style={[styles.badgeIndicator, { backgroundColor: isEditMode ? '#10B981' : colors.primary }]} />
                 <Text style={[styles.title, { color: colors.text }]}>
-                  {isEditMode ? 'Editar Tarjeta' : 'Nueva Tarjeta'}
+                  {isEditMode ? t('customCard.editCard') : t('customCard.newCard')}
                 </Text>
               </View>
               <TouchableOpacity onPress={handleClose} style={styles.closeBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -450,7 +452,7 @@ export function CustomCardModal({
                   }}
                 >
                   <View style={styles.labelRow}>
-                    <Text style={[styles.label, { color: colors.text }]}>Pregunta (Frente)</Text>
+                    <Text style={[styles.label, { color: colors.text }]}>{t('customCard.questionFront')}</Text>
                     <TouchableOpacity
                       style={[
                         styles.micBtn,
@@ -470,7 +472,7 @@ export function CustomCardModal({
                           { color: listeningTarget === 'question' ? '#FFF' : colors.primary },
                         ]}
                       >
-                        {listeningTarget === 'question' ? 'Escuchando...' : 'Dictar'}
+                        {listeningTarget === 'question' ? t('customCard.listening') : t('customCard.dictate')}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -494,7 +496,7 @@ export function CustomCardModal({
                           color: colors.text,
                         },
                       ]}
-                      placeholder="Ej. ¿Cuáles son los pares craneales sensitivos?"
+                      placeholder={t('customCard.placeholderQuestion')}
                       placeholderTextColor={colors.textMuted}
                       multiline={true}
                       value={question}
@@ -523,7 +525,7 @@ export function CustomCardModal({
                     onPress={handleSwap}
                     disabled={isSwapping || isSaving}
                     activeOpacity={0.75}
-                    accessibilityLabel="Intercambiar"
+                    accessibilityLabel={t('customCard.swap')}
                   >
                     <Animated.View style={swapIconAnimatedStyle}>
                       <Ionicons
@@ -538,7 +540,7 @@ export function CustomCardModal({
                         { color: isSwapping ? colors.primary : colors.textMuted },
                       ]}
                     >
-                      Intercambiar
+                      {t('customCard.swap')}
                     </Text>
                   </TouchableOpacity>
                   <View style={[styles.swapLine, { backgroundColor: colors.border }]} />
@@ -557,7 +559,7 @@ export function CustomCardModal({
                   }}
                 >
                   <View style={styles.labelRow}>
-                    <Text style={[styles.label, { color: colors.text }]}>Respuesta (Reverso)</Text>
+                    <Text style={[styles.label, { color: colors.text }]}>{t('customCard.answerBack')}</Text>
                     <TouchableOpacity
                       style={[
                         styles.micBtn,
@@ -577,7 +579,7 @@ export function CustomCardModal({
                           { color: listeningTarget === 'answer' ? '#FFF' : colors.primary },
                         ]}
                       >
-                        {listeningTarget === 'answer' ? 'Escuchando...' : 'Dictar'}
+                        {listeningTarget === 'answer' ? t('customCard.listening') : t('customCard.dictate')}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -601,7 +603,7 @@ export function CustomCardModal({
                           color: colors.text,
                         },
                       ]}
-                      placeholder="Ej. I (Olfatorio), II (Óptico) y VIII (Vestibulococlear)"
+                      placeholder={t('customCard.placeholderAnswer')}
                       placeholderTextColor={colors.textMuted}
                       multiline={true}
                       value={answer}
@@ -631,7 +633,7 @@ export function CustomCardModal({
                     disabled={isSaving || isSwapping}
                   >
                     <Text style={[styles.saveAndAddText, { color: colors.text }]}>
-                      Guardar y otra
+                      {t('customCard.saveAndAdd')}
                     </Text>
                   </TouchableOpacity>
                 )}
@@ -644,7 +646,7 @@ export function CustomCardModal({
                   {isSaving ? (
                     <ActivityIndicator color="#FFF" size="small" />
                   ) : (
-                    <Text style={styles.saveBtnText}>{isEditMode ? 'Guardar Cambios' : 'Guardar'}</Text>
+                    <Text style={styles.saveBtnText}>{isEditMode ? t('customCard.saveChanges') : t('customCard.save')}</Text>
                   )}
                 </TouchableOpacity>
               </View>

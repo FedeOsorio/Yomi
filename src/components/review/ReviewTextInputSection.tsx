@@ -1,6 +1,5 @@
-import React, { memo, useRef, useState } from 'react';
+import { memo, useRef, useState } from 'react';
 import { StyleSheet, Text, TextInput, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useReviewStore } from '../../stores/reviewStore';
 import { Spacing, Typography } from '../../constants/theme';
 import { useTranslation } from '../../i18n';

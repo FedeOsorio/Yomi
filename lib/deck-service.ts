@@ -1,7 +1,7 @@
 import { db } from '../db';
 import { decks, words, srsItems, folders } from '../db/schema';
 import * as crypto from 'expo-crypto';
-import { eq, lte, and, sql, asc } from 'drizzle-orm';
+import { eq, and, sql, asc } from 'drizzle-orm';
 
 export interface Folder {
   id: string;
@@ -41,10 +41,6 @@ export const SUPPORTED_LANGUAGES = ALL_LANGUAGES.filter(
   (lang) => lang.code === 'ja-JP' || lang.code === 'zh-CN'
 );
 
-export function getLanguageMeta(code?: string) {
-  return ALL_LANGUAGES.find((l) => l.code === code) || ALL_LANGUAGES[0];
-}
-
 export async function createDeck(
   name: string,
   languageCode: string = 'ja-JP',
@@ -63,10 +59,6 @@ export async function createDeck(
     createdAt: new Date(),
   });
   return id;
-}
-
-export async function createCustomDeck(name: string, folderId?: string | null): Promise<string> {
-  return createDeck(name, 'es-ES', 'custom', folderId);
 }
 
 export async function getFolders(): Promise<Folder[]> {
@@ -182,11 +174,6 @@ export async function deleteDeck(deckId: string): Promise<void> {
   await db.delete(decks).where(eq(decks.id, deckId));
 }
 
-export async function getDeckById(deckId: string) {
-  const result = await db.select().from(decks).where(eq(decks.id, deckId)).limit(1);
-  return result.length > 0 ? result[0] : null;
-}
-
 export async function getDefaultDeckId(): Promise<string> {
   const allDecks = await db.select().from(decks).limit(1);
   if (allDecks.length > 0) {
@@ -202,10 +189,6 @@ export async function getDefaultDeckId(): Promise<string> {
     createdAt: new Date(),
   });
   return id;
-}
-
-export async function getDecks() {
-  return await db.select().from(decks);
 }
 
 export async function getDecksWithStats(): Promise<DeckWithStats[]> {

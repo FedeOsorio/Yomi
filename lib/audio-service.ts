@@ -1,5 +1,6 @@
 import * as Speech from 'expo-speech';
 import { getKanjiEssentialReading } from './jlpt-data';
+import { getStorageItem, setStorageItem } from './storage-service';
 
 /**
  * Mapeo de códigos de idioma a códigos ISO estándar para Expo Speech.
@@ -29,31 +30,52 @@ const LANGUAGE_LOCALE_MAP: Record<string, string> = {
 
 let cachedVoices: Speech.Voice[] | null = null;
 const cachedBestVoice: Record<string, string | undefined> = {};
+const VOICE_PREF_KEY = (prefix: string) => `yomi_tts_voice_${prefix}`;
 
-async function getBestVoiceForLanguage(langCode: string): Promise<string | undefined> {
-  const prefix = langCode.toLowerCase().split('-')[0];
-  if (cachedBestVoice[prefix] !== undefined) {
-    return cachedBestVoice[prefix];
+const langPrefix = (langCode: string) => (LANGUAGE_LOCALE_MAP[langCode] || langCode).toLowerCase().split('-')[0];
+
+async function loadVoices(): Promise<Speech.Voice[]> {
+  if (!cachedVoices || cachedVoices.length === 0) {
+    cachedVoices = await Speech.getAvailableVoicesAsync();
   }
+  return cachedVoices;
+}
 
+/**
+ * Voces instaladas para un idioma (primero las locales, que no necesitan internet).
+ * Se descartan las 'star' de Google Assistant, que fallan en apps de terceros.
+ */
+export async function getVoicesForLanguage(langCode: string): Promise<Speech.Voice[]> {
+  const prefix = langPrefix(langCode);
   try {
-    if (!cachedVoices || cachedVoices.length === 0) {
-      cachedVoices = await Speech.getAvailableVoicesAsync();
-    }
-    const available = cachedVoices.filter((v) => {
+    const voices = (await loadVoices()).filter((v) => {
       const vLang = (v.language || '').toLowerCase().replace('_', '-');
-      return vLang.startsWith(prefix) || vLang.includes(prefix);
+      return vLang.startsWith(prefix) && !v.name.toLowerCase().includes('star');
     });
-
-    // Descartar voces experimentales o restringidas (como 'star' de Google Assistant que fallan en TTS de terceros)
-    const nonStar = available.filter((v) => !v.name.toLowerCase().includes('star'));
-    const chosen = nonStar.find((v) => v.name.toLowerCase().includes('local')) || nonStar[0];
-    const identifier = chosen?.identifier;
-    cachedBestVoice[prefix] = identifier;
-    return identifier;
+    const isLocal = (v: Speech.Voice) => (v.name.toLowerCase().includes('local') ? 0 : 1);
+    return voices.sort((a, b) => isLocal(a) - isLocal(b) || a.name.localeCompare(b.name));
   } catch {
-    return undefined;
+    return [];
   }
+}
+
+/** Guarda la voz elegida por el usuario para un idioma. */
+export async function setPreferredVoice(langCode: string, identifier: string): Promise<void> {
+  const prefix = langPrefix(langCode);
+  cachedBestVoice[prefix] = identifier;
+  await setStorageItem(VOICE_PREF_KEY(prefix), identifier);
+}
+
+/** Voz que se usará para un idioma: la elegida por el usuario si sigue instalada, o la primera local. */
+export async function getBestVoiceForLanguage(langCode: string): Promise<string | undefined> {
+  const prefix = langPrefix(langCode);
+  if (cachedBestVoice[prefix] !== undefined) return cachedBestVoice[prefix];
+
+  const voices = await getVoicesForLanguage(prefix);
+  const preferred = await getStorageItem(VOICE_PREF_KEY(prefix));
+  const chosen = voices.find((v) => v.identifier === preferred) ?? voices[0];
+  cachedBestVoice[prefix] = chosen?.identifier;
+  return chosen?.identifier;
 }
 
 export interface SpeakOptions {
@@ -70,9 +92,6 @@ export interface SpeakOptions {
 export async function preloadAudioService(languageCode: string = 'zh-CN'): Promise<void> {
   const targetLang = LANGUAGE_LOCALE_MAP[languageCode] || languageCode.split('-')[0] || 'zh';
   try {
-    if (!cachedVoices || cachedVoices.length === 0) {
-      cachedVoices = await Speech.getAvailableVoicesAsync();
-    }
     await getBestVoiceForLanguage(targetLang);
   } catch (e) {
     console.warn('[AudioService] Error al precargar TTS:', e);

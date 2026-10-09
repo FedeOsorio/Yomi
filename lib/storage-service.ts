@@ -34,10 +34,6 @@ export async function getStorageItem(key: string): Promise<string | null> {
   return memoryCache[key] ?? null;
 }
 
-export function getStorageItemSync(key: string): string | null {
-  return memoryCache[key] ?? null;
-}
-
 export async function setStorageItem(key: string, value: string): Promise<void> {
   await ensureLoaded();
   memoryCache[key] = value;

@@ -6,6 +6,7 @@ import * as Sharing from 'expo-sharing';
 import { Share, Platform } from 'react-native';
 import { getStorageItem, setStorageItem } from './storage-service';
 import { createNewSrsItem } from './srs-engine';
+import { backfillMissingReadings, runDataRepair } from './data-repair';
 
 export const BACKUP_STORAGE_KEY = 'yomi_last_backup_timestamp';
 
@@ -617,6 +618,10 @@ export async function restoreBackupPackage(
   }
 
   const totalSrs = await db.select({ id: srsItems.id }).from(srsItems);
+
+  // Una copia vieja puede traer datos que ya habíamos reparado: volver a repararlos
+  await runDataRepair(true);
+  backfillMissingReadings();
 
   // Notificar a todas las pantallas activas que los datos cambiaron para que se actualicen en vivo
   notifyDataChanged();

@@ -244,7 +244,7 @@ export function cleanAndFormatMeanings(meanings: string[] | string): string[] {
 const TRANSLATION_CACHE_KEY = 'yomi_translation_cache';
 const translationCache = new Map<string, string>();
 let isCacheLoaded = false;
-let saveCacheTimeout: NodeJS.Timeout | null = null;
+let saveCacheTimeout: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * Carga la caché persistente desde el almacenamiento local.
@@ -409,9 +409,6 @@ export async function translateToLanguage(text: string, toLang: string = 'es', f
   const [translated] = await translateBatchToLanguage([text], toLang, fromLang);
   return translated || capitalizeFirst(text);
 }
-
-export const translateBatchToSpanish = (texts: string[], fromLang: 'en' | 'ja' = 'en') =>
-  translateBatchToLanguage(texts, 'es', fromLang);
 
 export const translateToSpanish = (text: string, fromLang: 'en' | 'ja' = 'en') =>
   translateToLanguage(text, 'es', fromLang);

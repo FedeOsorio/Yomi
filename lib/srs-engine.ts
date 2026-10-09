@@ -3,18 +3,10 @@ import * as crypto from 'expo-crypto';
 import { Card, createEmptyCard, fsrs, generatorParameters, Rating, State } from 'ts-fsrs';
 import { db } from '../db';
 import { decks, srsItems, words } from '../db/schema';
-import {
-  JA_CURRENCY_MAP,
-  JA_NUMBERS,
-  toNormalizedHiragana,
-  ZH_NUMBERS,
-  containsJapanese,
-} from './japanese-utils';
-import { registerWordInDictionary } from './phonetic-dictionary';
-import { resolveJapaneseReading } from './japanese-search';
+import { JA_NUMBERS, toNormalizedHiragana, ZH_NUMBERS } from './japanese-utils';
 import { toSearchKey } from './pinyin-utils';
 
-export { JA_CURRENCY_MAP, JA_NUMBERS, ZH_NUMBERS };
+export { JA_NUMBERS, ZH_NUMBERS };
 export { checkVoiceMatch } from './voice-match';
 export type { VoiceMatchResult } from './voice-match';
 
@@ -220,34 +212,9 @@ function toFsrsCard(item: SrsItem): Card {
 }
 
 /**
- * Auto-repara en tiempo de ejecución tarjetas japonesas que carezcan de lectura guardada (displayReading).
- * Resuelve la lectura fonética automáticamente mediante resolveJapaneseReading y la persiste en SQLite.
- */
-async function autoHealMissingCardReadings(cardsList: DueCardWithContext[]): Promise<DueCardWithContext[]> {
-  for (const c of cardsList) {
-    if (!c.displayReading || !c.displayReading.trim()) {
-      const isJapanese = (c.languageCode || '').toLowerCase().startsWith('ja') || containsJapanese(c.displayText || '');
-      if (isJapanese && c.displayText) {
-        try {
-          const resolved = await resolveJapaneseReading(c.displayText);
-          if (resolved) {
-            c.displayReading = resolved;
-            db.update(srsItems).set({ displayReading: resolved }).where(eq(srsItems.id, c.id)).catch(() => {});
-            db.update(words).set({ pinyinDisplay: resolved, pinyinNumeric: resolved.toLowerCase() }).where(eq(words.id, c.itemId)).catch(() => {});
-            registerWordInDictionary(c.displayText, resolved);
-          }
-        } catch {}
-      }
-    }
-  }
-  return cardsList;
-}
-
-/**
  * Obtiene todas las tarjetas pendientes de repaso para hoy (due <= ahora).
  */
 export async function getDueCards(deckId?: string): Promise<DueCardWithContext[]> {
-  await healCorruptedSrsIntervals().catch(() => { });
   const now = new Date();
 
   const query = db
@@ -279,13 +246,13 @@ export async function getDueCards(deckId?: string): Promise<DueCardWithContext[]
     .leftJoin(decks, eq(words.deckId, decks.id));
 
   let cards: DueCardWithContext[] = [];
-  if (deckId && deckId !== 'all') {
+  if (deckId) {
     cards = await query.where(and(lte(srsItems.due, now), eq(words.deckId, deckId)));
   } else {
     cards = await query.where(lte(srsItems.due, now));
   }
 
-  return await autoHealMissingCardReadings(cards);
+  return cards;
 }
 
 /**
@@ -321,13 +288,13 @@ export async function getAllCardsForPractice(deckId?: string): Promise<DueCardWi
     .leftJoin(decks, eq(words.deckId, decks.id));
 
   let cards: DueCardWithContext[] = [];
-  if (deckId && deckId !== 'all') {
+  if (deckId) {
     cards = await query.where(eq(words.deckId, deckId));
   } else {
     cards = await query;
   }
 
-  return await autoHealMissingCardReadings(cards);
+  return cards;
 }
 
 /**
@@ -391,50 +358,6 @@ export function formatNextReviewTime(due: Date | string | number | null | undefi
 }
 
 /**
- * Auto-repara tarjetas del SRS que quedaron programadas a 3+ días en el futuro
- * a pesar de ser tarjetas con dificultad alta (>= 7.0) o fallas recientes.
- * Las reajusta al escalón mínimo (dentro de 4 horas) o disponibles ahora si ya pasaron 4 horas.
- */
-export async function healCorruptedSrsIntervals(): Promise<number> {
-  const now = new Date();
-  const maxAcceptableDue = new Date(now.getTime() + 14 * 60 * 60 * 1000); // 14 horas
-
-  try {
-    const items = await db.select().from(srsItems);
-    let healedCount = 0;
-
-    for (const item of items) {
-      const itemDue = item.due instanceof Date ? item.due : new Date(item.due);
-      const isStrugglingOrNew =
-        (item.difficulty !== null && item.difficulty !== undefined && item.difficulty >= 7.0) ||
-        (item.lapses !== null && item.lapses > 0) ||
-        (item.reps !== null && item.reps <= 2);
-
-      if (isStrugglingOrNew && itemDue > maxAcceptableDue) {
-        // Asignar al escalón mínimo de 4 horas (o disponible ahora si ya pasaron 4h desde el último repaso)
-        const lastRev = item.lastReview ? (item.lastReview instanceof Date ? item.lastReview : new Date(item.lastReview)) : now;
-        const targetDue = new Date(Math.max(now.getTime(), lastRev.getTime() + 4 * 60 * 60 * 1000));
-
-        await db
-          .update(srsItems)
-          .set({
-            due: targetDue,
-            scheduledDays: 0,
-          })
-          .where(eq(srsItems.id, item.id));
-
-        healedCount++;
-      }
-    }
-
-    return healedCount;
-  } catch (e) {
-    console.warn('Error en healCorruptedSrsIntervals:', e);
-    return 0;
-  }
-}
-
-/**
  * Procesa la calificación de una tarjeta usando el algoritmo FSRS y actualiza la base de datos.
  * Escalones de Repaso:
  * - Escalón 1 (Mínimo): dentro de 4 horas (al fallar o tarjeta nueva).
@@ -443,6 +366,10 @@ export async function healCorruptedSrsIntervals(): Promise<number> {
  * - Escalón 4: dentro de 12 horas.
  * - Escalón 5: dentro de 24 horas (1 día).
  * - Escalón 6 (De ahí para arriba): FSRS exponencial según dificultad y estabilidad (2, 3, 5, 8+ días).
+ *
+ * Solo la PRIMERA respuesta de la sesión cuenta para el SRS. Si la tarjeta ya se falló en esta
+ * sesión (options.wasFailedInSession), las repeticiones posteriores son práctica: no modifican
+ * estabilidad, dificultad ni fecha (la fecha ya quedó fijada a +4 h por el fallo).
  */
 export async function processCardReview(
   cardId: string,
@@ -456,12 +383,11 @@ export async function processCardReview(
   }
 
   const currentItem = currentItems[0];
+  if (options?.wasFailedInSession) return currentItem;
+
   const fsrsCard = toFsrsCard(currentItem);
   const now = new Date();
-
-  // Si la tarjeta ya falló previamente en esta misma sesión y ahora se acierta por repetición inmediata:
-  // Se evalúa como Again para el cálculo de estabilidad e intervalo, evitando que salte a días
-  const effectiveRating = options?.wasFailedInSession ? Rating.Again : rating;
+  const effectiveRating = rating;
 
   const scheduling = getFsrsInstance().repeat(fsrsCard, now);
   const reviewResult = scheduling[effectiveRating as keyof typeof scheduling];
@@ -484,7 +410,7 @@ export async function processCardReview(
 
   // 1. Si falló (Again) o falló previamente en esta misma sesión:
   // Reinicia de inmediato al escalón mínimo: dentro de 4 horas
-  if (effectiveRating === Rating.Again || options?.wasFailedInSession) {
+  if (effectiveRating === Rating.Again) {
     scheduledDays = 0;
     finalDue = new Date(now.getTime() + 4 * 60 * 60 * 1000); // +4 horas
   }
@@ -534,10 +460,7 @@ export async function processCardReview(
 
   // Contabilizar siempre la repetición para reflejar el esfuerzo real del usuario (Opción A)
   const finalReps = (currentItem.reps || 0) + 1;
-  // Solo sumar lapse si fue un fallo real directo, no si fue un acierto por repetición
-  const finalLapses = options?.wasFailedInSession
-    ? (currentItem.lapses || 0)
-    : (rating === Rating.Again ? (currentItem.lapses || 0) + 1 : (currentItem.lapses || 0));
+  const finalLapses = (currentItem.lapses || 0) + (rating === Rating.Again ? 1 : 0);
 
   await db
     .update(srsItems)

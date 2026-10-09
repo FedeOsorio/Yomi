@@ -26,6 +26,7 @@ import Animated, {
 import { Folder } from '../../lib/deck-service';
 import { useTheme } from '../../providers/ThemeProvider';
 import { Shadows, Spacing } from '../constants/theme';
+import { useTranslation } from '../i18n';
 import { FolderCard } from './FolderCard';
 
 export const FOLDER_PALETTE = [
@@ -60,6 +61,7 @@ export function FolderFilterBar({
   onDeleteFolder,
   onReorderFolders,
 }: FolderFilterBarProps) {
+  const { t } = useTranslation();
   const { colors } = useTheme();
   const navigation = useNavigation();
   const router = useRouter();
@@ -105,7 +107,7 @@ export function FolderFilterBar({
   const handleSubmitDialog = async () => {
     const trimmed = folderNameInput.trim();
     if (!trimmed) {
-      Alert.alert('Atención', 'Ingresa un nombre para la carpeta.');
+      Alert.alert(t('common.attention'), t('folders.folderNamePrompt'));
       return;
     }
 
@@ -119,7 +121,7 @@ export function FolderFilterBar({
       closeDialog();
     } catch (e: any) {
       console.error('Error al guardar carpeta:', e);
-      Alert.alert('Error', `No se pudo guardar la carpeta: ${e?.message || 'Error desconocido'}`);
+      Alert.alert(t('common.error'), `${t('folders.folderSaveError')}: ${e?.message || ''}`);
     } finally {
       setIsSubmitting(false);
     }
@@ -127,12 +129,12 @@ export function FolderFilterBar({
 
   const handlePromptDelete = (folder: Folder) => {
     Alert.alert(
-      'Eliminar Carpeta',
-      `¿Deseas eliminar "${folder.name}"? Los mazos no se borrarán, solo quedarán sin carpeta.`,
+      t('folders.deleteFolder'),
+      t('folders.deleteFolderConfirm', { name: folder.name }),
       [
-        { text: 'Cancelar', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Eliminar',
+          text: t('common.delete'),
           style: 'destructive',
           onPress: async () => {
             await onDeleteFolder(folder.id);
@@ -274,7 +276,7 @@ export function FolderFilterBar({
             >
               <Ionicons name="folder-outline" size={18} color={colors.primary} />
               <Text style={[styles.dropdownItemText, { color: colors.text }]}>
-                Crear carpeta
+                {t('folders.createFolder')}
               </Text>
             </TouchableOpacity>
 
@@ -291,7 +293,7 @@ export function FolderFilterBar({
             >
               <Ionicons name="settings-outline" size={17} color={colors.textMuted} />
               <Text style={[styles.dropdownItemText, { color: colors.text }]}>
-                Administrar carpetas
+                {t('folders.manageFolders')}
               </Text>
             </TouchableOpacity>
           </Animated.View>
@@ -335,7 +337,7 @@ export function FolderFilterBar({
                   <Ionicons name="folder" size={20} color={selectedColor} />
                 </View>
                 <Text style={[styles.dialogTitle, { color: colors.text }]}>
-                  {modalMode === 'create' ? 'Nueva Carpeta' : 'Editar Carpeta'}
+                  {modalMode === 'create' ? t('folders.createFolder') : t('folders.renameFolder')}
                 </Text>
               </View>
 
@@ -349,7 +351,7 @@ export function FolderFilterBar({
                     color: colors.text,
                   },
                 ]}
-                placeholder="Ej. Vocabulario N5, Gramática..."
+                placeholder={t('folders.folderNamePrompt')}
                 placeholderTextColor={colors.textMuted}
                 value={folderNameInput}
                 onChangeText={setFolderNameInput}
@@ -362,7 +364,7 @@ export function FolderFilterBar({
               {/* Paleta de colores pastel translúcidos */}
               <View style={styles.paletteSection}>
                 <Text style={[styles.paletteLabel, { color: colors.textMuted }]}>
-                  Color de la carpeta
+                  {t('folders.color')}
                 </Text>
                 <View style={styles.colorPaletteRow}>
                   {FOLDER_PALETTE.map((color) => {
@@ -403,7 +405,7 @@ export function FolderFilterBar({
                   disabled={isSubmitting}
                 >
                   <Text style={[styles.dialogBtnCancelText, { color: colors.text }]}>
-                    Cancelar
+                    {t('common.cancel')}
                   </Text>
                 </TouchableOpacity>
 
@@ -420,7 +422,7 @@ export function FolderFilterBar({
                     <ActivityIndicator size="small" color="#FFF" />
                   ) : (
                     <Text style={styles.dialogBtnConfirmText}>
-                      {modalMode === 'create' ? 'Crear' : 'Guardar'}
+                      {t('common.save')}
                     </Text>
                   )}
                 </TouchableOpacity>

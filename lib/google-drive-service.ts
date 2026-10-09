@@ -136,39 +136,6 @@ export async function loginWithGoogleAsync(): Promise<{
 }
 
 /**
- * Hook para manejar el flujo de autenticación con Google OAuth 2.0.
- */
-export function useGoogleDriveAuth() {
-  const webId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || undefined;
-  const androidId = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || undefined;
-  const iosId = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || undefined;
-
-  const redirectUri = Platform.OS === 'android' || Platform.OS === 'ios'
-    ? 'com.kuyi.yomi:/oauthredirect'
-    : makeRedirectUri();
-
-  const [request, response, promptAsync] = Google.useAuthRequest({
-    clientId: webId,
-    webClientId: webId,
-    androidClientId: androidId,
-    iosClientId: iosId,
-    scopes: GOOGLE_DRIVE_SCOPES,
-    redirectUri,
-    selectAccount: true,
-    extraParams: {
-      prompt: 'consent select_account',
-      access_type: 'offline',
-    },
-  });
-
-  return {
-    request,
-    response,
-    promptAsync,
-  };
-}
-
-/**
  * Verifica si el token tiene concedido el scope de Google Drive.
  */
 export async function checkTokenDriveScope(accessToken: string): Promise<{
@@ -226,13 +193,6 @@ export async function fetchGoogleUserInfo(accessToken: string): Promise<GoogleUs
 type AuthListener = (user: GoogleUserProfile | null) => void;
 const listeners = new Set<AuthListener>();
 
-export function onGoogleUserChange(callback: AuthListener) {
-  listeners.add(callback);
-  return () => {
-    listeners.delete(callback);
-  };
-}
-
 export function notifyGoogleUserChanged(user: GoogleUserProfile | null) {
   listeners.forEach((cb) => {
     try {
@@ -245,13 +205,6 @@ export function notifyGoogleUserChanged(user: GoogleUserProfile | null) {
 
 type DriveBackupListener = (meta: GoogleDriveBackupMetadata | null) => void;
 const driveBackupListeners = new Set<DriveBackupListener>();
-
-export function onDriveBackupChange(callback: DriveBackupListener) {
-  driveBackupListeners.add(callback);
-  return () => {
-    driveBackupListeners.delete(callback);
-  };
-}
 
 export function notifyDriveBackupChanged(meta: GoogleDriveBackupMetadata | null) {
   driveBackupListeners.forEach((cb) => {

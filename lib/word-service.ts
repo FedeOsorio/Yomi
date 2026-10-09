@@ -11,6 +11,7 @@ import { createNewSrsItem } from './srs-engine';
 import { registerWordInDictionary } from './phonetic-dictionary';
 
 import * as crypto from 'expo-crypto';
+import { parseAux, stringifyAux, WordAux } from './word-aux';
 
 function generateUUID(): string {
   if (typeof crypto.randomUUID === 'function') {
@@ -128,6 +129,19 @@ export async function getCompoundWordsForChar(
   }
 }
 
+/**
+ * Lee, modifica y guarda los datos extra de una palabra.
+ * `change` recibe el objeto actual y lo modifica en el lugar. Devuelve el resultado, o null si la palabra no existe.
+ */
+async function updateWordAux(wordId: string, change: (aux: WordAux) => void): Promise<WordAux | null> {
+  const rows = await db.select({ aux: words.auxiliaryInfo }).from(words).where(eq(words.id, wordId)).limit(1);
+  if (rows.length === 0) return null;
+  const aux = parseAux(rows[0].aux);
+  change(aux);
+  await db.update(words).set({ auxiliaryInfo: JSON.stringify(aux) }).where(eq(words.id, wordId));
+  return aux;
+}
+
 export async function getWordDetailWithRelations(
   wordId: string
 ): Promise<WordDetailWithRelations | null> {
@@ -166,52 +180,7 @@ export async function getWordDetailWithRelations(
     meaningsList = [word.meanings];
   }
 
-  let level: string | undefined;
-  let category: string | undefined;
-  let conjugationEnabled: boolean | undefined;
-  if (word.auxiliaryInfo) {
-    try {
-      const parsedAux = JSON.parse(word.auxiliaryInfo);
-      level = parsedAux.level;
-      category = parsedAux.category;
-      conjugationEnabled = parsedAux.conjugationEnabled;
-
-      // Autocuración para palabras japonesas que terminan en kanji que NO son verbos/adjetivos base (ej. 右, 犬, 肉, 靴, 夏, 学校, 今日)
-      const isJapanese = deck?.languageCode?.startsWith('ja');
-      const cleanWord = (word.simplified || '').trim();
-      const endsWithKanji = /[\u4e00-\u9faf]$/.test(cleanWord);
-
-      if (isJapanese && endsWithKanji) {
-        let rawKun = parsedAux.kunReading || '';
-        const baseInfo = resolveJapaneseBaseForm(cleanWord, word.pinyinDisplay || '', rawKun);
-        if (!baseInfo) {
-          let dirty = false;
-          if (category?.startsWith('Verbo') || category?.startsWith('Adjetivo -i')) {
-            category = classifyJapaneseWord(cleanWord, word.pinyinDisplay || '');
-            parsedAux.category = category;
-            dirty = true;
-          }
-          if (conjugationEnabled) {
-            conjugationEnabled = false;
-            delete parsedAux.conjugationEnabled;
-            dirty = true;
-          }
-          if (parsedAux.dictionaryForm) {
-            delete parsedAux.dictionaryForm;
-            dirty = true;
-          }
-          if (dirty) {
-            word.auxiliaryInfo = JSON.stringify(parsedAux);
-            await db
-              .update(words)
-              .set({ auxiliaryInfo: word.auxiliaryInfo })
-              .where(eq(words.id, wordId))
-              .catch(() => { });
-          }
-        }
-      }
-    } catch { }
-  }
+  const { level, category, conjugationEnabled } = parseAux(word.auxiliaryInfo);
 
   return {
     word,
@@ -249,10 +218,7 @@ export async function saveWords(
     }
 
     const wordId = generateUUID();
-    const auxObj: Record<string, any> = {};
-    if (level) auxObj.level = level;
-    if (category) auxObj.category = category;
-    const auxInfo = Object.keys(auxObj).length > 0 ? JSON.stringify(auxObj) : null;
+    const auxInfo = stringifyAux({ ...(level && { level }), ...(category && { category }) });
 
     await db.insert(words).values({
       id: wordId,
@@ -313,11 +279,11 @@ export async function saveCustomWord(
   }
 
   const meaningsJson = data.meanings.startsWith('[') ? data.meanings : JSON.stringify([data.meanings]);
-  const auxObj: Record<string, any> = {};
-  if (data.level) auxObj.level = data.level;
-  if (data.category) auxObj.category = data.category;
-  if (data.conjugationEnabled !== undefined) auxObj.conjugationEnabled = data.conjugationEnabled;
-  const auxInfo = Object.keys(auxObj).length > 0 ? JSON.stringify(auxObj) : null;
+  const auxInfo = stringifyAux({
+    ...(data.level && { level: data.level }),
+    ...(data.category && { category: data.category }),
+    ...(data.conjugationEnabled !== undefined && { conjugationEnabled: data.conjugationEnabled }),
+  });
 
   await db.insert(words).values({
     id: wordId,
@@ -377,11 +343,11 @@ export async function saveGenericWord(
   }
 
   const meaningsJson = data.meanings.startsWith('[') ? data.meanings : JSON.stringify([data.meanings]);
-  const auxObj: Record<string, any> = {};
-  if (data.level) auxObj.level = data.level;
-  if (data.category) auxObj.category = data.category;
-  if (data.conjugationEnabled !== undefined) auxObj.conjugationEnabled = data.conjugationEnabled;
-  const auxInfo = Object.keys(auxObj).length > 0 ? JSON.stringify(auxObj) : null;
+  const auxInfo = stringifyAux({
+    ...(data.level && { level: data.level }),
+    ...(data.category && { category: data.category }),
+    ...(data.conjugationEnabled !== undefined && { conjugationEnabled: data.conjugationEnabled }),
+  });
 
   await db.insert(words).values({
     id: wordId,
@@ -613,21 +579,9 @@ export async function updateWordSelectedMeanings(
 ): Promise<void> {
   const selectedJson = JSON.stringify(selectedMeanings);
 
-  const existingWords = await db.select().from(words).where(eq(words.id, wordId)).limit(1);
-  if (existingWords.length > 0) {
-    const word = existingWords[0];
-    let auxObj: Record<string, any> = {};
-    if (word.auxiliaryInfo) {
-      try {
-        auxObj = JSON.parse(word.auxiliaryInfo);
-      } catch (e) { }
-    }
-    auxObj.selectedMeanings = selectedMeanings;
-
-    await db.update(words)
-      .set({ auxiliaryInfo: JSON.stringify(auxObj) })
-      .where(eq(words.id, wordId));
-  }
+  await updateWordAux(wordId, (aux) => {
+    aux.selectedMeanings = selectedMeanings;
+  });
 
   await db.update(srsItems)
     .set({ displayMeaning: selectedJson })
@@ -674,17 +628,10 @@ export async function deleteWordMeaning(
   const newMeaningsList = originalList.filter((m) => m.trim().toLowerCase() !== targetClean);
   const newMeaningsJson = JSON.stringify(newMeaningsList);
 
-  let auxObj: Record<string, any> = {};
-  let newSelected: string[] = [];
-
-  if (word.auxiliaryInfo) {
-    try {
-      auxObj = JSON.parse(word.auxiliaryInfo);
-      if (Array.isArray(auxObj.selectedMeanings)) {
-        newSelected = auxObj.selectedMeanings.filter((m: string) => m.trim().toLowerCase() !== targetClean);
-      }
-    } catch (e) { }
-  }
+  const auxObj = parseAux(word.auxiliaryInfo);
+  let newSelected: string[] = Array.isArray(auxObj.selectedMeanings)
+    ? auxObj.selectedMeanings.filter((m) => m.trim().toLowerCase() !== targetClean)
+    : [];
 
   if (isCustomDeck || (newSelected.length === 0 && newMeaningsList.length > 0)) {
     newSelected = newMeaningsList;
@@ -753,19 +700,10 @@ export async function updateWordMeaningText(
   );
   const newMeaningsJson = JSON.stringify(newMeaningsList);
 
-  let auxObj: Record<string, any> = {};
-  let newSelected: string[] = [];
-
-  if (word.auxiliaryInfo) {
-    try {
-      auxObj = JSON.parse(word.auxiliaryInfo);
-      if (Array.isArray(auxObj.selectedMeanings)) {
-        newSelected = auxObj.selectedMeanings.map((m: string) =>
-          m.trim().toLowerCase() === targetClean ? trimmedNew : m
-        );
-      }
-    } catch (e) { }
-  }
+  const auxObj = parseAux(word.auxiliaryInfo);
+  let newSelected: string[] = Array.isArray(auxObj.selectedMeanings)
+    ? auxObj.selectedMeanings.map((m) => (m.trim().toLowerCase() === targetClean ? trimmedNew : m))
+    : [];
 
   if (isCustomDeck || (newSelected.length === 0 && newMeaningsList.length > 0)) {
     newSelected = newMeaningsList;
@@ -831,12 +769,7 @@ export async function saveBatchWords(
 
     const wordId = generateUUID();
     const meaningsJson = JSON.stringify(item.meanings.length > 0 ? item.meanings : [cleanText]);
-    const auxPayload: Record<string, any> = {};
-    if (item.level) auxPayload.level = item.level.trim();
-    if (item.rawExtras) {
-      Object.assign(auxPayload, item.rawExtras);
-    }
-    const auxInfo = Object.keys(auxPayload).length > 0 ? JSON.stringify(auxPayload) : null;
+    const auxInfo = stringifyAux({ ...(item.level && { level: item.level.trim() }), ...item.rawExtras });
 
     await db.insert(words).values({
       id: wordId,
@@ -927,36 +860,25 @@ export async function getConjugableWordsForDeck(deckId: string): Promise<Conjuga
 
     let dictionaryForm: { kanji: string; reading: string } | undefined = undefined;
 
-    if (w.auxiliaryInfo) {
-      try {
-        const aux = JSON.parse(w.auxiliaryInfo);
-        category = aux.category || '';
-        level = aux.level || '';
-        if (aux.conjugationEnabled !== undefined) {
-          conjugationEnabled = Boolean(aux.conjugationEnabled);
-        }
-        if (Array.isArray(aux.disabledConjugations)) {
-          disabledConjugations = aux.disabledConjugations;
-        }
-        if (aux.conjugationStreaks && typeof aux.conjugationStreaks === 'object') {
-          conjugationStreaks = aux.conjugationStreaks;
-        }
-        if (aux.dictionaryForm && aux.dictionaryForm.kanji) {
-          if (aux.dictionaryForm.kanji.length >= 2 && !/[\u4e00-\u9faf]$/.test(aux.dictionaryForm.kanji) && aux.dictionaryForm.kanji !== 'u') {
-            dictionaryForm = aux.dictionaryForm;
-          }
-        }
-      } catch { }
+    const aux = parseAux(w.auxiliaryInfo);
+    category = aux.category || '';
+    level = aux.level || '';
+    if (aux.conjugationEnabled !== undefined) {
+      conjugationEnabled = Boolean(aux.conjugationEnabled);
+    }
+    if (Array.isArray(aux.disabledConjugations)) {
+      disabledConjugations = aux.disabledConjugations;
+    }
+    if (aux.conjugationStreaks && typeof aux.conjugationStreaks === 'object') {
+      conjugationStreaks = aux.conjugationStreaks;
+    }
+    const baseKanji = aux.dictionaryForm?.kanji;
+    if (baseKanji && baseKanji.length >= 2 && !/[\u4e00-\u9faf]$/.test(baseKanji) && baseKanji !== 'u') {
+      dictionaryForm = aux.dictionaryForm;
     }
 
     const cleanSimplified = (w.simplified || '').trim();
-    let rawKun = '';
-    if (w.auxiliaryInfo) {
-      try {
-        const aux = JSON.parse(w.auxiliaryInfo);
-        rawKun = aux.kunReading || '';
-      } catch { }
-    }
+    const rawKun = aux.kunReading || '';
 
     // Si termina en kanji pero no tiene dictionaryForm resuelto todavía, intentar auto-resolver
     if (/[\u4e00-\u9faf]$/.test(cleanSimplified) && !dictionaryForm) {
@@ -1020,51 +942,21 @@ export async function getConjugableWordsForDeck(deckId: string): Promise<Conjuga
  * Habilita o deshabilita una forma conjugada específica para una palabra.
  */
 export async function toggleWordFormConjugation(wordId: string, form: string, disabled: boolean): Promise<void> {
-  const existingWords = await db.select().from(words).where(eq(words.id, wordId)).limit(1);
-  if (existingWords.length === 0) return;
-
-  const word = existingWords[0];
-  let auxObj: Record<string, any> = {};
-  if (word.auxiliaryInfo) {
-    try {
-      auxObj = JSON.parse(word.auxiliaryInfo);
-    } catch { }
-  }
-
-  const currentDisabled: string[] = Array.isArray(auxObj.disabledConjugations) ? auxObj.disabledConjugations : [];
-  if (disabled) {
-    if (!currentDisabled.includes(form)) {
-      currentDisabled.push(form);
-    }
-    auxObj.disabledConjugations = currentDisabled;
-  } else {
-    auxObj.disabledConjugations = currentDisabled.filter((f: string) => f !== form);
-  }
-
-  await db.update(words)
-    .set({ auxiliaryInfo: JSON.stringify(auxObj) })
-    .where(eq(words.id, wordId));
+  await updateWordAux(wordId, (aux) => {
+    const current = Array.isArray(aux.disabledConjugations) ? aux.disabledConjugations : [];
+    aux.disabledConjugations = disabled
+      ? Array.from(new Set([...current, form]))
+      : current.filter((f) => f !== form);
+  });
 }
 
 /**
  * Actualiza el flag conjugationEnabled en auxiliaryInfo de una palabra.
  */
 export async function setWordConjugationEnabled(wordId: string, enabled: boolean): Promise<void> {
-  const existingWords = await db.select().from(words).where(eq(words.id, wordId)).limit(1);
-  if (existingWords.length === 0) return;
-
-  const word = existingWords[0];
-  let auxObj: Record<string, any> = {};
-  if (word.auxiliaryInfo) {
-    try {
-      auxObj = JSON.parse(word.auxiliaryInfo);
-    } catch { }
-  }
-  auxObj.conjugationEnabled = enabled;
-
-  await db.update(words)
-    .set({ auxiliaryInfo: JSON.stringify(auxObj) })
-    .where(eq(words.id, wordId));
+  await updateWordAux(wordId, (aux) => {
+    aux.conjugationEnabled = enabled;
+  });
 }
 
 /**
@@ -1074,24 +966,10 @@ export async function setWordConjugationEnabled(wordId: string, enabled: boolean
  * Nivel 2+ = 2 o más aciertos -> sin pistas
  */
 export async function updateWordConjugationStreak(wordId: string, form: string, streak: number): Promise<void> {
-  const existingWords = await db.select().from(words).where(eq(words.id, wordId)).limit(1);
-  if (existingWords.length === 0) return;
-
-  const word = existingWords[0];
-  let auxObj: Record<string, any> = {};
-  if (word.auxiliaryInfo) {
-    try {
-      auxObj = JSON.parse(word.auxiliaryInfo);
-    } catch { }
-  }
-  if (!auxObj.conjugationStreaks || typeof auxObj.conjugationStreaks !== 'object') {
-    auxObj.conjugationStreaks = {};
-  }
-  auxObj.conjugationStreaks[form] = Math.max(0, streak);
-
-  await db.update(words)
-    .set({ auxiliaryInfo: JSON.stringify(auxObj) })
-    .where(eq(words.id, wordId));
+  await updateWordAux(wordId, (aux) => {
+    const streaks = aux.conjugationStreaks && typeof aux.conjugationStreaks === 'object' ? aux.conjugationStreaks : {};
+    aux.conjugationStreaks = { ...streaks, [form]: Math.max(0, streak) };
+  });
 }
 
 /**
@@ -1108,16 +986,9 @@ export async function getAvailableDeckWordsForConjugation(deckId: string): Promi
   for (const w of deckWords) {
     if (activeIds.has(w.id)) continue;
 
-    let category = '';
-    let level = '';
-
-    if (w.auxiliaryInfo) {
-      try {
-        const aux = JSON.parse(w.auxiliaryInfo);
-        category = aux.category || '';
-        level = aux.level || '';
-      } catch { }
-    }
+    const aux = parseAux(w.auxiliaryInfo);
+    let category = aux.category || '';
+    const level = aux.level || '';
 
     const cleanReading = (w.pinyinDisplay || '').replace(/\s*[\(\[（【][^\)\]）】]*[\)\]）】]/g, '').trim();
     if (!category) {
@@ -1306,14 +1177,8 @@ export async function generateConjugationsForDeck(deckId: string): Promise<Gener
       cleanReading = toNormalizedHiragana(cleanText);
     }
 
-    let auxObj: Record<string, any> = {};
-    let rawKun = '';
-    if (w.auxiliaryInfo) {
-      try {
-        auxObj = JSON.parse(w.auxiliaryInfo);
-        rawKun = auxObj.kunReading || '';
-      } catch { }
-    }
+    const auxObj = parseAux(w.auxiliaryInfo);
+    const rawKun = auxObj.kunReading || '';
 
     // Resolver la forma base de diccionario (incluso si la tarjeta es un solo kanji o una forma ya conjugada)
     const baseInfo = resolveJapaneseBaseForm(cleanText, cleanReading, rawKun);

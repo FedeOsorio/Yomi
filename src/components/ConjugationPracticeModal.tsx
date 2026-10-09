@@ -2,7 +2,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Animated,
   Easing,
   FlatList,
@@ -27,6 +26,8 @@ import {
 } from '../../lib/japanese-utils';
 import { MODEL_NOT_DOWNLOADED } from '../../lib/sherpa-service';
 import { speechService } from '../../lib/speech-recognition-service';
+import { useRouter } from 'expo-router';
+import { VoiceModelRequiredModal } from './review/VoiceModelRequiredModal';
 import {
   ConjugableWord,
   getAvailableDeckWordsForConjugation,
@@ -237,6 +238,8 @@ export function ConjugationPracticeModal({
   deckName,
 }: ConjugationPracticeModalProps) {
   const { colors } = useTheme();
+  const router = useRouter();
+  const [showModelRequired, setShowModelRequired] = useState(false);
   const insets = useSafeAreaInsets();
 
   const [loading, setLoading] = useState(true);
@@ -741,7 +744,7 @@ export function ConjugationPracticeModal({
             autoVoiceModeRef.current = false;
             setAutoVoiceMode(false);
             setIsListening(false);
-            Alert.alert('Modelo de voz', 'Primero descarga el modelo de voz: inicia un repaso por voz desde la pestaña Repaso.');
+            setShowModelRequired(true);
             return;
           }
           // En modo automático, si el servicio da timeout o error antes de responder, reconectar automáticamente
@@ -1479,6 +1482,17 @@ export function ConjugationPracticeModal({
             )}
           </View>
         </Modal>
+
+        <VoiceModelRequiredModal
+          visible={showModelRequired}
+          colors={colors}
+          onClose={() => setShowModelRequired(false)}
+          onGoToDownload={() => {
+            setShowModelRequired(false);
+            onClose();
+            router.push({ pathname: '/profile', params: { section: 'audio' } });
+          }}
+        />
       </View>
     </Modal>
   );

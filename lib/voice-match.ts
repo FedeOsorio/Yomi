@@ -2,6 +2,7 @@ import { expandChoonpu, getEffectiveCardLanguage, hiraganaToRomaji, JA_NUMBERS, 
 import { KANJI_READINGS_MAP } from './kanji-readings-db';
 import { getReadingsForWord } from './phonetic-dictionary';
 import { toSearchKey } from './pinyin-utils';
+import { parseAux } from './word-aux';
 
 /**
  * Evaluación de un intento de pronunciación.
@@ -71,6 +72,26 @@ function splitReadings(raw?: string | null): string[] {
     .filter(Boolean);
 }
 
+/** Quita HTML y entidades que traen los mazos importados de Anki (<b>白</b>, &nbsp;). */
+function stripMarkup(text?: string | null): string {
+  return (text || '')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .trim();
+}
+
+/**
+ * Si la tarjeta es UN SOLO KANJI, todas sus lecturas on/kun del catálogo (el usuario puede decir
+ * cualquiera que conozca). Para palabras devuelve [] : solo vale la lectura de esa palabra.
+ */
+export function singleKanjiReadings(displayText?: string | null): string[] {
+  const single = stripMarkup(displayText).replace(/[\[(【（].*?[\])】）]/g, '').replace(PUNCT, '');
+  return single.length === 1 && KANJI_READINGS_MAP[single] ? KANJI_READINGS_MAP[single] : [];
+}
+
 // ───────────── japonés ─────────────
 
 function expectedJapaneseReadings(card: CardLike): string[] {
@@ -85,18 +106,11 @@ function expectedJapaneseReadings(card: CardLike): string[] {
   const kanaSurface = toKana(surface);
   if (kanaSurface) set.add(kanaSurface);
 
-  if (card.auxiliaryInfo) {
-    try {
-      const aux = JSON.parse(card.auxiliaryInfo);
-      [aux.kanjiReadings, aux.onReading, aux.kunReading].forEach((r) => splitReadings(r).forEach((x) => set.add(x)));
-    } catch {}
-  }
+  const aux = parseAux(card.auxiliaryInfo);
+  [aux.kanjiReadings, aux.onReading, aux.kunReading].forEach((r) => splitReadings(r).forEach((x) => set.add(x)));
 
   // Tarjeta de un único kanji: cualquiera de sus lecturas on/kun
-  const single = surface.replace(PUNCT, '');
-  if (single.length === 1 && KANJI_READINGS_MAP[single]) {
-    KANJI_READINGS_MAP[single].forEach((r) => set.add(toKana(r)));
-  }
+  singleKanjiReadings(text).forEach((r) => set.add(toKana(r)));
   set.delete('');
   return [...set];
 }
@@ -112,16 +126,29 @@ function heardJapaneseReadings(transcript: string): string[] {
   getReadingsForWord(clean).forEach((r) => out.add(toKana(r)));
 
   // Homófonos: combinar lecturas de cada kanji (橋 → はし coincide con 箸). Limitado para no explotar.
+  // El modelo a veces repite en kana la última sílaba del kanji (山ま, 山マ = やま): si la lectura
+  // ya termina con ese kana, también se prueba sin repetirlo.
+  // Solo el patrón "un kanji + un kana repetido" (山ま); no afecta palabras con okurigana real.
+  const isKanjiPlusEcho = /^[\u3400-\u9fff][\u3040-\u30ff]$/.test(clean);
   let combos = [''];
+  let prevWasKanji = false;
   for (const ch of clean) {
-    const options = HAS_KANJI.test(ch) ? (KANJI_READINGS_MAP[ch] || []).map(toKana) : [toKana(ch)];
+    const isKanji = HAS_KANJI.test(ch);
+    const options = isKanji ? (KANJI_READINGS_MAP[ch] || []).map(toKana) : [toKana(ch)];
     if (options.length === 0 || options.every((o) => !o)) {
       combos = [];
       break;
     }
     const next: string[] = [];
-    for (const prefix of combos) for (const o of options) if (o && next.length < 200) next.push(prefix + o);
+    for (const prefix of combos) {
+      for (const o of options) {
+        if (!o || next.length >= 200) continue;
+        next.push(prefix + o);
+        if (!isKanji && prevWasKanji && isKanjiPlusEcho && prefix.endsWith(o)) next.push(prefix);
+      }
+    }
     combos = next;
+    prevWasKanji = isKanji;
   }
   combos.forEach((c) => out.add(c));
   out.delete('');
@@ -154,9 +181,29 @@ function matchJapanese(card: CardLike, transcript: string): VoiceMatchResult {
     }
   }
 
+  // 4. Palabras de UNA sola mora (こ, き, て…): el modelo suele oír sonora la consonante sorda
+  //    cuando no se aspira (こ → ご), algo muy común en hispanohablantes. Solo en esa dirección:
+  //    una tarjeta "ご" NO acepta "こ".
+  for (const h of heard) {
+    for (const e of expected) {
+      if (isSingleMora(e) && unvoice(e) === e && unvoice(h) === e && h !== e) {
+        return { isMatch: true, matchedReading: e, heard: e };
+      }
+    }
+  }
+
   // Para mostrar: la lectura solo si no hay ambigüedad; si no, lo que se transcribió tal cual
   return { isMatch: false, heard: heard.length === 1 ? heard[0] : clean };
 }
+
+const VOICED: Record<string, string> = {
+  が: 'か', ぎ: 'き', ぐ: 'く', げ: 'け', ご: 'こ',
+  ざ: 'さ', じ: 'し', ず: 'す', ぜ: 'せ', ぞ: 'そ',
+  だ: 'た', ぢ: 'ち', づ: 'つ', で: 'て', ど: 'と',
+  ば: 'は', び: 'ひ', ぶ: 'ふ', べ: 'へ', ぼ: 'ほ',
+};
+const unvoice = (kana: string) => kana.replace(/./g, (c) => VOICED[c] ?? c);
+const isSingleMora = (kana: string) => /^[\u3041-\u3096][ゃゅょ]?$/.test(kana);
 
 // ───────────── chino ─────────────
 
@@ -198,8 +245,9 @@ function matchAlphabetic(card: CardLike, transcript: string): VoiceMatchResult {
 }
 
 /** Compara UNA elocución completa con la tarjeta. */
-export function checkVoiceMatch(card: CardLike, transcript: string, lang: string): VoiceMatchResult {
+export function checkVoiceMatch(rawCard: CardLike, transcript: string, lang: string): VoiceMatchResult {
   if (!transcript || !transcript.trim()) return { isMatch: false };
+  const card = { ...rawCard, displayText: stripMarkup(rawCard.displayText), displayReading: stripMarkup(rawCard.displayReading) };
   const target = getEffectiveCardLanguage({ ...card, languageCode: card.languageCode || lang }).toLowerCase();
   if (target.startsWith('ja')) return matchJapanese(card, transcript);
   if (target.startsWith('zh')) return matchChinese(card, transcript);

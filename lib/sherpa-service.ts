@@ -162,6 +162,15 @@ class SherpaVoiceService {
     return this.downloading;
   }
 
+  /** Libera el motor y borra el modelo descargado. */
+  async deleteModel(): Promise<void> {
+    await this.abort();
+    if (this.engine) await this.engine.destroy().catch(() => {});
+    this.engine = null;
+    this.engineLang = '';
+    await FileSystem.deleteAsync(this.modelDirUri(), { idempotent: true });
+  }
+
   isReady(lang?: string): boolean {
     return Boolean(this.engine) && (!lang || this.engineLang === toSenseVoiceLang(lang));
   }
@@ -197,7 +206,9 @@ class SherpaVoiceService {
           modelType: 'sense_voice',
           preferInt8: true,
           numThreads: 2,
-          modelOptions: { senseVoice: { language: lang, useItn: true } },
+          // ITN desactivado: con ITN el modelo convierte números a dígitos ("とおか" y "じゅうにち" → "10日")
+          // y se pierde cómo se pronunció. Sin ITN escribe lo que oyó con kana/kanji.
+          modelOptions: { senseVoice: { language: lang, useItn: false } },
         });
         this.engineLang = lang;
         return true;

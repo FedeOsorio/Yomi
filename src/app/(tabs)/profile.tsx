@@ -2,8 +2,8 @@ import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
-import { useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -15,7 +15,6 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { speakText } from '../../../lib/audio-service';
 import {
   createFullBackupPackage,
   exportToPhoneFolder,
@@ -28,6 +27,7 @@ import { GoogleUserProfile } from '../../../lib/google-drive-service';
 import { useGoogleDriveStore } from '../../stores/googleDriveStore';
 import { getStudyStats } from '../../../lib/srs-engine';
 import { InfoModal } from '../../components/InfoModal';
+import { AudioSettingsSection } from '../../components/settings/AudioSettingsSection';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { Shadows, Spacing } from '../../constants/theme';
 import { useTranslation, useLanguageStore } from '../../i18n';
@@ -76,15 +76,15 @@ export default function ProfileScreen() {
   } = useGoogleDriveStore();
 
   const getNextBackupText = () => {
-    if (!autoBackupEnabled) return 'Desactivado';
+    if (!autoBackupEnabled) return t('profile.backupDisabled');
     const lastIso = lastAutoBackupTime || driveBackupMeta?.modifiedTime;
-    if (!lastIso) return 'Próximo respaldo: Al usar la app';
+    if (!lastIso) return t('profile.backupOnUse');
     const lastDate = new Date(lastIso);
-    if (isNaN(lastDate.getTime())) return 'Próximo respaldo: Al usar la app';
+    if (isNaN(lastDate.getTime())) return t('profile.backupOnUse');
     const nextDate = new Date(lastDate.getTime() + 24 * 60 * 60 * 1000);
     const now = new Date();
     if (nextDate <= now) {
-      return 'Próximo respaldo: Pendiente de sincronización';
+      return t('profile.backupPendingSync');
     }
     const timeStr = nextDate.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
     const isTomorrow =
@@ -95,12 +95,12 @@ export default function ProfileScreen() {
       nextDate.getMonth() === now.getMonth();
 
     if (isToday) {
-      return `Próximo respaldo: Hoy, ${timeStr}`;
+      return t('profile.backupToday', { time: timeStr });
     } else if (isTomorrow) {
-      return `Próximo respaldo: Mañana, ${timeStr}`;
+      return t('profile.backupTomorrow', { time: timeStr });
     } else {
       const dateStr = nextDate.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' });
-      return `Próximo respaldo: ${dateStr}, ${timeStr}`;
+      return `${t('profile.nextBackup')}: ${dateStr}, ${timeStr}`;
     }
   };
   const [showDriveInfoModal, setShowDriveInfoModal] = useState(false);
@@ -194,12 +194,12 @@ export default function ProfileScreen() {
 
   const handleDisconnectGoogle = () => {
     Alert.alert(
-      'Desconectar Google Drive',
-      '¿Estás seguro de que querés desvincular tu cuenta de Google Drive? No se borrarán tus datos locales.',
+      t('profile.disconnectTitle'),
+      t('profile.disconnectMsg'),
       [
-        { text: 'Cancelar', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Desconectar',
+          text: t('profile.logout'),
           style: 'destructive',
           onPress: async () => {
             await disconnectGoogle();
@@ -288,10 +288,6 @@ export default function ProfileScreen() {
         },
       ]
     );
-  };
-
-  const handleTestAudio = (lang: string, sampleText: string) => {
-    speakText(sampleText, lang);
   };
 
   const handleCreateBackup = async () => {
@@ -389,12 +385,29 @@ export default function ProfileScreen() {
     }
   };
 
+  // Llegada desde el aviso "falta el modelo de voz": scroll hasta la sección de audio y resaltarla
+  const { section } = useLocalSearchParams<{ section?: string }>();
+  const router = useRouter();
+  const scrollRef = useRef<ScrollView>(null);
+  const [audioSectionY, setAudioSectionY] = useState<number | null>(null);
+  const [highlightAudio, setHighlightAudio] = useState(false);
+
+  useEffect(() => {
+    if (section !== 'audio' || audioSectionY === null) return;
+    scrollRef.current?.scrollTo({ y: Math.max(0, audioSectionY - Spacing.md), animated: true });
+    setHighlightAudio(true);
+    router.setParams({ section: undefined });
+    const timer = setTimeout(() => setHighlightAudio(false), 2000);
+    return () => clearTimeout(timer);
+  }, [section, audioSectionY]);
+
   const formattedLastBackup = lastBackupTime
     ? new Date(lastBackupTime).toLocaleString()
-    : 'No se ha realizado ninguna copia';
+    : t('profile.noLocalBackup');
 
   return (
     <ScrollView
+      ref={scrollRef}
       style={[styles.container, { backgroundColor: colors.background }]}
       contentContainerStyle={styles.scrollContent}
       showsVerticalScrollIndicator={false}
@@ -406,9 +419,9 @@ export default function ProfileScreen() {
             <Ionicons name="person" size={32} color={colors.primary} />
           </View>
           <View style={styles.profileTextInfo}>
-            <Text style={[styles.userName, { color: colors.text }]}>Estudiante Yomi</Text>
+            <Text style={[styles.userName, { color: colors.text }]}>{t('profile.studentName')}</Text>
             <Text style={[styles.userSub, { color: colors.textMuted }]}>
-              {stats.totalCards} {stats.totalCards === 1 ? 'tarjeta guardada' : 'tarjetas guardadas'}
+              {t('profile.cardsSaved', { count: stats.totalCards })}
             </Text>
           </View>
         </View>
@@ -417,17 +430,17 @@ export default function ProfileScreen() {
         <View style={styles.statsGrid}>
           <View style={[styles.statBox, { backgroundColor: colors.surfaceHighlight }]}>
             <Text style={[styles.statNumber, { color: colors.primary }]}>{stats.totalCards}</Text>
-            <Text style={[styles.statLabel, { color: colors.textMuted }]}>Total Tarjetas</Text>
+            <Text style={[styles.statLabel, { color: colors.textMuted }]}>{t('profile.totalCards')}</Text>
           </View>
 
           <View style={[styles.statBox, { backgroundColor: colors.surfaceHighlight }]}>
             <Text style={[styles.statNumber, { color: '#EF4444' }]}>{stats.dueCards}</Text>
-            <Text style={[styles.statLabel, { color: colors.textMuted }]}>Pendientes Hoy</Text>
+            <Text style={[styles.statLabel, { color: colors.textMuted }]}>{t('profile.dueToday')}</Text>
           </View>
 
           <View style={[styles.statBox, { backgroundColor: colors.surfaceHighlight }]}>
             <Text style={[styles.statNumber, { color: '#10B981' }]}>{stats.newCards}</Text>
-            <Text style={[styles.statLabel, { color: colors.textMuted }]}>Nuevas</Text>
+            <Text style={[styles.statLabel, { color: colors.textMuted }]}>{t('profile.newCards')}</Text>
           </View>
         </View>
       </View>
@@ -579,7 +592,7 @@ export default function ProfileScreen() {
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Ionicons name="logo-google" size={18} color="#4285F4" />
             <Text style={[styles.sectionTitle, { color: colors.text, marginLeft: Spacing.xs }]}>
-              Copia de Seguridad
+              {t('profile.backup')}
             </Text>
           </View>
           <TouchableOpacity
@@ -592,7 +605,7 @@ export default function ProfileScreen() {
         </View>
 
         <Text style={[styles.settingSub, { color: colors.textMuted, marginBottom: Spacing.md }]}>
-          Respalda tus mazos y progresos en tu espacio privado de Google Drive para tenerlos en todos tus dispositivos.
+          {t('profile.backupDescription')}
         </Text>
 
         {/* Fila de Cuenta Conectada */}
@@ -613,15 +626,15 @@ export default function ProfileScreen() {
                 </Text>
               </View>
               <TouchableOpacity onPress={handleDisconnectGoogle} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Text style={[styles.disconnectText, { color: colors.danger }]}>Salir</Text>
+                <Text style={[styles.disconnectText, { color: colors.danger }]}>{t('profile.logout')}</Text>
               </TouchableOpacity>
             </View>
           ) : (
             <View style={styles.googleNotConnectedRow}>
               <View style={styles.googlePromptInfo}>
-                <Text style={[styles.googlePromptTitle, { color: colors.text }]}>Cuenta no vinculada</Text>
+                <Text style={[styles.googlePromptTitle, { color: colors.text }]}>{t('profile.accountNotLinked')}</Text>
                 <Text style={[styles.googlePromptSub, { color: colors.textMuted }]}>
-                  Conecta tu cuenta para respaldar en la nube
+                  {t('profile.connectToBackup')}
                 </Text>
               </View>
               <TouchableOpacity
@@ -639,7 +652,7 @@ export default function ProfileScreen() {
                 ) : (
                   <>
                     <Ionicons name="logo-google" size={15} color="#FFF" style={{ marginRight: 6 }} />
-                    <Text style={styles.connectGoogleBtnText}>Vincular</Text>
+                    <Text style={styles.connectGoogleBtnText}>{t('profile.link')}</Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -652,7 +665,7 @@ export default function ProfileScreen() {
           <View style={[styles.settingRow, { marginTop: Spacing.xs, marginBottom: Spacing.sm, paddingHorizontal: 0 }]}>
             <View style={styles.settingTextGroup}>
               <Text style={[styles.settingLabel, { color: colors.text, fontSize: 14 }]}>
-                Respaldo automático
+                {t('profile.autoBackup')}
               </Text>
               <Text style={[styles.settingSub, { color: colors.textMuted, fontSize: 12, marginTop: 2 }]}>
                 {getNextBackupText()}
@@ -674,11 +687,11 @@ export default function ProfileScreen() {
             if (!googleUser) return;
             const res = await refreshDriveMeta(true);
             if (res.success && res.meta) {
-              Alert.alert('Copia Encontrada', `Última copia: ${new Date(res.meta.modifiedTime).toLocaleString()}`);
+              Alert.alert(t('profile.backupFoundTitle'), t('profile.lastBackup', { date: new Date(res.meta.modifiedTime).toLocaleString() }));
             } else if (res.success) {
-              Alert.alert('Google Drive', 'No se encontraron copias en tu espacio privado de Google Drive.');
+              Alert.alert('Google Drive', t('profile.backupNotFound'));
             } else if (res.error) {
-              Alert.alert('Error al consultar Drive', res.error);
+              Alert.alert(t('common.error'), res.error);
             }
           }}
           disabled={isChecking}
@@ -697,14 +710,18 @@ export default function ProfileScreen() {
           <View style={{ flex: 1 }}>
             <Text style={[styles.backupStatusText, { color: colors.textMuted }]}>
               {isChecking
-                ? 'Consultando Google Drive...'
+                ? t('profile.checkingDrive')
                 : driveBackupMeta
-                ? `Última copia: ${new Date(driveBackupMeta.modifiedTime).toLocaleString()} ${formatBytes(driveBackupMeta.sizeBytes) ? `${formatBytes(driveBackupMeta.sizeBytes)}` : ''}`
-                : 'Sin copias en Google Drive aún (toca para reintentar)'}
+                ? `${t('profile.lastBackup', { date: new Date(driveBackupMeta.modifiedTime).toLocaleString() })} ${formatBytes(driveBackupMeta.sizeBytes) ? `${formatBytes(driveBackupMeta.sizeBytes)}` : ''}`
+                : t('profile.noDriveBackups')}
             </Text>
             {driveBackupMeta && driveBackupMeta.decksCount !== undefined && !isChecking && (
               <Text style={[styles.backupStatusSubText, { color: colors.textMuted }]}>
-                {driveBackupMeta.decksCount} mazos • {driveBackupMeta.wordsCount} palabras • {driveBackupMeta.srsCount} tarjetas SRS
+                {t('profile.backupSummary', {
+                  decks: driveBackupMeta.decksCount,
+                  words: driveBackupMeta.wordsCount,
+                  srs: driveBackupMeta.srsCount,
+                })}
               </Text>
             )}
           </View>
@@ -727,7 +744,7 @@ export default function ProfileScreen() {
             ) : (
               <>
                 <Ionicons name="cloud-upload" size={18} color="#FFF" style={{ marginRight: 8 }} />
-                <Text style={styles.backupBtnText}>Hacer copia en Google Drive</Text>
+                <Text style={styles.backupBtnText}>{t('profile.makeBackupDrive')}</Text>
               </>
             )}
           </TouchableOpacity>
@@ -747,7 +764,7 @@ export default function ProfileScreen() {
             ) : (
               <>
                 <Ionicons name="cloud-download" size={18} color={colors.primary} style={{ marginRight: 8 }} />
-                <Text style={[styles.restoreBtnText, { color: colors.text }]}>Restaurar desde Google Drive</Text>
+                <Text style={[styles.restoreBtnText, { color: colors.text }]}>{t('profile.restoreFromDrive')}</Text>
               </>
             )}
           </TouchableOpacity>
@@ -758,17 +775,18 @@ export default function ProfileScreen() {
       <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         <View style={styles.sectionHeader}>
           <Ionicons name="document-text-outline" size={20} color={colors.primary} />
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>Respaldo Local</Text>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('profile.localBackup')}</Text>
         </View>
 
         <Text style={[styles.settingSub, { color: colors.textMuted, marginBottom: Spacing.sm }]}>
-          Exporta tu archivo para compartirlo con otros usuarios o restaura una copia manual desde tu almacenamiento.
+          {t('profile.localBackupDesc')}
         </Text>
 
         <View style={[styles.backupStatusBox, { backgroundColor: colors.surfaceHighlight }]}>
           <Ionicons name="time-outline" size={16} color={colors.textMuted} style={{ marginRight: 6 }} />
           <Text style={[styles.backupStatusText, { color: colors.textMuted }]}>
-            Última exportación local: <Text style={{ color: colors.text, fontWeight: '600' }}>{formattedLastBackup}</Text>
+            {t('profile.lastLocalExport')}{' '}
+            <Text style={{ color: colors.text, fontWeight: '600' }}>{formattedLastBackup}</Text>
           </Text>
         </View>
 
@@ -784,7 +802,7 @@ export default function ProfileScreen() {
             ) : (
               <>
                 <Ionicons name="share-social-outline" size={18} color={colors.primary} style={{ marginRight: 8 }} />
-                <Text style={[styles.localShareBtnText, { color: colors.text }]}>Exportar archivo</Text>
+                <Text style={[styles.localShareBtnText, { color: colors.text }]}>{t('profile.exportFile')}</Text>
               </>
             )}
           </TouchableOpacity>
@@ -800,62 +818,26 @@ export default function ProfileScreen() {
             ) : (
               <>
                 <Ionicons name="folder-open-outline" size={18} color={colors.textMuted} style={{ marginRight: 8 }} />
-                <Text style={[styles.restoreBtnText, { color: colors.text }]}>Restaurar archivo</Text>
+                <Text style={[styles.restoreBtnText, { color: colors.text }]}>{t('profile.restoreFile')}</Text>
               </>
             )}
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* Sección de Motor de Audio TTS */}
-      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-        <View style={styles.sectionHeader}>
-          <Ionicons name="volume-medium-outline" size={20} color={colors.primary} />
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>Prueba de audio</Text>
-        </View>
-
-        <Text style={[styles.settingSub, { color: colors.textMuted, marginBottom: Spacing.sm }]}>
-          Toca un idioma para probar la voz. Si no se escucha, descárgala en los ajustes de tu dispositivo.
-        </Text>
-
-        <View style={styles.audioTestButtons}>
-          <TouchableOpacity
-            style={[styles.audioTestBtn, { backgroundColor: colors.surfaceHighlight }]}
-            onPress={() => handleTestAudio('ja-JP', 'こんにちは')}
-          >
-            <Text style={styles.audioFlag}>🇯🇵</Text>
-            <Text style={[styles.audioBtnText, { color: colors.text }]}>Japonés</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.audioTestBtn, { backgroundColor: colors.surfaceHighlight }]}
-            onPress={() => handleTestAudio('zh-CN', '你好')}
-          >
-            <Text style={styles.audioFlag}>🇨🇳</Text>
-            <Text style={[styles.audioBtnText, { color: colors.text }]}>Chino</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.audioTestBtn, { backgroundColor: colors.surfaceHighlight }]}
-            onPress={() => handleTestAudio('en-US', 'Hello')}
-          >
-            <Text style={styles.audioFlag}>🇺🇸</Text>
-            <Text style={[styles.audioBtnText, { color: colors.text }]}>Inglés</Text>
-          </TouchableOpacity>
-        </View>
+      {/* Audio: voces de lectura y modelo de reconocimiento de voz */}
+      <View onLayout={(e) => setAudioSectionY(e.nativeEvent.layout.y)}>
+        <AudioSettingsSection colors={colors} highlighted={highlightAudio} />
       </View>
 
       {/* Información del Sistema */}
       <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         <View style={styles.sectionHeader}>
           <Ionicons name="information-circle-outline" size={20} color={colors.primary} />
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>Sobre Yomi</Text>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('profile.aboutYomi')}</Text>
         </View>
         <Text style={[styles.infoText, { color: colors.textMuted }]}>
-          • Motor de Repaso: Algoritmo FSRS v5.{'\n'}
-          • Diccionarios: CC-CEDICT y JMdict.{'\n'}
-          • Clasificación Oficial: Niveles JLPT N5-N1 y HSK 1-6.{'\n'}
-          • Versión: {Constants.expoConfig?.version || '0.1.5'}
+          {t('profile.aboutYomiText', { version: Constants.expoConfig?.version || '0.1.5' })}
         </Text>
       </View>
 
@@ -866,31 +848,31 @@ export default function ProfileScreen() {
         icon="logo-google"
         iconColor="#4285F4"
         iconBgColor={isDark ? 'rgba(66, 133, 244, 0.18)' : 'rgba(66, 133, 244, 0.12)'}
-        title="Copias en Google Drive"
-        subtitle="ESPACIO PRIVADO Y SEGURO"
-        description="Ahora podés respaldar tus mazos, tarjetas y progresos de estudio directamente en tu cuenta de Google Drive para tenerlos siempre a salvo."
+        title={t('profile.infoModalTitle')}
+        subtitle={t('profile.infoModalSubtitle')}
+        description={t('profile.infoModalDesc')}
         features={[
           {
             icon: 'shield-checkmark-outline',
             iconColor: '#10B981',
-            title: '100% Privado y Seguro',
-            description: 'Tus respaldos se guardan en tu carpeta privada de aplicaciones en Google Drive. Solo tu cuenta tiene acceso.',
+            title: t('profile.infoModalFeature1Title'),
+            description: t('profile.infoModalFeature1Desc'),
           },
           {
             icon: 'sync-outline',
             iconColor: '#3B82F6',
-            title: 'Multidispositivo sin pérdidas',
-            description: 'Cambiá de teléfono o reinstalá la app y recuperá toda tu colección y estadísticas con un solo toque.',
+            title: t('profile.infoModalFeature2Title'),
+            description: t('profile.infoModalFeature2Desc'),
           },
         ]}
-        primaryButtonText={googleUser ? 'Entendido' : 'Vincular Google Drive'}
+        primaryButtonText={googleUser ? t('profile.understood') : t('profile.link')}
         onPrimaryPress={() => {
           setShowDriveInfoModal(false);
           if (!googleUser) {
             handleConnectGoogle();
           }
         }}
-        secondaryButtonText={googleUser ? undefined : 'Más tarde'}
+        secondaryButtonText={googleUser ? undefined : t('review.later')}
         onSecondaryPress={() => setShowDriveInfoModal(false)}
       />
     </ScrollView>
@@ -1126,24 +1108,6 @@ const styles = StyleSheet.create({
   localShareBtnText: {
     fontSize: 14,
     fontWeight: '600',
-  },
-  audioTestButtons: {
-    marginTop: Spacing.xs,
-  },
-  audioTestBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: Spacing.sm,
-    borderRadius: 10,
-    marginBottom: Spacing.xs,
-  },
-  audioFlag: {
-    fontSize: 18,
-    marginRight: Spacing.sm,
-  },
-  audioBtnText: {
-    fontSize: 14,
-    fontWeight: '500',
   },
   infoText: {
     fontSize: 13,

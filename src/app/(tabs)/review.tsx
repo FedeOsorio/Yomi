@@ -1,1301 +1,316 @@
-import { Ionicons } from '@expo/vector-icons';
-import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
-import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Animated,
-  AppState,
-  type AppStateStatus,
-  BackHandler,
-  Easing,
-  FlatList,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
   StyleSheet,
   Text,
-  TouchableOpacity,
-  View
+  View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Svg, { Circle } from 'react-native-svg';
 import { Rating } from 'ts-fsrs';
 import { speakText, stopSpeech } from '../../../lib/audio-service';
-import { ALL_LANGUAGES, DeckWithStats, SUPPORTED_LANGUAGES } from '../../../lib/deck-service';
-import { cleanAndFormatMeanings } from '../../../lib/japanese-search';
-import { formatJapaneseReading, getEffectiveCardLanguage, toNormalizedHiragana } from '../../../lib/japanese-utils';
+import { detectTextLanguage, getEffectiveCardLanguage } from '../../../lib/japanese-utils';
+import { calculateChineseAccuracyScore } from '../../../lib/pinyin-utils';
 import { JLPT_KANJI_READINGS } from '../../../lib/jlpt-data';
-import { calculateChineseAccuracyScore, PinyinBreakdownItem } from '../../../lib/pinyin-utils';
-import { speechService, usesOfflineModel } from '../../../lib/speech-recognition-service';
+import { singleKanjiReadings } from '../../../lib/voice-match';
+import { parseAux } from '../../../lib/word-aux';
 import {
   calculateReviewRating,
   checkMeaningMatch,
   checkReadingMatch,
-  checkVoiceMatch,
-  DueCardWithContext,
-  processCardReview,
   removeCardFromReview,
-  rescheduleCardNextDay
+  rescheduleCardNextDay,
 } from '../../../lib/srs-engine';
-import { registerWordInDictionary } from '../../../lib/phonetic-dictionary';
-import { MODEL_NOT_DOWNLOADED, SHERPA_MODEL_SIZE_MB, sherpaVoiceService } from '../../../lib/sherpa-service';
-import { getCompoundWordsForChar } from '../../../lib/word-service';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { ConjugationPracticeModal } from '../../components/ConjugationPracticeModal';
+import { DeckPicker } from '../../components/review/DeckPicker';
+import { CustomCardAction, ReviewBottomBar } from '../../components/review/ReviewBottomBar';
+import { ReviewCard } from '../../components/review/ReviewCard';
 import { ReviewMethodModal } from '../../components/review/ReviewMethodModal';
-import { ReviewTextInputSection } from '../../components/review/ReviewTextInputSection';
 import { SessionSummaryView } from '../../components/review/SessionSummaryView';
 import { VoiceMicControl } from '../../components/review/VoiceMicControl';
+import { VoiceModelRequiredModal } from '../../components/review/VoiceModelRequiredModal';
+import { VoiceScoreBadge } from '../../components/review/VoiceScoreBadge';
 import { VoiceTranscriptArea } from '../../components/review/VoiceTranscriptArea';
-import { getFloatingTabBarStyle, Shadows, Spacing, Typography } from '../../constants/theme';
+import { Spacing, Typography } from '../../constants/theme';
 import { useTranslation } from '../../i18n';
-import { useReviewStore } from '../../stores/reviewStore';
+import { useAutoAdvance } from '../../hooks/review/useAutoAdvance';
+import { useCardFlip } from '../../hooks/review/useCardFlip';
+import { useCardMeanings } from '../../hooks/review/useCardMeanings';
+import { useSessionLifecycle } from '../../hooks/review/useSessionLifecycle';
+import { useVoiceReview } from '../../hooks/review/useVoiceReview';
+import { CardEvaluation, StudyMethod, useReviewStore } from '../../stores/reviewStore';
 
-const VOICE_TIMEOUT_SECONDS = 15;
-/** Intentos de pronunciación por tarjeta antes de darla por fallada. */
-const MAX_VOICE_ATTEMPTS = 3;
-
-/** Pregunta al usuario si quiere descargar el modelo de voz offline. */
-function confirmVoiceModelDownload(): Promise<boolean> {
-  return new Promise((resolve) => {
-    Alert.alert(
-      'Descargar modelo de voz',
-      `Para evaluar tu pronunciación sin conexión, Yomi necesita descargar un modelo de voz de unos ${SHERPA_MODEL_SIZE_MB} MB (solo la primera vez). Se recomienda usar Wi-Fi.`,
-      [
-        { text: 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
-        { text: 'Descargar', onPress: () => resolve(true) },
-      ],
-      { cancelable: true, onDismiss: () => resolve(false) }
-    );
-  });
-}
-
-
-interface SyllableBreakdownViewProps {
-  breakdown: PinyinBreakdownItem[];
-  colors: any;
-}
-
-const SyllableBreakdownView = memo(function SyllableBreakdownView({
-  breakdown,
-  colors,
-}: SyllableBreakdownViewProps) {
-  return (
-    <View style={styles.breakdownContainer}>
-      <Text style={[styles.breakdownSectionTitle, { color: colors.textMuted }]}>
-        Precisión por Sílaba
-      </Text>
-
-      <View style={styles.syllablesRow}>
-        {breakdown.map((item, bIndex) => {
-          const sylScore = Math.min(Math.max(item.score, 0), 100);
-          const strokeColor =
-            sylScore >= 90 ? '#10B981' : sylScore >= 70 ? '#F59E0B' : colors.danger;
-          const circRadius = 15.5;
-          const circPerimeter = 2 * Math.PI * circRadius;
-          const strokeDashoffset = circPerimeter - (circPerimeter * sylScore) / 100;
-
-          return (
-            <View
-              key={bIndex}
-              style={[
-                styles.syllableCard,
-                { backgroundColor: colors.surface, borderColor: colors.border },
-              ]}
-            >
-              <View style={styles.syllableHeader}>
-                {item.char ? (
-                  <Text style={[styles.syllableChar, { color: colors.text }]}>
-                    {item.char}
-                  </Text>
-                ) : null}
-                <Text style={[styles.syllableText, { color: colors.primary }]}>
-                  {item.syllable}
-                </Text>
-              </View>
-
-              {/* Círculo de porcentaje SVG */}
-              <View style={styles.circleBox}>
-                <Svg width={38} height={38} viewBox="0 0 38 38">
-                  {/* Círculo de fondo tenue */}
-                  <Circle
-                    cx="19"
-                    cy="19"
-                    r={circRadius}
-                    stroke={colors.border}
-                    strokeWidth="3"
-                    fill="transparent"
-                  />
-                  {/* Círculo de progreso animado/llenado */}
-                  <Circle
-                    cx="19"
-                    cy="19"
-                    r={circRadius}
-                    stroke={strokeColor}
-                    strokeWidth="3"
-                    strokeDasharray={`${circPerimeter}`}
-                    strokeDashoffset={strokeDashoffset}
-                    strokeLinecap="round"
-                    fill="transparent"
-                    transform="rotate(-90 19 19)"
-                  />
-                </Svg>
-                <View style={styles.circleScoreTextContainer}>
-                  <Text style={[styles.circleScoreNumber, { color: strokeColor }]}>
-                    {sylScore}%
-                  </Text>
-                </View>
-              </View>
-            </View>
-          );
-        })}
-      </View>
-    </View>
-  );
-});
-
+/**
+ * Pestaña Repaso. Muestra el selector de mazos, el resumen al terminar o la sesión activa.
+ * La lógica pesada vive en hooks: voz (useVoiceReview), giro de la tarjeta (useCardFlip),
+ * cuenta regresiva (useAutoAdvance) y ciclo de vida de la pantalla (useSessionLifecycle).
+ */
 export default function ReviewScreen() {
-  const { colors } = useTheme();
   const { t } = useTranslation();
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const navigation = useNavigation();
   const { deckId: paramDeckId } = useLocalSearchParams<{ deckId?: string }>();
 
-  // Estados y acciones desde reviewStore
   const decksList = useReviewStore((s) => s.decksList);
   const selectedDeckId = useReviewStore((s) => s.selectedDeckId);
   const selectedDeckName = useReviewStore((s) => s.selectedDeckName);
   const studyMethod = useReviewStore((s) => s.studyMethod);
-  const isPracticeMode = useReviewStore((s) => s.isPracticeMode);
   const showMethodModal = useReviewStore((s) => s.showMethodModal);
   const pendingSelection = useReviewStore((s) => s.pendingSelection);
-
   const dueCards = useReviewStore((s) => s.dueCards);
   const currentIndex = useReviewStore((s) => s.currentIndex);
   const loading = useReviewStore((s) => s.loading);
   const isProcessing = useReviewStore((s) => s.isProcessing);
   const sessionCompleted = useReviewStore((s) => s.sessionCompleted);
   const sessionCount = useReviewStore((s) => s.sessionCount);
-
   const isChecked = useReviewStore((s) => s.isChecked);
   const evaluation = useReviewStore((s) => s.evaluation);
-  const currentCompoundWords = useReviewStore((s) => s.currentCompoundWords);
+  const isListening = useReviewStore((s) => s.isListening);
+  const speechStatus = useReviewStore((s) => s.speechStatus);
+  const {
+    fetchDecksData,
+    promptStudyMethod,
+    setShowMethodModal,
+    startSession,
+    exitSession,
+    setIsChecked,
+    setEvaluation,
+    setIsProcessing,
+    resetCurrentCardForm,
+    advanceCard,
+    answerCurrentCard,
+    saveCardReview,
+    reinsertCurrentCardAhead,
+    reinsertCurrentCardAtEnd,
+  } = useReviewStore.getState();
 
-  // Estado para abrir práctica de conjugaciones desde la selección de mazo
+  const flip = useCardFlip();
+  const autoAdvance = useAutoAdvance();
+  const voice = useVoiceReview(flip, autoAdvance);
+
+  const currentCard = dueCards[currentIndex] || null;
+  const meaningsList = useCardMeanings(currentCard);
+
+  // Práctica de conjugaciones (se abre desde el modal de opciones)
   const [conjugationDeck, setConjugationDeck] = useState<{ id: string; name: string } | null>(null);
 
-  // Texto que se muestra mientras se descarga o carga el modelo de voz (null = listo / inactivo)
-  const [voiceSetupLabel, setVoiceSetupLabel] = useState<string | null>(null);
-  const [voiceFeedback, setVoiceFeedback] = useState<string | null>(null);
+  // ───────────── Sesión ─────────────
 
-  /** Descarga (si hace falta) y carga en memoria el modelo de voz para el idioma. */
-  const prepareVoiceModel = async (lang: string): Promise<boolean> => {
-    if (!usesOfflineModel(lang) || sherpaVoiceService.isReady(lang)) return true;
-    try {
-      if (!(await sherpaVoiceService.isModelDownloaded())) {
-        setVoiceSetupLabel('Descargando modelo de voz… 0%');
-        const ok = await sherpaVoiceService.downloadModel((p) => setVoiceSetupLabel(`Descargando modelo de voz… ${p}%`));
-        if (!ok) {
-          Alert.alert('Descarga fallida', 'No se pudo descargar el modelo de voz. Revisa tu conexión e inténtalo de nuevo.');
-          return false;
-        }
-      }
-      setVoiceSetupLabel('Cargando motor de voz…');
-      const loaded = await sherpaVoiceService.loadModel(lang);
-      if (!loaded) Alert.alert('Motor de voz', sherpaVoiceService.lastError ?? 'No se pudo cargar el modelo de voz.');
-      return loaded;
-    } finally {
-      setVoiceSetupLabel(null);
-    }
+  const handleStartSession = async (deckId: string, deckName: string, method: StudyMethod = 'text', practiceMode = false) => {
+    resetCurrentCardForm();
+    flip.reset();
+    autoAdvance.cancel();
+    await startSession(deckId, deckName, method, practiceMode);
+    // En voz el micrófono NO se abre solo: queda en "Presiona para comenzar"
+    if (method === 'voice') voice.resetForSession();
+  };
+
+  const handleSelectMethod = async (method: StudyMethod) => {
+    if (!pendingSelection) return;
+    const { deckId, deckName, hasDue, languageCode } = pendingSelection;
+    const voiceLang = languageCode || 'ja-JP';
+    if (method === 'voice' && !(await voice.ensureReady(voiceLang, () => setShowMethodModal(false)))) return;
+
+    setShowMethodModal(false);
+    await handleStartSession(deckId, deckName, method, !hasDue);
+    // Carga del modelo en segundo plano: el micrófono muestra "Cargando motor de voz…"
+    if (method === 'voice') voice.prepareModel(voiceLang);
   };
 
   const handleOpenConjugation = (deckId: string, deckName: string) => {
     setShowMethodModal(false);
-    setTimeout(() => {
-      setConjugationDeck({ id: deckId, name: deckName });
-    }, 150);
+    setTimeout(() => setConjugationDeck({ id: deckId, name: deckName }), 150);
   };
 
-  const isListening = useReviewStore((s) => s.isListening);
-  const speechStatus = useReviewStore((s) => s.speechStatus);
-
-  const fetchDecksData = useReviewStore((s) => s.fetchDecksData);
-  const promptStudyMethod = useReviewStore((s) => s.promptStudyMethod);
-  const setShowMethodModal = useReviewStore((s) => s.setShowMethodModal);
-  const startSession = useReviewStore((s) => s.startSession);
-  const exitSession = useReviewStore((s) => s.exitSession);
-  const setIsChecked = useReviewStore((s) => s.setIsChecked);
-  const setEvaluation = useReviewStore((s) => s.setEvaluation);
-  const setCurrentCompoundWords = useReviewStore((s) => s.setCurrentCompoundWords);
-  const setIsListening = useReviewStore((s) => s.setIsListening);
-  const setSpeechTranscript = useReviewStore((s) => s.setSpeechTranscript);
-  const setSpeechStatus = useReviewStore((s) => s.setSpeechStatus);
-  const setIsProcessing = useReviewStore((s) => s.setIsProcessing);
-  const recordFailedCard = useReviewStore((s) => s.recordFailedCard);
-  const resetCurrentCardForm = useReviewStore((s) => s.resetCurrentCardForm);
-  const advanceCard = useReviewStore((s) => s.advanceCard);
-  const reinsertCurrentCardAhead = useReviewStore((s) => s.reinsertCurrentCardAhead);
-  const reinsertCurrentCardAtEnd = useReviewStore((s) => s.reinsertCurrentCardAtEnd);
-
-  // Control de timers y animación de voz
-  const autoTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const isCardEvaluatedRef = useRef<boolean>(false);
-  const voiceProgressAnim = useRef(new Animated.Value(0)).current;
-  const micPulseAnim = useRef(new Animated.Value(1)).current;
-  const cardFlipAnim = useRef(new Animated.Value(0)).current;
-  const flipCountdownAnim = useRef(new Animated.Value(1)).current;
-  const flipCountdownDurationRef = useRef<number>(7000);
-  const flipCountdownStartTimeRef = useRef<number>(0);
-  const flipCountdownRemainingRef = useRef<number>(7000);
-  const isCountdownPausedRef = useRef<boolean>(false);
-
-  // Estilos de animación 3D optimizados para 60 FPS continuos con backfaceVisibility
-  const frontAnimatedStyle = useMemo(() => ({
-    backfaceVisibility: 'hidden' as const,
-    opacity: cardFlipAnim.interpolate({
-      inputRange: [0, 0.49, 0.5, 1],
-      outputRange: [1, 1, 0, 0],
-    }),
-    transform: [
-      { perspective: 1000 },
-      {
-        rotateY: cardFlipAnim.interpolate({
-          inputRange: [0, 1],
-          outputRange: ['0deg', '180deg'],
-        }),
-      },
-    ],
-  }), [cardFlipAnim]);
-
-  const backAnimatedStyle = useMemo(() => ({
-    backfaceVisibility: 'hidden' as const,
-    opacity: cardFlipAnim.interpolate({
-      inputRange: [0, 0.5, 0.51, 1],
-      outputRange: [0, 0, 1, 1],
-    }),
-    transform: [
-      { perspective: 1000 },
-      {
-        rotateY: cardFlipAnim.interpolate({
-          inputRange: [0, 1],
-          outputRange: ['180deg', '360deg'],
-        }),
-      },
-    ],
-  }), [cardFlipAnim]);
-
-  // Ocultar la barra de pestañas (tab bar) durante la sesión activa de estudio y restaurarla fielmente con estilo flotante
-  useEffect(() => {
-    const defaultTabBarStyle = getFloatingTabBarStyle(colors, insets.bottom);
-    if (selectedDeckId) {
-      navigation.setOptions({
-        tabBarStyle: { display: 'none' },
-      });
-    } else {
-      navigation.setOptions({
-        tabBarStyle: defaultTabBarStyle,
-      });
-    }
-    return () => {
-      navigation.setOptions({
-        tabBarStyle: defaultTabBarStyle,
-      });
-    };
-  }, [selectedDeckId, navigation, colors, insets.bottom]);
-
-  // Interceptar el botón de retroceso de Android: si hay sesión activa, salir en lugar de navegar
-  useEffect(() => {
-    const onBackPress = () => {
-      if (selectedDeckId) {
-        handleExitSession();
-        return true; // Consumir el evento, no navegar
-      }
-      return false; // Dejar que la navegación normal ocurra
-    };
-
-    const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
-    return () => subscription.remove();
-  }, [selectedDeckId]);
-
-
-  // Pausar y liberar el micrófono si la app pasa a segundo plano (llamada, minimizar, bloquear pantalla)
-  useEffect(() => {
-    speechService.checkPermissions().catch(() => { });
-    const handleAppStateChange = (nextState: AppStateStatus) => {
-      // En Android, los diálogos del sistema provocan temporalmente 'inactive'.
-      // Solo abortar y liberar el micrófono si la app realmente pasa a segundo plano ('background').
-      if (nextState === 'background') {
-        stopSpeech();
-        speechService.abort().catch(() => { });
-        setIsListening(false);
-      }
-    };
-    const sub = AppState.addEventListener('change', handleAppStateChange);
-    return () => sub.remove();
-  }, []);
-
-  // Mantener la pantalla encendida ÚNICAMENTE durante el repaso continuo por voz (manos libres)
-  useEffect(() => {
-    const isVoiceSessionActive = Boolean(selectedDeckId && studyMethod === 'voice' && !sessionCompleted);
-    const KEEP_AWAKE_TAG = 'yomi_voice_review';
-
-    if (isVoiceSessionActive) {
-      activateKeepAwakeAsync(KEEP_AWAKE_TAG);
-    } else {
-      deactivateKeepAwake(KEEP_AWAKE_TAG);
-    }
-
-    return () => {
-      deactivateKeepAwake(KEEP_AWAKE_TAG);
-    };
-  }, [selectedDeckId, studyMethod, sessionCompleted]);
-
-  // Al perder el foco (p. ej. al cambiar de pestaña o salir de la pantalla), detener el micrófono y limpiar la sesión
-  useFocusEffect(
-    useCallback(() => {
-      return () => {
-        stopSpeech();
-        if (autoTimerRef.current) {
-          clearTimeout(autoTimerRef.current);
-          autoTimerRef.current = null;
-        }
-        isCardEvaluatedRef.current = true;
-        speechService.stop();
-        setIsListening(false);
-        setSpeechStatus('idle');
-      };
-    }, [])
-  );
-
-  // Efecto orgánico de pulsación/respiración para el halo flotante del micrófono
-  useEffect(() => {
-    let animation: Animated.CompositeAnimation | null = null;
-    if (isListening) {
-      animation = Animated.loop(
-        Animated.sequence([
-          Animated.timing(micPulseAnim, {
-            toValue: 1.07,
-            duration: 900,
-            easing: Easing.inOut(Easing.ease),
-            useNativeDriver: true,
-          }),
-          Animated.timing(micPulseAnim, {
-            toValue: 1.0,
-            duration: 900,
-            easing: Easing.inOut(Easing.ease),
-            useNativeDriver: true,
-          }),
-        ])
-      );
-      animation.start();
-    } else {
-      micPulseAnim.setValue(1);
-    }
-    return () => {
-      if (animation) animation.stop();
-    };
-  }, [isListening]);
-
-  // Sincronizar el botón de salir/volver en el header superior nativo
-  useEffect(() => {
-    navigation.setOptions({
-      headerLeft: () => null,
-      headerTitle: () => (
-        <View style={styles.headerTitleRow}>
-          {selectedDeckId ? (
-            <TouchableOpacity
-              onPress={handleExitSession}
-              style={styles.headerBackBtn}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="arrow-back" size={24} color={colors.text} />
-            </TouchableOpacity>
-          ) : null}
-          <Text style={[styles.headerBrandText, { color: colors.primary }]}>Yomi</Text>
-          <Text style={[styles.headerBrandSep, { color: colors.textMuted }]}> • </Text>
-          <Text style={[styles.headerSubtitleText, { color: colors.text }]} numberOfLines={1}>
-            {selectedDeckId ? (selectedDeckName || 'Repaso') : 'Repaso SRS'}
-          </Text>
-        </View>
-      ),
-    });
-  }, [selectedDeckId, selectedDeckName, colors]);
-
-  const handleSelectMethod = async (method: 'text' | 'voice') => {
-    if (!pendingSelection) return;
-    const { deckId, deckName, hasDue, languageCode } = pendingSelection;
-
-    // Voz: pedir el micrófono y, si el idioma usa el modelo offline y aún no está descargado, ofrecer descargarlo
-    let needsModelPrep = false;
-    if (method === 'voice') {
-      const hasPerm = (await speechService.checkPermissions()) || (await speechService.requestPermissions());
-      if (!hasPerm) {
-        Alert.alert('Permiso de Micrófono', 'Para practicar con voz es necesario permitir el acceso al micrófono desde los Ajustes del dispositivo.');
-        return;
-      }
-      const voiceLang = languageCode || 'ja-JP';
-      if (usesOfflineModel(voiceLang)) {
-        if (!(await sherpaVoiceService.isModelDownloaded()) && !(await confirmVoiceModelDownload())) return;
-        needsModelPrep = true;
-      }
-    }
-
-    setShowMethodModal(false);
-    await handleStartSession(deckId, deckName, method, !hasDue);
-    // Descarga/carga del modelo en segundo plano: el botón del micrófono muestra el progreso
-    if (needsModelPrep) prepareVoiceModel(languageCode || 'ja-JP');
-  };
-
-  // Inicia la sesión para un mazo específico o para todos los mazos ('all')
-  const handleStartSession = async (
-    deckId: string | 'all',
-    deckName: string,
-    method: 'text' | 'voice' = 'text',
-    practiceMode: boolean = false
-  ) => {
-    resetForm();
-    if (autoTimerRef.current) {
-      clearTimeout(autoTimerRef.current);
-      autoTimerRef.current = null;
-    }
-
-    await startSession(deckId, deckName, method, practiceMode);
-    const cards = useReviewStore.getState().dueCards;
-
-    // En modo voz: NO abrimos el micrófono automáticamente al iniciar la sesión.
-    // El micrófono queda en reposo ('idle') con el cartelito "Presiona para comenzar"
-    // para que el usuario lo active deliberadamente con su toque cuando esté listo.
-    if (method === 'voice') {
-      setIsListening(false);
-      setSpeechStatus('idle');
-      voiceProgressAnim.setValue(0);
-    }
-  };
-
-  // Palabras esperadas para sesgar el reconocedor nativo (solo se usa en idiomas sin modelo offline)
-  const getCardContextualStrings = (card: DueCardWithContext): string[] => {
-    const strings = [card.displayText, ...(card.displayReading || '').split(/[\/\n,、;•|]/)];
-    return Array.from(new Set(strings.map((x) => (x || '').trim()).filter(Boolean)));
-  };
-
-  // Ciclo continuo de escucha con el micrófono con temporizador de 15 segundos sincronizado al inicio real.
-  // Usa el contador de generación del servicio para invalidar callbacks de tarjetas anteriores.
-  const startVoiceListeningForCard = async (card: DueCardWithContext, lang: string) => {
-    stopSpeech();
-    if (autoTimerRef.current) {
-      clearTimeout(autoTimerRef.current);
-      autoTimerRef.current = null;
-    }
-    voiceProgressAnim.stopAnimation();
-    voiceProgressAnim.setValue(0);
-    cardFlipAnim.setValue(0);
-
-    // Invalidar todos los callbacks de la tarjeta/sesión anterior antes de continuar.
-    // Cualquier onResult/onEnd/onError tardío será descartado por el servicio.
-    speechService.invalidate();
-    const cardGeneration = speechService.getGeneration();
-
-    isCardEvaluatedRef.current = false;
-    setSpeechTranscript('');
-    setIsListening(false);
-    setSpeechStatus('starting');
-
-    let isTimerStarted = false;
-    const isStale = () => speechService.getGeneration() !== cardGeneration || isCardEvaluatedRef.current;
-
-    const startTimerCountdown = () => {
-      if (isTimerStarted || isStale()) return;
-      isTimerStarted = true;
-
-      voiceProgressAnim.stopAnimation();
-      voiceProgressAnim.setValue(0);
-      Animated.timing(voiceProgressAnim, {
-        toValue: 1,
-        duration: VOICE_TIMEOUT_SECONDS * 1000,
-        easing: Easing.linear,
-        useNativeDriver: false,
-      }).start(({ finished }) => {
-        if (finished && !isStale()) {
-          isCardEvaluatedRef.current = true;
-          speechService.abort().catch(() => { });
-          setIsListening(false);
-          handleVoiceEvaluation(card, false);
-        }
-      });
-    };
-
-    console.log('[ReviewVoice] Escuchando tarjeta:', card.displayText);
-    registerWordInDictionary(card.displayText, card.displayReading);
-    setVoiceFeedback(null);
-    let attempts = 0;
-    let reportedError: string | null = null;
-
-    const started = await speechService.start(
-      lang,
-      {
-        onStart: () => {
-          if (isStale()) return;
-          startTimerCountdown();
-          setIsListening(true);
-          setSpeechStatus('listening');
-        },
-        onResult: (transcript, isFinal) => {
-          // Cada elocución terminada es UN intento. Los resultados parciales del reconocedor
-          // nativo no se evalúan: solo se muestran.
-          if (isStale()) return;
-          const result = checkVoiceMatch(card, transcript, lang);
-          setSpeechTranscript(result.heard || transcript);
-          if (!isFinal) return;
-
-          console.log('[ReviewVoice] Intento:', transcript, '→', result);
-          if (result.isMatch) {
-            isCardEvaluatedRef.current = true;
-            speechService.abort().catch(() => { });
-            setIsListening(false);
-            setSpeechStatus('evaluating');
-            setVoiceFeedback(null);
-            setTimeout(() => handleVoiceEvaluation(card, true, result.matchedReading), 150);
-            return;
-          }
-
-          attempts++;
-          if (attempts >= MAX_VOICE_ATTEMPTS) {
-            isCardEvaluatedRef.current = true;
-            speechService.abort().catch(() => { });
-            setIsListening(false);
-            setVoiceFeedback(null);
-            handleVoiceEvaluation(card, false);
-            return;
-          }
-          setVoiceFeedback(`No coincide · intento ${attempts} de ${MAX_VOICE_ATTEMPTS}`);
-        },
-        onError: (err) => {
-          if (isStale()) return;
-          reportedError = err;
-          setIsListening(false);
-          setSpeechStatus('idle');
-          voiceProgressAnim.stopAnimation();
-          if (err === MODEL_NOT_DOWNLOADED) {
-            confirmVoiceModelDownload().then((ok) => ok && prepareVoiceModel(lang));
-            return;
-          }
-          Alert.alert('Error de micrófono', err || 'No fue posible iniciar la captura de voz.');
-        },
-      },
-      { contextualStrings: getCardContextualStrings(card) }
-    );
-
-    if (!started && !isStale()) {
-      setIsListening(false);
-      setSpeechStatus('idle');
-      if (!reportedError) Alert.alert('Micrófono no iniciado', 'No se pudo iniciar la grabación. Toca el micrófono para reintentar.');
-    }
-  };
-
-  // Evaluación y feedback de voz con avance continuo y Flip 3D (tanto acierto como fallo)
-  const handleVoiceEvaluation = async (
-    card: DueCardWithContext,
-    isSuccess: boolean,
-    directTranscript?: string
-  ) => {
-    isCardEvaluatedRef.current = true;
-    voiceProgressAnim.stopAnimation();
-    setVoiceFeedback(null);
-
-    // Abortar el micrófono inmediatamente en segundo plano para liberar el hilo de render y empezar el giro sin lag
-    speechService.abort().catch(() => { });
-    setIsListening(false);
-    setSpeechStatus(isSuccess ? 'correct' : 'incorrect');
-    setIsChecked(true);
-
-    const lang = getEffectiveCardLanguage(card);
-    let voiceScore: { score: number; label: string; breakdown?: PinyinBreakdownItem[] } | undefined;
-
-    // La precisión fonética con desglose de tonos se calcula exclusivamente para Chino (Pinyin)
-    // En japonés, el reconocimiento ASR estándar no mide acento tonal (pitch accent), por lo que se omite el badge
-    if (lang.startsWith('zh')) {
-      const recognized = directTranscript || useReviewStore.getState().speechTranscript || '';
-      const res = calculateChineseAccuracyScore(recognized, card.displayText, card.displayReading);
-      voiceScore = { score: res.score, label: res.label, breakdown: res.breakdown };
-    }
-
-    const rating = isSuccess ? Rating.Good : Rating.Again;
-    setEvaluation({
-      isReadingCorrect: isSuccess,
-      isMeaningCorrect: isSuccess,
-      computedRating: rating,
-      voiceScore,
-      matchedReading: isSuccess ? directTranscript : undefined,
-    });
-
-    // Si falló (tiempo agotado o pronunciación errónea), registrar fallo de sesión y reinsertar en la cola
-    if (!isSuccess) {
-      recordFailedCard(card.id);
-      reinsertCurrentCardAhead(5, 10);
-    }
-
-    // La tarjeta SIEMPRE se da vuelta con animación 3D nativa fluida a 60 FPS
-    Animated.timing(cardFlipAnim, {
-      toValue: 1,
-      duration: 300,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished) {
-        // Reproducir audio TTS y arrancar temporizador de 7s recién cuando la tarjeta completó el giro
-        // Si acertó y tenemos la lectura específica que el usuario pronunció (ej. 'にち' para 日),
-        // TTS repite esa lectura exacta y no fuerza lecturas por defecto
-        const readingToSpeak = isSuccess && directTranscript
-          ? directTranscript
-          : card.displayReading;
-        speakText(card.displayText, lang, readingToSpeak);
-        startCountdownTimer(7000);
-      }
-    });
-
-    // Desacoplar la escritura SQLite FSRS para no bloquear el hilo de render durante la rotación 3D
-    if (!isPracticeMode) {
-      const wasFailedInSession = useReviewStore.getState().sessionFailedCardIds.has(card.id);
-
-      if (!isSuccess) {
-        // Fallo: suma a reps, incrementa lapsos y fija el repaso para mañana
-        setTimeout(() => {
-          processCardReview(card.id, Rating.Again).catch((err) => {
-            console.warn('Error al procesar FSRS:', err);
-          });
-        }, 350);
-      } else {
-        // Acierto: suma a reps por la intervención del usuario.
-        // Si ya había fallado en esta sesión, wasFailedInSession asegura que no salte a 3 días y quede para mañana.
-        setTimeout(() => {
-          processCardReview(card.id, Rating.Good, { wasFailedInSession }).catch((err) => {
-            console.warn('Error al procesar FSRS:', err);
-          });
-        }, 350);
-      }
-    }
-  };
-
-  const startCountdownTimer = (durationMs: number) => {
-    if (autoTimerRef.current) {
-      clearTimeout(autoTimerRef.current);
-      autoTimerRef.current = null;
-    }
-    flipCountdownAnim.stopAnimation();
-    flipCountdownAnim.setValue(0);
-    flipCountdownDurationRef.current = durationMs;
-    flipCountdownRemainingRef.current = durationMs;
-    flipCountdownStartTimeRef.current = Date.now();
-    isCountdownPausedRef.current = false;
-
-    Animated.timing(flipCountdownAnim, {
-      toValue: 1,
-      duration: durationMs,
-      easing: Easing.linear,
-      useNativeDriver: true,
-    }).start();
-
-    autoTimerRef.current = setTimeout(() => {
-      advanceToNextVoiceCard();
-    }, durationMs);
-  };
-
-  const pauseCountdownTimer = () => {
-    if (!isChecked || isCountdownPausedRef.current) return;
-    isCountdownPausedRef.current = true;
-    if (autoTimerRef.current) {
-      clearTimeout(autoTimerRef.current);
-      autoTimerRef.current = null;
-    }
-    // Detener la animación en el progreso actual y calcular el tiempo restante
-    flipCountdownAnim.stopAnimation((currentValue) => {
-      const elapsed = Date.now() - flipCountdownStartTimeRef.current;
-      const remaining = Math.max(flipCountdownDurationRef.current - elapsed, 500);
-      flipCountdownRemainingRef.current = remaining;
-      flipCountdownAnim.setValue(currentValue);
-    });
-  };
-
-  const resumeCountdownTimer = () => {
-    if (!isChecked || !isCountdownPausedRef.current) return;
-    isCountdownPausedRef.current = false;
-    const remainingMs = flipCountdownRemainingRef.current;
-    flipCountdownStartTimeRef.current = Date.now();
-    flipCountdownDurationRef.current = remainingMs;
-
-    Animated.timing(flipCountdownAnim, {
-      toValue: 1,
-      duration: remainingMs,
-      easing: Easing.linear,
-      useNativeDriver: true,
-    }).start();
-
-    autoTimerRef.current = setTimeout(() => {
-      advanceToNextVoiceCard();
-    }, remainingMs);
-  };
-
-  // Pase automático o manual a la siguiente tarjeta en modo voz con transición fluida 3D
-  const advanceToNextVoiceCard = async () => {
-    if (autoTimerRef.current) {
-      clearTimeout(autoTimerRef.current);
-      autoTimerRef.current = null;
-    }
-    isCountdownPausedRef.current = false;
-    flipCountdownAnim.stopAnimation();
-    flipCountdownAnim.setValue(0);
-    // Detener cualquier reproducción TTS activa de forma asíncrona y limpiar transcripciones
-    await stopSpeech();
-    setSpeechTranscript('');
-
-    // Invalidar la generación ANTES de la transición para que cualquier callback
-    // tardío de la tarjeta anterior se descarte automáticamente.
-    isCardEvaluatedRef.current = true;
-    speechService.invalidate();
-    await speechService.abort().catch(() => { });
-
-    let cardAdvanced = false;
-    const doAdvance = () => {
-      if (!cardAdvanced) {
-        cardAdvanced = true;
-        advanceCard();
-      }
-    };
-
-    // En el punto medio de la rotación (150ms, cuando está de perfil e invisible), actualizar el contenido
-    setTimeout(() => {
-      doAdvance();
-    }, 150);
-
-    // Rotar la tarjeta suavemente de regreso al frente a 60 FPS
-    Animated.timing(cardFlipAnim, {
-      toValue: 0,
-      duration: 300,
-      easing: Easing.inOut(Easing.ease),
-      useNativeDriver: true,
-    }).start(() => {
-      doAdvance();
-      const state = useReviewStore.getState();
-      // advanceCard() no mueve el índice en la última tarjeta: sin esta guarda el
-      // micrófono volvería a abrirse sobre la tarjeta que ya se completó.
-      if (state.sessionCompleted) {
-        speechService.abort().catch(() => { });
-        setIsListening(false);
-        setSpeechStatus('idle');
-        return;
-      }
-      const nextCard = state.getCurrentCard();
-      if (nextCard) {
-        const nextLang = getEffectiveCardLanguage(nextCard);
-        startVoiceListeningForCard(nextCard, nextLang);
-      } else {
-        speechService.abort().catch(() => { });
-        setIsListening(false);
-        setSpeechStatus('idle');
-      }
-    });
-  };
-
-  // Salir de la sesión actual y volver al selector de mazos
   const handleExitSession = () => {
-    stopSpeech();
-    if (autoTimerRef.current) {
-      clearTimeout(autoTimerRef.current);
-      autoTimerRef.current = null;
-    }
-    isCardEvaluatedRef.current = true;
-    // Invalidar generación para descartar cualquier callback pendiente
-    speechService.invalidate();
-    voiceProgressAnim.stopAnimation();
-    voiceProgressAnim.setValue(0);
-    flipCountdownAnim.stopAnimation();
-    flipCountdownAnim.setValue(0);
-    cardFlipAnim.setValue(0);
-    speechService.abort().catch(() => { });
-    setSpeechTranscript('');
+    voice.endSession();
     exitSession();
     fetchDecksData();
   };
 
-  const resetForm = () => {
-    resetCurrentCardForm();
-    cardFlipAnim.setValue(0);
-  };
+  useSessionLifecycle({
+    selectedDeckId,
+    selectedDeckName,
+    isVoiceSessionActive: Boolean(selectedDeckId && studyMethod === 'voice' && !sessionCompleted),
+    onExitSession: handleExitSession,
+    onAppBackground: voice.pauseOnBackground,
+    onScreenBlur: voice.pauseOnBlur,
+  });
 
+  // Al entrar a la pestaña: cargar mazos, o abrir directamente un mazo si vino por parámetro
   useFocusEffect(
     useCallback(() => {
-      if (paramDeckId) {
-        // Si se abrió con un deckId específico por parámetro de navegación
-        (async () => {
-          try {
-            await fetchDecksData();
-            const currentDecks = useReviewStore.getState().decksList;
-            const deck = currentDecks.find((item) => item.id === paramDeckId);
-            const deckName = deck ? deck.name : 'Mazo';
-            const hasDue = (deck?.dueCount || 0) > 0;
-            handleStartSession(paramDeckId, deckName, 'text', !hasDue);
-          } catch (e) {
-            console.warn('Error al iniciar sesión con paramDeckId:', e);
-            fetchDecksData();
-          }
-        })();
-      } else {
+      if (!paramDeckId) {
         fetchDecksData();
+        return;
       }
+      (async () => {
+        try {
+          await fetchDecksData();
+          const deck = useReviewStore.getState().decksList.find((item) => item.id === paramDeckId);
+          handleStartSession(paramDeckId, deck ? deck.name : 'Mazo', 'text', !((deck?.dueCount || 0) > 0));
+        } catch (e) {
+          console.warn('Error al iniciar sesión con paramDeckId:', e);
+          fetchDecksData();
+        }
+      })();
     }, [paramDeckId])
   );
 
-  const currentCard = dueCards[currentIndex] || null;
-
-  // Resolver prioritariamente los significados seleccionados por el usuario para esta palabra (memoizado para 60 FPS)
-  const meaningsList = useMemo(() => {
-    if (!currentCard) return [];
-    let list: string[] = [];
-
-    // 1. Prioridad: Si la palabra tiene auxiliaryInfo con selectedMeanings guardados
-    if (currentCard.auxiliaryInfo) {
-      try {
-        const aux = JSON.parse(currentCard.auxiliaryInfo);
-        if (Array.isArray(aux.selectedMeanings) && aux.selectedMeanings.length > 0) {
-          list = aux.selectedMeanings.map((m: string) => String(m).trim()).filter(Boolean);
-        }
-      } catch (e) { }
-    }
-
-    // 2. Si displayMeaning contiene la lista personalizada
-    if (list.length === 0 && currentCard.displayMeaning) {
-      try {
-        const parsed = JSON.parse(currentCard.displayMeaning);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          list = parsed.map((m: string) => String(m).trim()).filter(Boolean);
-        } else if (typeof parsed === 'string' && parsed.trim().length > 0) {
-          list = [parsed.trim()];
-        }
-      } catch {
-        const raw = String(currentCard.displayMeaning).trim();
-        if (raw.length > 0) {
-          list = [raw];
-        }
-      }
-    }
-
-    // 3. Si no hay selección personalizada, limpiar y formatear wordMeanings
-    if (list.length === 0 && currentCard.wordMeanings) {
-      if (currentCard.deckType === 'custom') {
-        try {
-          const parsed = JSON.parse(currentCard.wordMeanings);
-          list = Array.isArray(parsed) ? parsed : [String(currentCard.wordMeanings)];
-        } catch {
-          list = [currentCard.wordMeanings];
-        }
-      } else {
-        list = cleanAndFormatMeanings(currentCard.wordMeanings);
-      }
-    }
-
-    return list;
-  }, [currentCard?.id, currentCard?.auxiliaryInfo, currentCard?.displayMeaning, currentCard?.wordMeanings]);
-
-  // Cargar palabras compuestas de ejemplo para la tarjeta actual
+  // Tarjetas personalizadas: leer la pregunta en voz alta al mostrarla
   useEffect(() => {
-    let isMounted = true;
-    if (currentCard) {
-      const lang = getEffectiveCardLanguage(currentCard);
-      const isIdeographic = lang.startsWith('zh') || lang.startsWith('ja');
-      if (isIdeographic) {
-        getCompoundWordsForChar(currentCard.displayText, 2).then((res) => {
-          if (isMounted) setCurrentCompoundWords(res);
-        });
-      } else {
-        setCurrentCompoundWords([]);
-      }
-    }
-    return () => {
-      isMounted = false;
-    };
-  }, [currentCard]);
-
-  // Reproducción automática del audio de la pregunta al presentar una tarjeta de mazo personalizado
-  useEffect(() => {
-    if (currentCard && !isChecked && !sessionCompleted) {
-      const isCustom =
-        currentCard.deckType === 'custom' ||
-        currentCard.languageCode === 'custom' ||
-        currentCard.languageCode === 'es-ES';
-      if (isCustom) {
-        const timer = setTimeout(() => {
-          speakText(currentCard.displayText, 'es-ES');
-        }, 300);
-        return () => clearTimeout(timer);
-      }
-    }
+    if (!currentCard || isChecked || sessionCompleted) return;
+    const isCustom = currentCard.deckType === 'custom' || currentCard.languageCode === 'custom' || currentCard.languageCode === 'es-ES';
+    if (!isCustom) return;
+    const timer = setTimeout(() => speakText(currentCard.displayText, detectTextLanguage(currentCard.displayText)), 300);
+    return () => clearTimeout(timer);
   }, [currentCard?.id, isChecked, sessionCompleted]);
 
-  const handleSpeak = () => {
+  // ───────────── Modo escritura ─────────────
+
+  const speakCurrentCard = () => {
     if (!currentCard) return;
-    const lang = getEffectiveCardLanguage(currentCard);
-    speakText(currentCard.displayText, lang, currentCard.displayReading);
+    speakText(currentCard.displayText, getEffectiveCardLanguage(currentCard), currentCard.displayReading);
   };
 
-  // 1. Comprobar respuestas escritas
+  /** Muestra el dorso con la evaluación y lee la palabra al terminar el giro. */
+  const revealAnswer = (result: CardEvaluation) => {
+    setEvaluation(result);
+    setIsChecked(true);
+    flip.showBack(320, speakCurrentCard);
+  };
+
   const handleCheck = () => {
     if (!currentCard) return;
-
     const lang = getEffectiveCardLanguage(currentCard);
     const isIdeographic = lang.startsWith('zh') || lang.startsWith('ja');
 
-    let activeTargetMeanings = currentCard.displayMeaning;
-    if (currentCard.auxiliaryInfo) {
-      try {
-        const aux = JSON.parse(currentCard.auxiliaryInfo);
-        if (Array.isArray(aux.selectedMeanings) && aux.selectedMeanings.length > 0) {
-          activeTargetMeanings = JSON.stringify(aux.selectedMeanings);
-        }
-      } catch (e) { }
-    }
-
+    let targetMeanings = currentCard.displayMeaning;
     let altKanjiReadings: string | undefined;
-    if (currentCard.auxiliaryInfo) {
-      try {
-        const aux = JSON.parse(currentCard.auxiliaryInfo);
-        if (aux.kanjiReadings) altKanjiReadings = aux.kanjiReadings;
-      } catch { }
+    const aux = parseAux(currentCard.auxiliaryInfo);
+    if (Array.isArray(aux.selectedMeanings) && aux.selectedMeanings.length > 0) {
+      targetMeanings = JSON.stringify(aux.selectedMeanings);
     }
-
-    const isJapanese = lang.startsWith('ja');
-    const kanjiChar = (currentCard.displayText || '').trim();
-    if (isJapanese && JLPT_KANJI_READINGS[kanjiChar]) {
-      const entry = JLPT_KANJI_READINGS[kanjiChar];
-      const jlptReadings = [entry.essential, entry.on, entry.kun].filter(Boolean).join(' • ');
-      altKanjiReadings = altKanjiReadings ? `${altKanjiReadings} • ${jlptReadings}` : jlptReadings;
+    if (aux.kanjiReadings) altKanjiReadings = aux.kanjiReadings;
+    // Tarjeta de un solo kanji: vale cualquiera de sus lecturas on/kun (las mismas que acepta la voz)
+    if (lang.startsWith('ja')) {
+      const jlpt = JLPT_KANJI_READINGS[(currentCard.displayText || '').trim()];
+      const all = [...singleKanjiReadings(currentCard.displayText), jlpt?.essential, jlpt?.on, jlpt?.kun]
+        .filter(Boolean)
+        .join(' • ');
+      if (all) altKanjiReadings = altKanjiReadings ? `${altKanjiReadings} • ${all}` : all;
     }
 
     const { inputReading, inputMeaning } = useReviewStore.getState();
-
     const isReadingCorrect = isIdeographic
-      ? (checkReadingMatch(currentCard.displayReading, inputReading) ||
-        (altKanjiReadings ? checkReadingMatch(altKanjiReadings, inputReading) : false))
+      ? checkReadingMatch(currentCard.displayReading, inputReading) ||
+      (altKanjiReadings ? checkReadingMatch(altKanjiReadings, inputReading) : false)
       : true;
+    const isMeaningCorrect = checkMeaningMatch(targetMeanings, inputMeaning);
 
-    const isMeaningCorrect = checkMeaningMatch(activeTargetMeanings, inputMeaning);
-    const computedRating = calculateReviewRating(isReadingCorrect, isMeaningCorrect, isIdeographic);
-
-    let voiceScore: { score: number; label: string; breakdown?: PinyinBreakdownItem[] } | undefined;
+    let voiceScore: CardEvaluation['voiceScore'];
     if (lang.startsWith('zh') && inputReading) {
       const res = calculateChineseAccuracyScore(inputReading, currentCard.displayText, currentCard.displayReading);
       voiceScore = { score: res.score, label: res.label, breakdown: res.breakdown };
     }
 
-    setEvaluation({
+    revealAnswer({
       isReadingCorrect,
       isMeaningCorrect,
-      computedRating,
+      computedRating: calculateReviewRating(isReadingCorrect, isMeaningCorrect, isIdeographic),
       voiceScore,
     });
-    setIsChecked(true);
-    Animated.timing(cardFlipAnim, {
-      toValue: 1,
-      duration: 320,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished) {
-        handleSpeak();
-      }
-    });
   };
 
-  // 2. No me acuerdo (fallo manual)
   const handleGiveUp = () => {
     if (!currentCard) return;
-    setEvaluation({
-      isReadingCorrect: false,
-      isMeaningCorrect: false,
-      computedRating: Rating.Again,
-    });
-    setIsChecked(true);
-    Animated.timing(cardFlipAnim, {
-      toValue: 1,
-      duration: 320,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished) {
-        handleSpeak();
-      }
-    });
+    revealAnswer({ isReadingCorrect: false, isMeaningCorrect: false, computedRating: Rating.Again });
   };
 
-  // 3. Avanzar a la siguiente tarjeta (modo clásico por teclado)
   const handleNextCard = async () => {
     if (!currentCard || isProcessing) return;
     setIsProcessing(true);
     stopSpeech();
-
     try {
-      const isAgain = evaluation?.computedRating === Rating.Again;
-      const wasFailedInSession = useReviewStore.getState().sessionFailedCardIds.has(currentCard.id);
-
-      if (isAgain) {
-        recordFailedCard(currentCard.id);
+      if (evaluation) {
+        const { wasFailedInSession } = answerCurrentCard(evaluation.computedRating);
+        await saveCardReview(currentCard.id, evaluation.computedRating, wasFailedInSession);
       }
-
-      if (!isPracticeMode && evaluation) {
-        if (isAgain) {
-          await processCardReview(currentCard.id, Rating.Again);
-        } else {
-          await processCardReview(currentCard.id, evaluation.computedRating, { wasFailedInSession });
-        }
-      }
-
-      // Si la tarjeta fue fallada o se presionó "No lo sé", reinsertar entre 5 y 10 posiciones adelante
-      if (isAgain) {
-        reinsertCurrentCardAhead(5, 10);
-      }
-
-      // Rotar suavemente la tarjeta de regreso al frente a 60 FPS
-      Animated.timing(cardFlipAnim, {
-        toValue: 0,
-        duration: 260,
-        easing: Easing.inOut(Easing.ease),
-        useNativeDriver: true,
-      }).start(() => {
-        setIsProcessing(false);
-      });
-
-      // En el punto medio de la rotación (130ms), avanzar el estado
-      setTimeout(() => {
-        advanceCard();
-      }, 130);
     } catch (e) {
       console.error('Error al guardar repaso FSRS:', e);
-      Animated.timing(cardFlipAnim, {
-        toValue: 0,
-        duration: 260,
-        easing: Easing.inOut(Easing.ease),
-        useNativeDriver: true,
-      }).start(() => {
-        setIsProcessing(false);
-      });
-      setTimeout(() => {
-        advanceCard();
-      }, 130);
     }
+    // El contenido cambia a mitad del giro (130 ms), cuando la tarjeta está de perfil
+    flip.showFront(260, () => setIsProcessing(false));
+    setTimeout(() => advanceCard(), 130);
   };
 
-  // 4. Mostrar respuesta para tarjetas personalizadas
+  // ───────────── Tarjetas personalizadas ─────────────
+
   const handleShowCustomAnswer = () => {
     stopSpeech();
     setIsChecked(true);
-    Animated.timing(cardFlipAnim, {
-      toValue: 1,
-      duration: 280,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
+    flip.showBack(280);
   };
 
-  // 5. Procesar autoevaluación de tarjetas personalizadas (Pronto / Más tarde / Otro día / Nunca)
-  const handleCustomCardAction = async (action: 'soon' | 'later' | 'next_day' | 'never') => {
+  const handleCustomCardAction = (action: CustomCardAction) => {
     if (!currentCard || isProcessing) return;
     setIsProcessing(true);
-
-    try {
-      const cardId = currentCard.id;
-
-      // Rotar la tarjeta suavemente de regreso al frente
-      Animated.timing(cardFlipAnim, {
-        toValue: 0,
-        duration: 250,
-        easing: Easing.inOut(Easing.ease),
-        useNativeDriver: true,
-      }).start();
-
-      setTimeout(async () => {
-        try {
-          if (action === 'soon') {
-            // Reinsertar entre 5 y 10 tarjetas más adelante
-            reinsertCurrentCardAhead(5, 10);
-            advanceCard(false);
-          } else if (action === 'later') {
-            // Poner al final de la cola
-            reinsertCurrentCardAtEnd();
-            advanceCard(false);
-          } else if (action === 'next_day') {
-            // Aumenta 1 día en el SRS
-            await rescheduleCardNextDay(cardId);
-            advanceCard(true);
-          } else if (action === 'never') {
-            // Quita la tarjeta definitivamente del repaso
-            await removeCardFromReview(cardId);
-            advanceCard(true);
-          }
-          cardFlipAnim.setValue(0);
-        } catch (err) {
-          console.error('Error al procesar acción interna custom:', err);
-          setIsProcessing(false);
+    const cardId = currentCard.id;
+    flip.showFront(250);
+    setTimeout(async () => {
+      try {
+        if (action === 'soon') {
+          reinsertCurrentCardAhead(5, 10); // entre 5 y 10 tarjetas más adelante
+          advanceCard(false);
+        } else if (action === 'later') {
+          reinsertCurrentCardAtEnd();
+          advanceCard(false);
+        } else if (action === 'next_day') {
+          await rescheduleCardNextDay(cardId);
+          advanceCard(true);
+        } else {
+          await removeCardFromReview(cardId);
+          advanceCard(true);
         }
-      }, 140);
-    } catch (e) {
-      console.error('Error al procesar acción de tarjeta custom:', e);
-      setIsProcessing(false);
-    }
+        flip.reset();
+      } catch (err) {
+        console.error('Error al procesar acción de tarjeta personalizada:', err);
+        setIsProcessing(false);
+      }
+    }, 140);
   };
 
-  const renderDeckGridItem = useCallback(({ item }: { item: DeckWithStats }) => {
-    const isCustom = item.type === 'custom';
-    const isJapanese = !isCustom && item.languageCode === 'ja-JP';
-    const langMeta = ALL_LANGUAGES.find((l) => l.code === item.languageCode) || SUPPORTED_LANGUAGES[0];
-    const dueCount = item.dueCount || 0;
-    const cardsInReview = item.activeCardsCount !== undefined ? item.activeCardsCount : (item.wordCount || 0);
-    const hasDue = dueCount > 0;
+  // ───────────── Vistas ─────────────
 
-    return (
-      <TouchableOpacity
-        style={[
-          styles.gridCard,
-          {
-            backgroundColor: colors.surface,
-            borderColor: hasDue ? (isCustom ? '#10B981' : colors.primary) : colors.border,
-          },
-        ]}
-        activeOpacity={0.75}
-        onPress={() => promptStudyMethod(item.id, item.name, hasDue)}
-      >
-        <View style={styles.gridCardTopRow}>
-          {isCustom ? (
-            <Ionicons
-              name="layers"
-              size={22}
-              color="#10B981"
-            />
-          ) : (
-            <Text style={styles.gridFlagEmoji}>{langMeta.flag}</Text>
-          )}
-
-          {hasDue ? (
-            <Text
-              style={[styles.gridDueText, { color: '#F59E0B' }]}
-              numberOfLines={1}
-            >
-              {dueCount} {dueCount === 1 ? 'pendiente' : 'pendientes'}
-            </Text>
-          ) : (
-            <Text
-              style={[styles.gridDueText, { color: '#10B981' }]}
-              numberOfLines={1}
-            >
-              Al día
-            </Text>
-          )}
-        </View>
-
-        <View style={styles.gridCardBody}>
-          <Text style={[styles.gridCardTitle, { color: colors.text }]} numberOfLines={2}>
-            {item.name}
-          </Text>
-          <Text style={[styles.gridCardSub, { color: colors.textMuted }]} numberOfLines={1}>
-            {isCustom ? 'Personalizado' : (langMeta?.label || 'General')} • {cardsInReview}{' '}
-            {cardsInReview === 1 ? (isCustom ? 'tarjeta' : 'palabra') : (isCustom ? 'tarjetas' : 'palabras')}
-          </Text>
-        </View>
-
-        <View style={[styles.gridCardFooter, { borderTopColor: colors.border }]}>
-          <Text
-            style={[
-              styles.gridCardActionText,
-              { color: hasDue ? (isCustom ? '#10B981' : colors.primary) : colors.textMuted },
-            ]}
-          >
-            {hasDue ? 'Repasar ahora' : 'Practicar'}
-          </Text>
-          <Ionicons
-            name="chevron-forward"
-            size={14}
-            color={hasDue ? (isCustom ? '#10B981' : colors.primary) : colors.textMuted}
-          />
-        </View>
-      </TouchableOpacity>
-    );
-  }, [colors, promptStudyMethod]);
+  const voiceModelModal = (
+    <VoiceModelRequiredModal
+      visible={voice.showModelRequired}
+      colors={colors}
+      onClose={voice.closeModelRequired}
+      onGoToDownload={voice.goToModelDownload}
+    />
+  );
 
   if (loading) {
     return (
       <View style={[styles.center, { backgroundColor: colors.background }]}>
         <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={[styles.loadingText, { color: colors.textMuted }]}>Cargando repaso...</Text>
+        <Text style={[styles.loadingText, { color: colors.textMuted }]}>{t('review.loadingReview')}</Text>
       </View>
     );
   }
 
-  // VISTA 1: Selector visual de mazos en cuadrículas ("cuadraditos uno al lado del otro")
+  // Selector de mazos
   if (!selectedDeckId) {
-    const totalDue = decksList.reduce((acc, d) => acc + (d.dueCount || 0), 0);
-    const hasMultipleDecksWithDue = decksList.length > 1 && totalDue > 0;
-
     return (
       <View style={[styles.container, { backgroundColor: colors.background, paddingTop: Spacing.sm }]}>
-        <View style={styles.selectionHeader}>
-          <Text style={[styles.selectionSub, { color: colors.textMuted, fontSize: 14 }]}>
-            Elige un mazo para repasar o practica todos juntos.
-          </Text>
-        </View>
-
-        {hasMultipleDecksWithDue ? (
-          <TouchableOpacity
-            style={[styles.heroAllDecksCard, { backgroundColor: colors.primary }]}
-            activeOpacity={0.85}
-            onPress={() => promptStudyMethod('all', 'Todos los mazos', true)}
-          >
-            <View style={styles.heroLeft}>
-              <View style={styles.heroIconBox}>
-                <Ionicons name="flash" size={20} color={colors.primary} />
-              </View>
-              <View style={styles.heroTextCol}>
-                <Text style={styles.heroTitle}>Repasar Todos los Mazos</Text>
-                <Text style={styles.heroSub}>
-                  {totalDue} {totalDue === 1 ? 'tarjeta pendiente' : 'tarjetas pendientes'} en total
-                </Text>
-              </View>
-            </View>
-            <Ionicons name="arrow-forward" size={20} color="#FFF" />
-          </TouchableOpacity>
-        ) : null}
-
-        {decksList.length === 0 ? (
-          <View style={styles.emptyGridContainer}>
-            <Ionicons name="albums-outline" size={54} color={colors.textMuted} />
-            <Text style={[styles.emptyGridTitle, { color: colors.text }]}>No hay tarjetas en repaso</Text>
-            <Text style={[styles.emptyGridSub, { color: colors.textMuted }]}>
-              Agrega tarjetas al repaso (+ Agregar al repaso) desde tus mazos para comenzar a estudiar con el sistema SRS.
-            </Text>
-            <TouchableOpacity
-              style={[styles.primaryBtn, { backgroundColor: colors.primary, marginTop: Spacing.md }]}
-              onPress={() => router.push('/')}
-            >
-              <Ionicons name="add" size={20} color="#FFF" style={{ marginRight: 6 }} />
-              <Text style={styles.primaryBtnText}>Ir a Mis Mazos</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <FlatList
-            data={decksList}
-            keyExtractor={(item) => item.id}
-            numColumns={2}
-            columnWrapperStyle={styles.gridColumnWrapper}
-            contentContainerStyle={styles.gridContentContainer}
-            showsVerticalScrollIndicator={false}
-            renderItem={renderDeckGridItem}
-            removeClippedSubviews={Platform.OS === 'android'}
-            initialNumToRender={6}
-            maxToRenderPerBatch={6}
-            windowSize={3}
-          />
-        )}
-
+        <DeckPicker decks={decksList} colors={colors} onSelectDeck={promptStudyMethod} onGoToDecks={() => router.push('/')} />
         <ReviewMethodModal
           visible={showMethodModal}
           pendingSelection={pendingSelection}
@@ -1303,15 +318,13 @@ export default function ReviewScreen() {
           onClose={() => setShowMethodModal(false)}
           onSelectMethod={handleSelectMethod}
           onSelectConjugation={() => {
-            if (pendingSelection) {
-              handleOpenConjugation(pendingSelection.deckId, pendingSelection.deckName);
-            }
+            if (pendingSelection) handleOpenConjugation(pendingSelection.deckId, pendingSelection.deckName);
           }}
         />
-
+        {voiceModelModal}
         {conjugationDeck && (
           <ConjugationPracticeModal
-            visible={Boolean(conjugationDeck)}
+            visible
             onClose={() => {
               setConjugationDeck(null);
               fetchDecksData();
@@ -1324,8 +337,8 @@ export default function ReviewScreen() {
     );
   }
 
-  // VISTA 2: Estado sin tarjetas pendientes en este mazo o sesión terminada
-  if (dueCards.length === 0 || sessionCompleted) {
+  // Mazo sin tarjetas pendientes o sesión terminada
+  if (dueCards.length === 0 || sessionCompleted || !currentCard) {
     return (
       <View style={[styles.container, { backgroundColor: colors.background, paddingTop: Spacing.sm }]}>
         <SessionSummaryView
@@ -1334,15 +347,8 @@ export default function ReviewScreen() {
           selectedDeckName={selectedDeckName}
           colors={colors}
           onExitSession={handleExitSession}
-          onPracticeAll={() => {
-            if (selectedDeckId) {
-              promptStudyMethod(selectedDeckId, selectedDeckName, false);
-            } else {
-              handleExitSession();
-            }
-          }}
+          onPracticeAll={() => promptStudyMethod(selectedDeckId, selectedDeckName, false)}
         />
-
         <ReviewMethodModal
           visible={showMethodModal}
           pendingSelection={pendingSelection}
@@ -1350,399 +356,84 @@ export default function ReviewScreen() {
           onClose={() => setShowMethodModal(false)}
           onSelectMethod={handleSelectMethod}
         />
+        {voiceModelModal}
       </View>
     );
   }
 
+  // Sesión activa
   const isCustomCard =
-    currentCard?.deckType === 'custom' ||
-    currentCard?.languageCode === 'custom' ||
-    (currentCard?.deckType !== 'language' && currentCard?.languageCode === 'es-ES');
+    currentCard.deckType === 'custom' ||
+    currentCard.languageCode === 'custom' ||
+    (currentCard.deckType !== 'language' && currentCard.languageCode === 'es-ES');
   const lang = getEffectiveCardLanguage(currentCard);
-  const isIdeographic = lang.startsWith('zh') || lang.startsWith('ja');
-  const isJapanese = lang.startsWith('ja');
+  const accent = isCustomCard ? '#10B981' : colors.primary;
+  const isVoice = studyMethod === 'voice';
 
   return (
     <KeyboardAvoidingView
       style={[styles.container, { backgroundColor: colors.background }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      {/* Barra de progreso de la sesión */}
+      {/* Progreso de la sesión */}
       <View style={[styles.progressHeader, { paddingTop: Spacing.sm }]}>
         <View style={styles.progressRow}>
           <Text style={[styles.progressText, { color: colors.textMuted }]}>
-            Tarjeta {currentIndex + 1} de {dueCards.length}
+            {t('review.cardProgress', { current: currentIndex + 1, total: dueCards.length })}
           </Text>
-
           <View style={[styles.deckBadgeContainer, { backgroundColor: colors.surfaceHighlight }]}>
-            <Text style={[styles.deckNameBadge, { color: isCustomCard ? '#10B981' : colors.primary }]} numberOfLines={1}>
+            <Text style={[styles.deckNameBadge, { color: accent }]} numberOfLines={1}>
               {selectedDeckName}
             </Text>
           </View>
         </View>
         <View style={[styles.progressBarBg, { backgroundColor: colors.surfaceHighlight }]}>
           <View
-            style={[
-              styles.progressBarFill,
-              {
-                backgroundColor: isCustomCard ? '#10B981' : colors.primary,
-                width: `${((currentIndex + 1) / dueCards.length) * 100}%`,
-              },
-            ]}
+            style={[styles.progressBarFill, { backgroundColor: accent, width: `${((currentIndex + 1) / dueCards.length) * 100}%` }]}
           />
         </View>
       </View>
 
+      {/* Tocar la pantalla pausa la cuenta regresiva del modo voz */}
       <View
         style={{ flex: 1 }}
-        onTouchStart={() => {
-          if (studyMethod === 'voice' && isChecked) {
-            pauseCountdownTimer();
-          }
-        }}
-        onTouchEnd={() => {
-          if (studyMethod === 'voice' && isChecked) {
-            resumeCountdownTimer();
-          }
-        }}
-        onTouchCancel={() => {
-          if (studyMethod === 'voice' && isChecked) {
-            resumeCountdownTimer();
-          }
-        }}
+        onTouchStart={() => isVoice && isChecked && autoAdvance.pause()}
+        onTouchEnd={() => isVoice && isChecked && autoAdvance.resume()}
+        onTouchCancel={() => isVoice && isChecked && autoAdvance.resume()}
       >
-        <ScrollView
-          contentContainerStyle={styles.scrollContainer}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          {/* Lo que el usuario pronuncia con altura fija de 60px para que nunca salte */}
-          {studyMethod === 'voice' && (
-            <VoiceTranscriptArea
-              card={currentCard}
-              isChecked={isChecked}
-              feedback={voiceFeedback}
-              colors={colors}
-            />
-          )}
+        <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          {isVoice && <VoiceTranscriptArea card={currentCard} isChecked={isChecked} feedback={voice.feedback} colors={colors} />}
 
-          {/* Contenedor Flip Card 3D */}
-          <View style={styles.flipContainer}>
-            {/* Texto sutil de guía sobre la tarjeta sin badge ni ícono, sin alterar la posición vertical de la tarjeta */}
-            {studyMethod === 'text' && !isChecked && isIdeographic && (
-              <Text style={[styles.optionsGuidanceText, { color: colors.textMuted }]}>
-                {t('review.answerAnyOption')}
-              </Text>
-            )}
-            {/* CARA FRONTAL: Pregunta */}
-            <Animated.View
-              style={[
-                styles.quizCard,
-                { backgroundColor: colors.surface, borderColor: colors.border },
-                frontAnimatedStyle,
-              ]}
-            >
-              {isCustomCard ? (
-                <View style={styles.customFrontBox}>
-                  <View style={styles.customFrontHeaderRow}>
-                    <TouchableOpacity
-                      style={styles.customCleanSpeakerBtn}
-                      activeOpacity={0.7}
-                      onPress={() => speakText(currentCard.displayText, 'es-ES')}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    >
-                      <Ionicons name="volume-medium-outline" size={22} color={colors.primary} />
-                    </TouchableOpacity>
-                  </View>
+          <ReviewCard
+            card={currentCard}
+            lang={lang}
+            studyMethod={studyMethod}
+            isChecked={isChecked}
+            isCustomCard={isCustomCard}
+            evaluation={evaluation}
+            meaningsList={meaningsList}
+            colors={colors}
+            frontStyle={flip.frontStyle}
+            backStyle={flip.backStyle}
+            onSubmitText={handleCheck}
+          />
 
-                  <ScrollView style={styles.customQuestionScroll} contentContainerStyle={styles.customQuestionScrollContent}>
-                    <Text style={[styles.customQuestionText, { color: colors.text }]}>
-                      {currentCard.displayText}
-                    </Text>
-                  </ScrollView>
-                </View>
-              ) : (
-                <>
-                  <Text
-                    style={[
-                      isIdeographic ? styles.charIdeographic : styles.charAlphabetic,
-                      {
-                        color: colors.text,
-                        fontSize: 38,
-                      },
-                    ]}
-                    numberOfLines={1}
-                    adjustsFontSizeToFit={true}
-                  >
-                    {currentCard.displayText}
-                  </Text>
-
-                  {/* Formulario de Respuestas Modo Clásico (Teclado) aislado para latencia cero */}
-                  {studyMethod === 'text' && !isChecked && (
-                    <ReviewTextInputSection
-                      isIdeographic={isIdeographic}
-                      languageCode={lang}
-                      onSubmit={handleCheck}
-                      colors={colors}
-                    />
-                  )}
-                </>
-              )}
-            </Animated.View>
-
-            {/* CARA TRASERA (REVERSO 3D) */}
-            <Animated.View
-              style={[
-                styles.quizCard,
-                styles.quizCardBack,
-                {
-                  backgroundColor: colors.surface,
-                  borderColor: isCustomCard ? '#10B981' : (evaluation?.isReadingCorrect ? colors.primary : colors.danger),
-                },
-                backAnimatedStyle,
-              ]}
-              pointerEvents={isChecked ? 'auto' : 'none'}
-            >
-              {isCustomCard ? (
-                <View style={styles.customBackBox}>
-                  <Text style={[styles.customBackQuestionPrompt, { color: colors.textMuted }]} numberOfLines={2}>
-                    {currentCard.displayText}
-                  </Text>
-
-                  <View style={[styles.customAnswerBox, { backgroundColor: colors.surfaceHighlight }]}>
-                    <TouchableOpacity
-                      style={styles.customAnswerSpeakerBtn}
-                      activeOpacity={0.7}
-                      onPress={() => speakText(meaningsList[0] || currentCard.displayMeaning, 'es-ES')}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    >
-                      <Ionicons name="volume-medium-outline" size={22} color={colors.textMuted} />
-                    </TouchableOpacity>
-
-                    <ScrollView style={styles.customAnswerScroll} contentContainerStyle={styles.customAnswerScrollContent}>
-                      <Text style={[styles.customAnswerText, { color: colors.text }]}>
-                        {meaningsList.length > 0 ? meaningsList.join('\n') : currentCard.displayMeaning}
-                      </Text>
-                    </ScrollView>
-                  </View>
-                </View>
-              ) : (
-                <>
-                  <View style={styles.flipTopStatusRow}>
-                    <View
-                      style={[
-                        styles.flipBadgeRow,
-                        {
-                          backgroundColor: evaluation?.isReadingCorrect
-                            ? 'rgba(16, 185, 129, 0.14)'
-                            : 'rgba(239, 68, 68, 0.14)',
-                        },
-                      ]}
-                    >
-                      <Ionicons
-                        name={evaluation?.isReadingCorrect ? 'checkmark-circle' : 'close-circle'}
-                        size={18}
-                        color={evaluation?.isReadingCorrect ? '#10B981' : colors.danger}
-                      />
-                      <Text
-                        style={[
-                          styles.flipBadgeText,
-                          { color: evaluation?.isReadingCorrect ? '#10B981' : colors.danger },
-                        ]}
-                      >
-                        {evaluation?.isReadingCorrect ? '¡Correcto!' : 'Respuesta Incorrecta'}
-                      </Text>
-                    </View>
-                  </View>
-
-                  {/* Si la palabra tiene Kanji: Kanji en el centro de la tarjeta */}
-                  <View style={styles.flipReadingHeroBox}>
-                    <Text
-                      style={[
-                        isIdeographic ? styles.charIdeographic : styles.charAlphabetic,
-                        styles.flipHeroWordLarge,
-                        { color: colors.text },
-                      ]}
-                      numberOfLines={1}
-                      adjustsFontSizeToFit={true}
-                    >
-                      {currentCard.displayText}
-                    </Text>
-                  </View>
-
-                  {/* Contenedor gris con Pronunciación (hiragana/pinyin) arriba y Significado abajo */}
-                  <View style={[styles.flipBackSectionBox, { backgroundColor: colors.surfaceHighlight }]}>
-                    {Boolean(currentCard.displayReading) && (
-                      <>
-                        <Text style={[styles.flipBackLabel, { color: colors.textMuted }]}>Pronunciación</Text>
-                        {(() => {
-                          const rawText = currentCard.displayReading;
-                          const formatted = isJapanese ? formatJapaneseReading(rawText) : rawText;
-                          const matched = evaluation?.matchedReading;
-                          if (!matched || !isJapanese) {
-                            return (
-                              <Text style={[styles.flipHeroReadingSmall, { color: colors.primary, marginBottom: 4 }]} numberOfLines={2}>
-                                {formatted}
-                              </Text>
-                            );
-                          }
-                          const normMatched = toNormalizedHiragana(matched);
-                          const tokens = formatted.split(/([,、・•/|\s]+)/);
-                          return (
-                            <Text style={[styles.flipHeroReadingSmall, { color: colors.primary, marginBottom: 4 }]} numberOfLines={2}>
-                              {tokens.map((tok, idx) => {
-                                const cleanTok = tok.replace(/^(on|kun|音|訓)[:：\s]*/i, '').replace(/[・~～\s\(\)（）\-\.]/g, '').trim();
-                                const normTok = toNormalizedHiragana(cleanTok);
-                                const isMatched = normTok && normMatched && (normTok === normMatched || normMatched.includes(normTok) || normTok.includes(normMatched));
-                                if (isMatched) {
-                                  return (
-                                    <Text key={idx} style={{ color: '#10B981', fontWeight: '800' }}>
-                                      {tok}
-                                    </Text>
-                                  );
-                                }
-                                return (
-                                  <Text key={idx} style={{ color: colors.textMuted }}>
-                                    {tok}
-                                  </Text>
-                                );
-                              })}
-                            </Text>
-                          );
-                        })()}
-
-                        {/* Desglose On/Kun adicional para tarjetas de Kanji */}
-                        {(() => {
-                          let kanjiReadings: string | undefined;
-                          if (currentCard.auxiliaryInfo) {
-                            try {
-                              const aux = JSON.parse(currentCard.auxiliaryInfo);
-                              kanjiReadings = aux.kanjiReadings;
-                            } catch { }
-                          }
-                          if (!kanjiReadings || kanjiReadings === currentCard.displayReading) return null;
-                          const matched = evaluation?.matchedReading;
-                          if (!matched || !isJapanese) {
-                            return (
-                              <Text style={[styles.flipKanjiReadingsSub, { color: colors.textMuted }]} numberOfLines={1}>
-                                {kanjiReadings}
-                              </Text>
-                            );
-                          }
-                          const normMatched = toNormalizedHiragana(matched);
-                          const tokens = kanjiReadings.split(/([,、・•/|\s]+)/);
-                          return (
-                            <Text style={[styles.flipKanjiReadingsSub, { color: colors.textMuted }]} numberOfLines={1}>
-                              {tokens.map((tok, idx) => {
-                                const cleanTok = tok.replace(/^(on|kun|音|訓)[:：\s]*/i, '').replace(/[・~～\s\(\)（）\-\.]/g, '').trim();
-                                const normTok = toNormalizedHiragana(cleanTok);
-                                const isMatched = normTok && normMatched && (normTok === normMatched || normMatched.includes(normTok) || normTok.includes(normMatched));
-                                if (isMatched) {
-                                  return (
-                                    <Text key={idx} style={{ color: '#10B981', fontWeight: '800' }}>
-                                      {tok}
-                                    </Text>
-                                  );
-                                }
-                                return <Text key={idx} style={{ color: colors.textMuted }}>{tok}</Text>;
-                              })}
-                            </Text>
-                          );
-                        })()}
-
-                        {/* Desglose por sílaba Pinyin con círculos de porcentaje y barra de llenado (memoizado) */}
-                        {evaluation?.voiceScore?.breakdown && evaluation.voiceScore.breakdown.length > 0 && (
-                          <SyllableBreakdownView
-                            breakdown={evaluation.voiceScore.breakdown}
-                            colors={colors}
-                          />
-                        )}
-                      </>
-                    )}
-                    <Text style={[styles.flipBackLabel, { color: colors.textMuted }]}>Significado</Text>
-                    <Text style={[styles.flipBackMeaningText, { color: colors.text }]} numberOfLines={2}>
-                      {meaningsList.join(', ')}
-                    </Text>
-                  </View>
-                </>
-              )}
-            </Animated.View>
-          </View>
-
-          {/* Área Flotante Fuera de la Tarjeta: Micrófono (antes de responder) o Badge de Precisión (después de responder) */}
-          {studyMethod === 'voice' && (
+          {/* Debajo de la tarjeta: micrófono antes de responder; precisión (chino) después */}
+          {isVoice && (
             <View style={styles.voiceFloatingContainer}>
               {!isChecked ? (
                 <VoiceMicControl
                   isListening={isListening}
                   speechStatus={speechStatus}
-                  busyLabel={voiceSetupLabel}
-                  voiceProgressAnim={voiceProgressAnim}
-                  micPulseAnim={micPulseAnim}
+                  busyLabel={voice.setupLabel}
+                  voiceProgressAnim={voice.progressAnim}
+                  micPulseAnim={voice.pulseAnim}
                   colors={colors}
-                  onPress={() => {
-                    if (speechStatus === 'starting' || voiceSetupLabel) return;
-                    if (isListening) {
-                      speechService.stop();
-                      setIsListening(false);
-                      setSpeechStatus('idle');
-                      voiceProgressAnim.stopAnimation();
-                    } else {
-                      startVoiceListeningForCard(currentCard, lang);
-                    }
-                  }}
+                  onPress={() => voice.toggleMic(currentCard, lang)}
                 />
               ) : (
                 evaluation?.voiceScore && (
-                  <View style={styles.outsideVoiceScoreWrapper}>
-                    <View
-                      style={[
-                        styles.outsideVoiceScoreBadge,
-                        {
-                          backgroundColor:
-                            evaluation.voiceScore.score >= 90
-                              ? 'rgba(16, 185, 129, 0.12)'
-                              : evaluation.voiceScore.score >= 70
-                                ? 'rgba(245, 158, 11, 0.12)'
-                                : 'rgba(239, 68, 68, 0.12)',
-                          borderColor:
-                            evaluation.voiceScore.score >= 90
-                              ? '#10B981'
-                              : evaluation.voiceScore.score >= 70
-                                ? '#F59E0B'
-                                : colors.danger,
-                        },
-                      ]}
-                    >
-                      <Ionicons
-                        name="mic"
-                        size={20}
-                        color={
-                          evaluation.voiceScore.score >= 90
-                            ? '#10B981'
-                            : evaluation.voiceScore.score >= 70
-                              ? '#F59E0B'
-                              : colors.danger
-                        }
-                        style={{ marginRight: 8 }}
-                      />
-                      <Text
-                        style={[
-                          styles.outsideVoiceScoreText,
-                          {
-                            color:
-                              evaluation.voiceScore.score >= 90
-                                ? '#10B981'
-                                : evaluation.voiceScore.score >= 70
-                                  ? '#F59E0B'
-                                  : colors.danger,
-                          },
-                        ]}
-                      >
-                        {evaluation.voiceScore.label}
-                      </Text>
-                    </View>
-                  </View>
+                  <VoiceScoreBadge score={evaluation.voiceScore.score} label={evaluation.voiceScore.label} danger={colors.danger} />
                 )
               )}
             </View>
@@ -1750,159 +441,33 @@ export default function ReviewScreen() {
         </ScrollView>
       </View>
 
-      {/* Barra de cuenta regresiva visible solo cuando la tarjeta está dada vuelta en modo voz (acelerada por GPU a 60 FPS) */}
-      {studyMethod === 'voice' && isChecked && (
+      {/* Cuenta regresiva hasta la siguiente tarjeta (modo voz, con la respuesta a la vista) */}
+      {isVoice && isChecked && (
         <View style={styles.flipCountdownContainer}>
           <Animated.View
-            style={[
-              styles.flipCountdownBar,
-              {
-                backgroundColor: colors.primary,
-                transform: [
-                  {
-                    scaleX: flipCountdownAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0, 1],
-                    }),
-                  },
-                ],
-              },
-            ]}
+            style={[styles.flipCountdownBar, { backgroundColor: colors.primary, transform: [{ scaleX: autoAdvance.progress }] }]}
           />
         </View>
       )}
 
-      {/* Barra de Acciones Inferior */}
-      <View
-        style={[
-          styles.bottomBar,
-          {
-            backgroundColor: colors.surface,
-            borderTopColor: colors.border,
-            paddingBottom: Math.max(insets.bottom + 8, Spacing.md),
-          },
-          isCustomCard && styles.customBottomBar,
-        ]}
-      >
-        {isCustomCard ? (
-          !isChecked ? (
-            <View style={styles.customBottomBarContent}>
-              <TouchableOpacity
-                style={[styles.showAnswerBtn, { backgroundColor: '#10B981' }]}
-                activeOpacity={0.8}
-                onPress={handleShowCustomAnswer}
-              >
-                <Text style={styles.showAnswerBtnText}>Mostrar Respuesta</Text>
-                <Ionicons name="eye-outline" size={20} color="#FFF" style={{ marginLeft: 8 }} />
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={styles.customBottomBarContent}>
-              <Text style={[styles.customEvaluationPrompt, { color: colors.text }]}>
-                ¿Cuándo querés volver a repasarla?
-              </Text>
-              <View style={styles.customButtonRow}>
-                {/* 1. Pronto (Azul) */}
-                <TouchableOpacity
-                  style={[styles.customChoiceBtn, { backgroundColor: '#3B82F6' }, isProcessing && { opacity: 0.6 }]}
-                  activeOpacity={0.8}
-                  disabled={isProcessing}
-                  onPress={() => handleCustomCardAction('soon')}
-                >
-                  <Text style={styles.customChoiceTitle}>Pronto</Text>
-                  <Text style={styles.customChoiceSub}>En el medio</Text>
-                </TouchableOpacity>
-
-                {/* 2. Más tarde (Ámbar) */}
-                <TouchableOpacity
-                  style={[styles.customChoiceBtn, { backgroundColor: '#F59E0B' }, isProcessing && { opacity: 0.6 }]}
-                  activeOpacity={0.8}
-                  disabled={isProcessing}
-                  onPress={() => handleCustomCardAction('later')}
-                >
-                  <Text style={styles.customChoiceTitle}>Más tarde</Text>
-                  <Text style={styles.customChoiceSub}>Al final</Text>
-                </TouchableOpacity>
-
-                {/* 3. Otro día (Verde Esmeralda) */}
-                <TouchableOpacity
-                  style={[styles.customChoiceBtn, { backgroundColor: '#10B981' }, isProcessing && { opacity: 0.6 }]}
-                  activeOpacity={0.8}
-                  disabled={isProcessing}
-                  onPress={() => handleCustomCardAction('next_day')}
-                >
-                  <Text style={styles.customChoiceTitle}>Otro día</Text>
-                  <Text style={styles.customChoiceSub}>+1 día</Text>
-                </TouchableOpacity>
-
-                {/* 4. Nunca (Rojo) */}
-                <TouchableOpacity
-                  style={[styles.customChoiceBtn, { backgroundColor: '#EF4444' }, isProcessing && { opacity: 0.6 }]}
-                  activeOpacity={0.8}
-                  disabled={isProcessing}
-                  onPress={() => handleCustomCardAction('never')}
-                >
-                  <Text style={styles.customChoiceTitle}>Nunca</Text>
-                  <Text style={styles.customChoiceSub}>Quitar</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )
-        ) : studyMethod === 'voice' ? (
-          <View style={styles.actionButtonsRow}>
-            {isChecked ? (
-              <TouchableOpacity
-                style={[styles.nextBtn, { backgroundColor: colors.primary }]}
-                onPress={advanceToNextVoiceCard}
-              >
-                <Text style={styles.nextBtnText}>{t('review.nextCardNow')}</Text>
-                <Ionicons name="arrow-forward" size={18} color="#FFF" style={{ marginLeft: 6 }} />
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity
-                style={[styles.giveUpBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border, flex: 1 }]}
-                onPress={() => handleVoiceEvaluation(currentCard, false)}
-              >
-                <Text style={[styles.giveUpBtnText, { color: colors.textMuted }]}>{t('review.iDontKnow')}</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        ) : (
-          !isChecked ? (
-            <View style={styles.actionButtonsRow}>
-              <TouchableOpacity style={[styles.giveUpBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]} onPress={handleGiveUp}>
-                <Text style={[styles.giveUpBtnText, { color: colors.textMuted }]}>{t('review.iDontKnow')}</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={[styles.checkBtn, { backgroundColor: colors.primary }]} onPress={handleCheck}>
-                <Text style={styles.checkBtnText}>{t('review.check')}</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={styles.actionButtonsRow}>
-              <TouchableOpacity
-                style={[styles.nextBtn, { backgroundColor: colors.primary }, isProcessing && { opacity: 0.7 }]}
-                disabled={isProcessing}
-                onPress={handleNextCard}
-              >
-                {isProcessing ? (
-                  <ActivityIndicator color="#FFF" />
-                ) : (
-                  <>
-                    <Text style={styles.nextBtnText}>{t('review.nextCard')}</Text>
-                    <Ionicons
-                      name="arrow-forward"
-                      size={18}
-                      color="#FFF"
-                      style={{ marginLeft: 6 }}
-                    />
-                  </>
-                )}
-              </TouchableOpacity>
-            </View>
-          )
-        )}
-      </View>
+      <ReviewBottomBar
+        studyMethod={studyMethod}
+        isCustomCard={isCustomCard}
+        isChecked={isChecked}
+        isProcessing={isProcessing}
+        evaluation={evaluation}
+        bottomInset={insets.bottom}
+        colors={colors}
+        onShowCustomAnswer={handleShowCustomAnswer}
+        onCustomAction={handleCustomCardAction}
+        onVoiceGiveUp={() => voice.evaluate(currentCard, false)}
+        onMarkIncorrect={voice.markIncorrect}
+        onVoiceNext={voice.advance}
+        onGiveUp={handleGiveUp}
+        onCheck={handleCheck}
+        onNext={handleNextCard}
+      />
+      {voiceModelModal}
     </KeyboardAvoidingView>
   );
 }
@@ -1956,319 +521,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: Spacing.md,
   },
-  flipContainer: {
-    width: '100%',
-    position: 'relative',
-    minHeight: 330,
-    justifyContent: 'center',
-  },
-  quizCard: {
-    width: '100%',
-    minHeight: 330,
-    borderRadius: 24,
-    padding: Spacing.md,
-    borderWidth: 1.5,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backfaceVisibility: 'hidden',
-  },
-  quizCardBack: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    minHeight: 330,
-    borderRadius: 24,
-    padding: Spacing.md,
-    borderWidth: 1.5,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backfaceVisibility: 'hidden',
-  },
-  charIdeographic: {
-    ...Typography.chineseLarge,
-    textAlign: 'center',
-    paddingHorizontal: 8,
-    width: '100%',
-  },
-  charAlphabetic: {
-    fontWeight: 'bold',
-    textAlign: 'center',
-    paddingHorizontal: 8,
-    width: '100%',
-  },
-  flipTopStatusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: Spacing.sm,
-    width: '100%',
-  },
-  flipBadgeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 20,
-  },
-  flipBadgeText: {
-    fontSize: 13,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
-  },
-  voiceScoreRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  voiceScoreBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 20,
-    borderWidth: 1,
-  },
-  voiceScoreText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  flipReadingHeroBox: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginVertical: Spacing.xs,
-    width: '100%',
-  },
-  flipHeroReadingSmall: {
-    fontSize: 18,
-    fontWeight: '600',
-    letterSpacing: 1,
-    marginBottom: 2,
-    textAlign: 'center',
-  },
-  flipKanjiReadingsSub: {
-    fontSize: 12,
-    fontWeight: '500',
-    marginBottom: 6,
-    textAlign: 'center',
-    opacity: 0.85,
-  },
-  flipHeroWordLarge: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    letterSpacing: 1,
-    textAlign: 'center',
-  },
-  breakdownContainer: {
-    width: '100%',
-    marginVertical: 4,
-    alignItems: 'center',
-  },
-  breakdownSectionTitle: {
-    fontSize: 9,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    marginBottom: 4,
-  },
-  syllablesRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: 6,
-    width: '100%',
-  },
-  syllableCard: {
-    paddingVertical: 5,
-    paddingHorizontal: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    alignItems: 'center',
-    minWidth: 64,
-  },
-  syllableHeader: {
-    alignItems: 'center',
-    marginBottom: 2,
-  },
-  syllableChar: {
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  syllableText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  circleBox: {
-    width: 38,
-    height: 38,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginVertical: 2,
-  },
-  circleScoreTextContainer: {
-    position: 'absolute',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  circleScoreNumber: {
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  flipBackSectionBox: {
-    width: '100%',
-    padding: Spacing.sm,
-    borderRadius: 12,
-    marginVertical: 4,
-    alignItems: 'center',
-  },
-  flipBackLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    marginBottom: 2,
-    textTransform: 'uppercase',
-  },
-  flipBackMeaningText: {
-    fontSize: 16,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  flipAudioBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-    marginTop: Spacing.sm,
-  },
-  flipAudioBtnText: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  audioBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: Spacing.sm,
-    marginBottom: Spacing.md,
-    borderWidth: 1,
-  },
-  inputsSection: {
-    width: '100%',
-    marginTop: Spacing.sm,
-  },
-  inputGroup: {
-    marginBottom: Spacing.md,
-  },
-  inputLabel: {
-    ...Typography.bodySmall,
-    marginBottom: 6,
-    fontWeight: '600',
-  },
-  textInput: {
-    borderRadius: 12,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 12,
-    fontSize: 16,
-    borderWidth: 1,
-  },
-  feedbackSection: {
-    width: '100%',
-    marginTop: Spacing.sm,
-  },
-  resultBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: Spacing.md,
-    borderRadius: 12,
-    marginBottom: Spacing.md,
-  },
-  badgeSuccess: {
-    backgroundColor: '#10B981',
-  },
-  badgeWarning: {
-    backgroundColor: '#F59E0B',
-  },
-  badgeError: {
-    backgroundColor: '#EF4444',
-  },
-  resultBadgeText: {
-    color: '#FFF',
-    fontWeight: 'bold',
-    fontSize: 14,
-  },
-  answerBox: {
-    padding: Spacing.md,
-    borderRadius: 12,
-    marginBottom: Spacing.sm,
-    borderWidth: 1,
-  },
-  answerHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  answerLabel: {
-    fontSize: 12,
-    textTransform: 'uppercase',
-    fontWeight: '600',
-  },
-  correctTag: {
-    fontSize: 12,
-    color: '#10B981',
-    fontWeight: 'bold',
-  },
-  incorrectTag: {
-    fontSize: 12,
-    color: '#EF4444',
-    fontWeight: 'bold',
-  },
-  answerValue: {
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  userAnswerText: {
-    fontSize: 13,
-    marginTop: 4,
-    fontStyle: 'italic',
-  },
-  compoundsBox: {
-    padding: Spacing.sm,
-    borderRadius: 12,
-    marginTop: Spacing.xs,
-  },
-  compoundsTitle: {
-    fontSize: 11,
-    marginBottom: 4,
-  },
-  compoundRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: 2,
-  },
-  compChar: {
-    fontWeight: 'bold',
-    fontSize: 14,
-    marginRight: 4,
-  },
-  compPinyin: {
-    fontSize: 12,
-    marginRight: 4,
-  },
-  compMeaning: {
-    fontSize: 12,
-    flex: 1,
-  },
   flipCountdownContainer: {
     width: '100%',
     height: 4,
@@ -2281,304 +533,12 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     transformOrigin: 'left',
   },
-  bottomBar: {
-    padding: Spacing.md,
-    paddingBottom: 78,
-    borderTopWidth: 1,
-  },
-  actionButtonsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  giveUpBtn: {
-    flex: 1,
-    marginRight: Spacing.sm,
-    paddingVertical: 14,
-    borderRadius: 14,
-    alignItems: 'center',
-    borderWidth: 1,
-  },
-  giveUpBtnText: {
-    fontWeight: '600',
-    fontSize: 15,
-  },
-  checkBtn: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 14,
-    alignItems: 'center',
-  },
-  checkBtnText: {
-    color: '#FFF',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
-  nextBtn: {
-    flex: 1,
-    width: '100%',
-    minHeight: 50,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 15,
-    borderRadius: 14,
-  },
-  nextBtnText: {
-    color: '#FFF',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
-  optionsGuidanceText: {
-    position: 'absolute',
-    top: -26,
-    left: 0,
-    right: 0,
-    textAlign: 'center',
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  completedBox: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: Spacing.xl,
-    paddingBottom: 70,
-  },
-  completedIconBox: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: Spacing.lg,
-    borderWidth: 1,
-  },
-  completedTitle: {
-    ...Typography.h1,
-    marginBottom: Spacing.xs,
-    textAlign: 'center',
-  },
-  completedSub: {
-    ...Typography.body,
-    textAlign: 'center',
-    marginBottom: Spacing.xl,
-    lineHeight: 22,
-  },
-  primaryBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.md,
-    borderRadius: 14,
-    marginBottom: Spacing.md,
-    width: '100%',
-    justifyContent: 'center',
-  },
-  primaryBtnText: {
-    color: '#FFF',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
-  secondaryBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.md,
-    borderRadius: 14,
-    borderWidth: 1,
-    width: '100%',
-    justifyContent: 'center',
-  },
-  secondaryBtnText: {
-    fontWeight: '600',
-    fontSize: 16,
-  },
-  // Estilos del Selector Visual de Mazos en Cuadrícula ("cuadraditos")
-  selectionHeader: {
-    paddingHorizontal: Spacing.md,
-    marginBottom: Spacing.sm,
-  },
-  selectionTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
-  selectionTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  totalDuePill: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  totalDuePillText: {
-    color: '#FFF',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  selectionSub: {
-    ...Typography.bodySmall,
-    fontSize: 13,
-  },
-  cardConjugationTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    backgroundColor: 'rgba(59, 130, 246, 0.12)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-    marginTop: 5,
-  },
-  cardConjugationTagText: {
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  heroAllDecksCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginHorizontal: Spacing.md,
-    marginBottom: Spacing.md,
-    padding: Spacing.md,
-    borderRadius: 18,
-    ...Shadows.card,
-  },
-  heroLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  heroIconBox: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#FFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: Spacing.sm,
-  },
-  heroTextCol: {
-    flex: 1,
-  },
-  heroTitle: {
-    color: '#FFF',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
-  heroSub: {
-    color: 'rgba(255, 255, 255, 0.88)',
-    fontSize: 12,
-  },
-  gridColumnWrapper: {
-    gap: Spacing.sm,
-    paddingHorizontal: Spacing.md,
-    marginBottom: Spacing.sm,
-  },
-  gridContentContainer: {
-    paddingBottom: 100,
-  },
-  gridCard: {
-    flex: 1,
-    height: 156,
-    borderRadius: 18,
-    borderWidth: 1,
-    paddingHorizontal: Spacing.md,
-    paddingTop: 10,
-    paddingBottom: 8,
-    justifyContent: 'space-between',
-    ...Shadows.card,
-  },
-  gridCardTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  gridFlagEmoji: {
-    fontSize: 22,
-    includeFontPadding: false,
-  },
-  gridDueText: {
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  gridCardBody: {
-    marginVertical: Spacing.xs,
-  },
-  gridCardTitle: {
-    fontSize: 15,
-    fontWeight: 'bold',
-    lineHeight: 20,
-    marginBottom: 2,
-  },
-  gridCardSub: {
-    fontSize: 12,
-  },
-  gridCardFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingTop: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
-  },
-  gridCardActionText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  headerBackBtn: {
-    paddingRight: Spacing.xs,
-    paddingVertical: 2,
-    marginRight: 4,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  headerTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  headerBrandText: {
-    fontSize: 20,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-    flexShrink: 0,
-  },
-  headerBrandSep: {
-    fontSize: 18,
-    fontWeight: '600',
-    flexShrink: 0,
-  },
-  headerSubtitleText: {
-    fontSize: 17,
-    fontWeight: '600',
-    flexShrink: 1,
-  },
   deckBadgeContainer: {
     maxWidth: 140,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
   },
-  emptyGridContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: Spacing.xl,
-    paddingBottom: 80,
-  },
-  emptyGridTitle: {
-    ...Typography.h2,
-    marginTop: Spacing.md,
-    marginBottom: Spacing.xs,
-    textAlign: 'center',
-  },
-  emptyGridSub: {
-    ...Typography.bodySmall,
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  // Estilos del Modo Voz Manos Libres Flotante
   voiceFloatingContainer: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -2586,194 +546,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md,
     width: '100%',
     height: 155,
-  },
-  outsideVoiceScoreWrapper: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: '100%',
-  },
-  outsideVoiceScoreBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    borderRadius: 24,
-    borderWidth: 1.5,
-  },
-  outsideVoiceScoreText: {
-    fontSize: 16,
-    fontWeight: '700',
-    letterSpacing: 0.3,
-  },
-  // Estilos de tarjetas y flujo de Mazos Personalizados (Custom)
-  customFrontBox: {
-    flex: 1,
-    width: '100%',
-    justifyContent: 'space-between',
-  },
-  customBadgeRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-    width: '100%',
-  },
-  customDeckTypeBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 10,
-  },
-  customDeckTypeBadgeText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  customCardSpeakerBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  customFrontHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-    width: '100%',
-    marginBottom: 4,
-  },
-  customCleanSpeakerBtn: {
-    padding: 6,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  customQuestionScroll: {
-    flex: 1,
-    width: '100%',
-  },
-  customQuestionScrollContent: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-  },
-  customQuestionText: {
-    fontSize: 22,
-    fontWeight: '600',
-    textAlign: 'center',
-    lineHeight: 32,
-  },
-  customBackBox: {
-    flex: 1,
-    width: '100%',
-    justifyContent: 'space-between',
-  },
-  customBackQuestionPrompt: {
-    fontSize: 14,
-    fontWeight: '500',
-    marginTop: 2,
-    marginBottom: 10,
-    textAlign: 'center',
-    paddingHorizontal: 8,
-  },
-  customAnswerBox: {
-    flex: 1,
-    borderRadius: 16,
-    padding: Spacing.sm,
-    width: '100%',
-    justifyContent: 'center',
-    alignItems: 'center',
-    position: 'relative',
-  },
-  customAnswerSpeakerBtn: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    zIndex: 10,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'transparent',
-    elevation: 0,
-    shadowOpacity: 0,
-  },
-  customAnswerScroll: {
-    flex: 1,
-    width: '100%',
-  },
-  customAnswerScrollContent: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 36,
-    paddingBottom: 16,
-  },
-  customAnswerText: {
-    fontSize: 20,
-    fontWeight: '700',
-    textAlign: 'center',
-    lineHeight: 28,
-  },
-  customBottomBar: {
-    paddingTop: 6,
-    paddingHorizontal: Spacing.md,
-  },
-  customBottomBarContent: {
-    height: 82,
-    justifyContent: 'center',
-    width: '100%',
-  },
-  showAnswerBtn: {
-    width: '100%',
-    height: 52,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 14,
-    ...Shadows.card,
-  },
-  showAnswerBtnText: {
-    color: '#FFF',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  customEvaluationPrompt: {
-    fontSize: 13.5,
-    fontWeight: '700',
-    textAlign: 'center',
-    marginTop: 4,
-    marginBottom: 8,
-  },
-  customButtonRow: {
-    flexDirection: 'row',
-    gap: 6,
-    width: '100%',
-  },
-  customChoiceBtn: {
-    flex: 1,
-    paddingVertical: 10,
-    paddingHorizontal: 3,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...Shadows.card,
-  },
-  customChoiceTitle: {
-    color: '#FFF',
-    fontSize: 13,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  customChoiceSub: {
-    color: 'rgba(255, 255, 255, 0.85)',
-    fontSize: 9,
-    fontWeight: '600',
-    marginTop: 2,
-    textAlign: 'center',
   },
 });

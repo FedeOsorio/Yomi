@@ -1,9 +1,10 @@
-import React, { memo } from 'react';
+import { memo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Spacing } from '../../constants/theme';
 import { DueCardWithContext, checkVoiceMatch } from '../../../lib/srs-engine';
 import { getEffectiveCardLanguage } from '../../../lib/japanese-utils';
 import { useReviewStore } from '../../stores/reviewStore';
+import { useTranslation } from '../../i18n';
 
 export interface VoiceTranscriptAreaProps {
   transcript?: string;
@@ -26,6 +27,7 @@ export const VoiceTranscriptArea = memo(function VoiceTranscriptArea({
   feedback,
   colors,
 }: VoiceTranscriptAreaProps) {
+  const { t } = useTranslation();
   const storeTranscript = useReviewStore((s) => s.speechTranscript);
   const transcript = (propTranscript ?? storeTranscript ?? '').trim();
 
@@ -41,7 +43,7 @@ export const VoiceTranscriptArea = memo(function VoiceTranscriptArea({
           {feedback ? <Text style={[styles.feedback, { color: colors.textMuted }]}>{feedback}</Text> : null}
         </View>
       ) : (
-        <Text style={[styles.placeholder, { color: colors.textMuted }]}>Pronuncia en voz alta...</Text>
+        <Text style={[styles.placeholder, { color: colors.textMuted }]}>{t('review.listeningPrompt')}</Text>
       )}
     </View>
   );

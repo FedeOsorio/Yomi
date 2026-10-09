@@ -31,9 +31,11 @@ import {
 import { useTheme } from '../../providers/ThemeProvider';
 import { FOLDER_PALETTE } from '../components/FolderFilterBar';
 import { Shadows, Spacing, Typography } from '../constants/theme';
+import { useTranslation } from '../i18n';
 
 export default function FoldersScreen() {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
@@ -99,7 +101,7 @@ export default function FoldersScreen() {
   const handleSubmitDialog = async () => {
     const trimmed = folderNameInput.trim();
     if (!trimmed) {
-      Alert.alert('Atención', 'Ingresa un nombre para la carpeta.');
+      Alert.alert(t('common.attention'), t('folders.folderNameRequired'));
       return;
     }
 
@@ -115,7 +117,7 @@ export default function FoldersScreen() {
       notifyDataChanged();
     } catch (e: any) {
       console.error('Error al guardar carpeta:', e);
-      Alert.alert('Error', `No se pudo guardar la carpeta: ${e?.message || 'Error desconocido'}`);
+      Alert.alert(t('common.error'), `${t('folders.folderSaveError')}: ${e?.message || t('common.error')}`);
     } finally {
       setIsSubmitting(false);
     }
@@ -123,12 +125,12 @@ export default function FoldersScreen() {
 
   const handlePromptDelete = (folder: Folder) => {
     Alert.alert(
-      'Eliminar Carpeta',
-      `¿Deseas eliminar "${folder.name}"? Los mazos no se borrarán, solo quedarán sin carpeta asignada.`,
+      t('folders.deleteFolder'),
+      t('folders.deleteFolderNotice', { name: folder.name }),
       [
-        { text: 'Cancelar', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Eliminar',
+          text: t('common.delete'),
           style: 'destructive',
           onPress: async () => {
             try {
@@ -136,7 +138,7 @@ export default function FoldersScreen() {
               await loadData();
               notifyDataChanged();
             } catch (err: any) {
-              Alert.alert('Error', 'No se pudo eliminar la carpeta.');
+              Alert.alert(t('common.error'), t('folders.deleteFolderError'));
             }
           },
         },
@@ -180,7 +182,7 @@ export default function FoldersScreen() {
           onPress={() => router.back()}
           style={styles.backBtn}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          accessibilityLabel="Volver"
+          accessibilityLabel={t('common.back')}
         >
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
@@ -188,14 +190,14 @@ export default function FoldersScreen() {
         <View style={styles.brandTitleContainer}>
           <Text style={[styles.brandText, { color: colors.primary }]}>Yomi</Text>
           <Text style={[styles.brandSep, { color: colors.textMuted }]}> • </Text>
-          <Text style={[styles.title, { color: colors.text }]}>Administrar Carpetas</Text>
+          <Text style={[styles.title, { color: colors.text }]}>{t('folders.manageFolders')}</Text>
         </View>
 
         <TouchableOpacity
           onPress={openCreateDialog}
           style={styles.headerAddBtn}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          accessibilityLabel="Crear carpeta"
+          accessibilityLabel={t('folders.createFolder')}
         >
           <Ionicons name="add" size={26} color={colors.primary} />
         </TouchableOpacity>
@@ -216,7 +218,7 @@ export default function FoldersScreen() {
         >
           {/* Subtítulo explicativo */}
           <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
-            Organiza y reordena tus carpetas. Se mostrarán en este orden en tu biblioteca de mazos.
+            {t('folders.organizeSubtitle')}
           </Text>
 
           {/* Botón "+ Crear nueva carpeta" */}
@@ -235,7 +237,7 @@ export default function FoldersScreen() {
               <Ionicons name="add" size={20} color={colors.primary} />
             </View>
             <Text style={[styles.createActionText, { color: colors.primary }]}>
-              Crear nueva carpeta
+              {t('folders.newFolder')}
             </Text>
           </TouchableOpacity>
 
@@ -244,10 +246,10 @@ export default function FoldersScreen() {
             <View style={styles.emptyBox}>
               <Ionicons name="folder-open-outline" size={56} color={colors.textMuted} />
               <Text style={[styles.emptyTitle, { color: colors.text }]}>
-                No tienes carpetas creadas aún
+                {t('folders.noFoldersTitle')}
               </Text>
               <Text style={[styles.emptySub, { color: colors.textMuted }]}>
-                Crea una carpeta para agrupar tus mazos por idioma, temáticas o nivel de estudio.
+                {t('folders.noFoldersSub')}
               </Text>
             </View>
           ) : (
@@ -292,7 +294,7 @@ export default function FoldersScreen() {
                           {folder.name}
                         </Text>
                         <Text style={[styles.folderCount, { color: colors.textMuted }]}>
-                          {count} {count === 1 ? 'mazo' : 'mazos'}
+                          {t('folders.deckCount', { count })}
                         </Text>
                       </View>
                     </View>
@@ -304,7 +306,7 @@ export default function FoldersScreen() {
                         disabled={isFirst}
                         onPress={() => handleMoveFolder(index, 'up')}
                         hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
-                        accessibilityLabel="Subir posición"
+                        accessibilityLabel="Up"
                       >
                         <Ionicons
                           name="chevron-up"
@@ -318,7 +320,7 @@ export default function FoldersScreen() {
                         disabled={isLast}
                         onPress={() => handleMoveFolder(index, 'down')}
                         hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
-                        accessibilityLabel="Bajar posición"
+                        accessibilityLabel="Down"
                       >
                         <Ionicons
                           name="chevron-down"
@@ -331,7 +333,7 @@ export default function FoldersScreen() {
                         style={styles.actionBtn}
                         onPress={() => openEditDialog(folder)}
                         hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
-                        accessibilityLabel="Editar carpeta"
+                        accessibilityLabel={t('folders.renameFolder')}
                       >
                         <Ionicons name="pencil-outline" size={18} color={colors.textMuted} />
                       </TouchableOpacity>
@@ -340,7 +342,7 @@ export default function FoldersScreen() {
                         style={styles.actionBtn}
                         onPress={() => handlePromptDelete(folder)}
                         hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
-                        accessibilityLabel="Eliminar carpeta"
+                        accessibilityLabel={t('folders.deleteFolder')}
                       >
                         <Ionicons name="trash-outline" size={18} color={colors.danger} />
                       </TouchableOpacity>
@@ -390,7 +392,7 @@ export default function FoldersScreen() {
                   <Ionicons name="folder" size={20} color={selectedColor} />
                 </View>
                 <Text style={[styles.dialogTitle, { color: colors.text }]}>
-                  {dialogMode === 'create' ? 'Nueva Carpeta' : 'Editar Carpeta'}
+                  {dialogMode === 'create' ? t('folders.newFolder') : t('folders.renameFolder')}
                 </Text>
               </View>
 
@@ -404,7 +406,7 @@ export default function FoldersScreen() {
                     color: colors.text,
                   },
                 ]}
-                placeholder="Ej. Vocabulario N5, Gramática..."
+                placeholder={t('folders.folderPlaceholder')}
                 placeholderTextColor={colors.textMuted}
                 value={folderNameInput}
                 onChangeText={setFolderNameInput}
@@ -417,7 +419,7 @@ export default function FoldersScreen() {
               {/* Paleta de colores pastel */}
               <View style={styles.paletteSection}>
                 <Text style={[styles.paletteLabel, { color: colors.textMuted }]}>
-                  Color de la carpeta
+                  {t('folders.folderColorLabel')}
                 </Text>
                 <View style={styles.colorPaletteRow}>
                   {FOLDER_PALETTE.map((color) => {
@@ -456,7 +458,7 @@ export default function FoldersScreen() {
                   disabled={isSubmitting}
                 >
                   <Text style={[styles.dialogBtnCancelText, { color: colors.text }]}>
-                    Cancelar
+                    {t('common.cancel')}
                   </Text>
                 </TouchableOpacity>
 
@@ -473,7 +475,7 @@ export default function FoldersScreen() {
                     <ActivityIndicator size="small" color="#FFF" />
                   ) : (
                     <Text style={styles.dialogBtnConfirmText}>
-                      {dialogMode === 'create' ? 'Crear' : 'Guardar'}
+                      {dialogMode === 'create' ? t('decks.createBtn') : t('common.save')}
                     </Text>
                   )}
                 </TouchableOpacity>

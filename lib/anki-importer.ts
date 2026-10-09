@@ -10,6 +10,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as SQLite from 'expo-sqlite';
 import { unzipSync } from 'fflate';
 import { getKanjiEssentialReading } from './jlpt-data';
+import { parseAux } from './word-aux';
 
 export interface RawImportRow {
   [key: string]: string;
@@ -494,13 +495,8 @@ export function exportDeckToYomiFormat(
         meaningsArray = [c.meanings];
       }
 
-      let selected: string[] | undefined;
-      if (c.auxiliaryInfo) {
-        try {
-          const aux = JSON.parse(c.auxiliaryInfo);
-          if (Array.isArray(aux.selectedMeanings)) selected = aux.selectedMeanings;
-        } catch { }
-      }
+      const auxSelected = parseAux(c.auxiliaryInfo).selectedMeanings;
+      const selected: string[] | undefined = Array.isArray(auxSelected) ? auxSelected : undefined;
 
       return {
         text: c.simplified,

@@ -1,7 +1,8 @@
-import React, { memo } from 'react';
+import { memo } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Spacing, Typography } from '../../constants/theme';
+import { useTranslation } from '../../i18n';
 
 export interface SessionSummaryViewProps {
   sessionCompleted: boolean;
@@ -27,6 +28,7 @@ export const SessionSummaryView = memo(function SessionSummaryView({
   onExitSession,
   onPracticeAll,
 }: SessionSummaryViewProps) {
+  const { t } = useTranslation();
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: Spacing.sm }]}>
       <View style={styles.completedBox}>
@@ -34,12 +36,12 @@ export const SessionSummaryView = memo(function SessionSummaryView({
           <Ionicons name="trophy" size={54} color={colors.primary} />
         </View>
         <Text style={[styles.completedTitle, { color: colors.text }]}>
-          {sessionCompleted ? '¡Sesión completada!' : '¡Mazo al día!'}
+          {sessionCompleted ? t('review.completedTitle') : t('review.deckCompletedTitle')}
         </Text>
         <Text style={[styles.completedSub, { color: colors.textMuted }]}>
           {sessionCompleted
-            ? `Completaste la verificación de ${sessionCount} tarjeta(s) en "${selectedDeckName}".`
-            : `No tienes tarjetas pendientes de repaso en "${selectedDeckName}".`}
+            ? t('review.sessionCompletedSub', { count: sessionCount, name: selectedDeckName })
+            : t('review.deckCompletedSub', { name: selectedDeckName })}
         </Text>
 
         <TouchableOpacity
@@ -48,7 +50,7 @@ export const SessionSummaryView = memo(function SessionSummaryView({
           activeOpacity={0.8}
         >
           <Ionicons name="albums-outline" size={20} color="#FFF" style={{ marginRight: 6 }} />
-          <Text style={styles.primaryBtnText}>Volver a mis mazos</Text>
+          <Text style={styles.primaryBtnText}>{t('review.backToDecks')}</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -56,7 +58,7 @@ export const SessionSummaryView = memo(function SessionSummaryView({
           onPress={onPracticeAll}
           activeOpacity={0.8}
         >
-          <Text style={[styles.secondaryBtnText, { color: colors.primary }]}>Practicar todo el mazo libremente</Text>
+          <Text style={[styles.secondaryBtnText, { color: colors.primary }]}>{t('review.practiceAll')}</Text>
         </TouchableOpacity>
       </View>
     </View>
