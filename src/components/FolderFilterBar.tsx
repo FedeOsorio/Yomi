@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRouter } from 'expo-router';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { Dimensions, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
+import Animated, { Easing, FadeIn, FadeOut, LinearTransition, ZoomIn, ZoomOut } from 'react-native-reanimated';
 import { Folder } from '../../lib/deck-service';
 import { useTheme } from '../../providers/ThemeProvider';
 import { Shadows, Spacing } from '../constants/theme';
@@ -96,11 +96,12 @@ export function FolderFilterBar({
             contentContainerStyle={styles.scrollList}
             keyboardShouldPersistTaps="handled"
           >
-            {folders.map((folder) => (
+            {folders.map((folder, index) => (
               <Animated.View
                 key={folder.id}
-                entering={FadeIn.duration(160)}
-                exiting={FadeOut.duration(100)}
+                // Aparecen pequeñas y crecen desde el centro, una tras otra, sin rebote (como en Samsung Notes)
+                entering={ZoomIn.delay(Math.min(index, 6) * 35).duration(240).easing(Easing.out(Easing.cubic))}
+                exiting={ZoomOut.duration(140)}
                 layout={LinearTransition.duration(180)}
               >
                 <FolderCard
@@ -199,7 +200,7 @@ const styles = StyleSheet.create({
   },
   scrollList: {
     paddingHorizontal: Spacing.md,
-    gap: 5,
+    gap: 8,
     alignItems: 'flex-start',
   },
 

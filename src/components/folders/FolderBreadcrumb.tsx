@@ -1,20 +1,19 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Fragment, useRef } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity } from 'react-native';
-import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Folder } from '../../../lib/deck-service';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { Spacing } from '../../constants/theme';
 import { useTranslation } from '../../i18n';
 
-/** Ruta "Inicio › Carpeta › Subcarpeta". Cada tramo se puede tocar para volver ahí. */
+/** Ruta "Inicio › Carpeta › Subcarpeta" arriba del contenido de la carpeta. Cada tramo se puede tocar para volver ahí. */
 export function FolderBreadcrumb({ path, onNavigate }: { path: Folder[]; onNavigate: (folderId: string | null) => void }) {
   const { t } = useTranslation();
   const { colors } = useTheme();
   const scrollRef = useRef<ScrollView>(null);
 
   return (
-    <Animated.View entering={FadeIn.duration(160)} exiting={FadeOut.duration(120)}>
+    <View>
       <ScrollView
         ref={scrollRef}
         horizontal
@@ -23,7 +22,7 @@ export function FolderBreadcrumb({ path, onNavigate }: { path: Folder[]; onNavig
         onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
       >
         <TouchableOpacity style={styles.crumb} onPress={() => onNavigate(null)} hitSlop={{ top: 8, bottom: 8 }}>
-          <Ionicons name="home-outline" size={14} color={colors.textMuted} />
+          <Ionicons name="home-outline" size={15} color={colors.textMuted} />
           <Text style={[styles.text, { color: colors.textMuted }]}>{t('folders.home')}</Text>
         </TouchableOpacity>
         {path.map((folder, i) => {
@@ -49,7 +48,7 @@ export function FolderBreadcrumb({ path, onNavigate }: { path: Folder[]; onNavig
           );
         })}
       </ScrollView>
-    </Animated.View>
+    </View>
   );
 }
 
@@ -57,14 +56,14 @@ const styles = StyleSheet.create({
   content: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: Spacing.md,
+    paddingHorizontal: Spacing.md - 7, // el texto "Inicio" queda alineado con las carpetas
     paddingTop: Spacing.sm,
   },
   crumb: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    paddingHorizontal: 8,
+    paddingHorizontal: 7,
     paddingVertical: 5,
     borderRadius: 10,
     maxWidth: 180,
@@ -73,7 +72,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 1,
   },
   text: {
-    fontSize: 13.5,
+    fontSize: 15,
     fontWeight: '600',
   },
   current: {

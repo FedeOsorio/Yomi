@@ -1,23 +1,18 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../../providers/ThemeProvider';
-import { View, Text, StyleSheet, Platform, Pressable } from 'react-native';
+import { View, StyleSheet, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getFloatingTabBarStyle } from '../../constants/theme';
 import { useTranslation } from '../../i18n';
+import { YomiHeaderTitle } from '../../components/YomiHeaderTitle';
 
 export default function TabLayout() {
   const { colors, isDark } = useTheme();
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
 
-  const renderYomiHeaderTitle = (subtitle: string) => (
-    <View style={styles.headerTitleRow}>
-      <Text style={[styles.brandText, { color: colors.primary }]}>Yomi</Text>
-      <Text style={[styles.separatorText, { color: colors.textMuted }]}> • </Text>
-      <Text style={[styles.subtitleText, { color: colors.text }]}>{subtitle}</Text>
-    </View>
-  );
+  const renderYomiHeaderTitle = (subtitle: string) => <YomiHeaderTitle subtitle={subtitle} />;
 
   // Botón adaptativo para la barra flotante con pulsación redondeada circular (no cuadrada)
   const AdaptiveTabButton = (props: any) => {
@@ -107,23 +102,6 @@ export default function TabLayout() {
 }
 
 const styles = StyleSheet.create({
-  headerTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  brandText: {
-    fontSize: 20,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  separatorText: {
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  subtitleText: {
-    fontSize: 17,
-    fontWeight: '600',
-  },
   tabCellWrapper: {
     flex: 1,
     height: '100%',

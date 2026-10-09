@@ -246,143 +246,146 @@ export default function HomeScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      {currentFolderId && <FolderBreadcrumb path={currentPath} onNavigate={setCurrentFolderId} />}
+      {/* Cada nivel es una "página": al cambiar de carpeta se reemplaza entera (ruta, carpetas y
+          mazos a la vez, sin parpadeos ni desplazamientos) y las carpetas crecen desde el centro. */}
+      <Animated.View key={currentFolderId ?? 'root'} entering={FadeIn.duration(180)} style={{ flex: 1 }}>
+        {currentFolderId && <FolderBreadcrumb path={currentPath} onNavigate={setCurrentFolderId} />}
 
-      {/* Carpetas del nivel actual, estilo Samsung Notes */}
-      <FolderFilterBar
-        folders={visibleFolders}
-        deckCounts={deckCounts}
-        subfolderCounts={subfolderCounts}
-        onOpenFolder={(folder) => setCurrentFolderId(folder.id)}
-        onFolderLongPress={folderManager.openActions}
-        onCreateFolder={() => folderManager.openCreate(currentFolderId)}
-      />
+        {/* Carpetas del nivel actual, estilo Samsung Notes */}
+        <FolderFilterBar
+          folders={visibleFolders}
+          deckCounts={deckCounts}
+          subfolderCounts={subfolderCounts}
+          onOpenFolder={(folder) => setCurrentFolderId(folder.id)}
+          onFolderLongPress={folderManager.openActions}
+          onCreateFolder={() => folderManager.openCreate(currentFolderId)}
+        />
 
-      {displayedDecks.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Ionicons
-            name={currentFolderId ? 'folder-open-outline' : 'albums-outline'}
-            size={64}
-            color={colors.textMuted}
-          />
-          <Text style={[styles.emptyText, { color: colors.textMuted }]}>
-            {currentFolderId
-              ? t('decks.emptyNoDecksInFolder')
-              : t('decks.emptyNoDecks')}
-          </Text>
-          <Text style={[styles.emptySubtext, { color: colors.textMuted }]}>
-            {currentFolderId
-              ? t('decks.emptyNoDecksInFolderSub')
-              : t('decks.emptyNoDecksSub')}
-          </Text>
-        </View>
-      ) : (
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={{
-            paddingHorizontal: Spacing.md,
-            paddingTop: visibleFolders.length > 0 ? 0 : Spacing.md,
-            paddingBottom: Math.max(tabBottomMargin + 64, 80),
-          }}
-          style={{ flex: 1, overflow: 'visible' }}
-        >
-          {displayedDecks.map((item) => {
-            const isCustom = item.type === 'custom';
-            const langMeta = ALL_LANGUAGES.find((l) => l.code === item.languageCode);
-            // La insignia de carpeta solo hace falta en Inicio (dentro de una carpeta todos son de ella)
-            const folder = currentFolderId ? undefined : folders.find((f) => f.id === item.folderId);
+        {displayedDecks.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <Ionicons
+              name={currentFolderId ? 'folder-open-outline' : 'albums-outline'}
+              size={64}
+              color={colors.textMuted}
+            />
+            <Text style={[styles.emptyText, { color: colors.textMuted }]}>
+              {currentFolderId
+                ? t('decks.emptyNoDecksInFolder')
+                : t('decks.emptyNoDecks')}
+            </Text>
+            <Text style={[styles.emptySubtext, { color: colors.textMuted }]}>
+              {currentFolderId
+                ? t('decks.emptyNoDecksInFolderSub')
+                : t('decks.emptyNoDecksSub')}
+            </Text>
+          </View>
+        ) : (
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{
+              paddingHorizontal: Spacing.md,
+              paddingTop: visibleFolders.length > 0 ? 0 : Spacing.md,
+              paddingBottom: Math.max(tabBottomMargin + 64, 80),
+            }}
+            style={{ flex: 1, overflow: 'visible' }}
+          >
+            {displayedDecks.map((item) => {
+              const isCustom = item.type === 'custom';
+              const langMeta = ALL_LANGUAGES.find((l) => l.code === item.languageCode);
+              // La insignia de carpeta solo hace falta en Inicio (dentro de una carpeta todos son de ella)
+              const folder = currentFolderId ? undefined : folders.find((f) => f.id === item.folderId);
 
-            return (
-              <Animated.View
-                key={item.id}
-                layout={LinearTransition.duration(220)}
-                entering={FadeIn.duration(200)}
-                exiting={FadeOut.duration(160)}
-                style={{ overflow: 'visible' }}
-              >
-                <TouchableOpacity
-                  style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
-                  activeOpacity={0.7}
-                  onPress={() => router.push(`/deck/${item.id}`)}
-                  onLongPress={() => handleDeckLongPress(item)}
+              return (
+                <Animated.View
+                  key={item.id}
+                  layout={LinearTransition.duration(220)}
+                  exiting={FadeOut.duration(160)}
+                  style={{ overflow: 'visible' }}
                 >
-                  <View style={styles.cardContent}>
-                    <View
-                      style={[
-                        styles.flagBox,
-                        {
-                          backgroundColor: isCustom
-                            ? 'rgba(16, 185, 129, 0.15)'
-                            : 'rgba(59, 130, 246, 0.15)',
-                        },
-                      ]}
-                    >
-                      {isCustom ? (
-                        <Ionicons name="layers" size={22} color="#10B981" />
-                      ) : (
-                        <Text style={styles.flagText}>{langMeta?.flag || '🌐'}</Text>
-                      )}
-                    </View>
-                    <View style={styles.deckInfoText}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Text
-                          style={[styles.name, { color: colors.text }]}
-                          numberOfLines={1}
-                          adjustsFontSizeToFit={true}
-                          minimumFontScale={0.75}
-                        >
-                          {item.name}
-                        </Text>
-                        {folder && (
-                          <View
-                            style={[
-                              styles.folderBadge,
-                              {
-                                backgroundColor: folder.color
-                                  ? `${folder.color}22`
-                                  : colors.surfaceHighlight,
-                                borderColor: folder.color
-                                  ? `${folder.color}44`
-                                  : 'transparent',
-                                borderWidth: folder.color ? 1 : 0,
-                              },
-                            ]}
-                          >
-                            <Ionicons
-                              name="folder-outline"
-                              size={10}
-                              color={folder.color || colors.primary}
-                            />
-                            <Text
-                              style={[
-                                styles.folderBadgeText,
-                                { color: folder.color || colors.primary },
-                              ]}
-                              numberOfLines={1}
-                            >
-                              {folder.name}
-                            </Text>
-                          </View>
+                  <TouchableOpacity
+                    style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                    activeOpacity={0.7}
+                    onPress={() => router.push(`/deck/${item.id}`)}
+                    onLongPress={() => handleDeckLongPress(item)}
+                  >
+                    <View style={styles.cardContent}>
+                      <View
+                        style={[
+                          styles.flagBox,
+                          {
+                            backgroundColor: isCustom
+                              ? 'rgba(16, 185, 129, 0.15)'
+                              : 'rgba(59, 130, 246, 0.15)',
+                          },
+                        ]}
+                      >
+                        {isCustom ? (
+                          <Ionicons name="layers" size={22} color="#10B981" />
+                        ) : (
+                          <Text style={styles.flagText}>{langMeta?.flag || '🌐'}</Text>
                         )}
                       </View>
-                      <Text style={[styles.subtext, { color: colors.textMuted }]} numberOfLines={1}>
-                        {isCustom ? t('decks.custom') : (langMeta?.label || t('decks.languages'))} • {item.wordCount}{' '}
-                        {item.wordCount === 1
-                          ? (isCustom ? t('decks.cardSingular') : t('decks.wordSingular'))
-                          : (isCustom ? t('decks.cardPlural') : t('decks.wordPlural'))}
-                      </Text>
+                      <View style={styles.deckInfoText}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Text
+                            style={[styles.name, { color: colors.text }]}
+                            numberOfLines={1}
+                            adjustsFontSizeToFit={true}
+                            minimumFontScale={0.75}
+                          >
+                            {item.name}
+                          </Text>
+                          {folder && (
+                            <View
+                              style={[
+                                styles.folderBadge,
+                                {
+                                  backgroundColor: folder.color
+                                    ? `${folder.color}22`
+                                    : colors.surfaceHighlight,
+                                  borderColor: folder.color
+                                    ? `${folder.color}44`
+                                    : 'transparent',
+                                  borderWidth: folder.color ? 1 : 0,
+                                },
+                              ]}
+                            >
+                              <Ionicons
+                                name="folder-outline"
+                                size={10}
+                                color={folder.color || colors.primary}
+                              />
+                              <Text
+                                style={[
+                                  styles.folderBadgeText,
+                                  { color: folder.color || colors.primary },
+                                ]}
+                                numberOfLines={1}
+                              >
+                                {folder.name}
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                        <Text style={[styles.subtext, { color: colors.textMuted }]} numberOfLines={1}>
+                          {isCustom ? t('decks.custom') : (langMeta?.label || t('decks.languages'))} • {item.wordCount}{' '}
+                          {item.wordCount === 1
+                            ? (isCustom ? t('decks.cardSingular') : t('decks.wordSingular'))
+                            : (isCustom ? t('decks.cardPlural') : t('decks.wordPlural'))}
+                        </Text>
+                      </View>
                     </View>
-                  </View>
 
-                  <View style={styles.cardRight}>
-                    <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-                  </View>
-                </TouchableOpacity>
-              </Animated.View>
-            );
-          })}
-        </ScrollView>
-      )}
+                    <View style={styles.cardRight}>
+                      <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+                    </View>
+                  </TouchableOpacity>
+                </Animated.View>
+              );
+            })}
+          </ScrollView>
+        )}
+      </Animated.View>
 
       {/* Floating Action Button (+) posicionado dinámicamente a 16px sobre el tope real de la barra */}
       <TouchableOpacity
