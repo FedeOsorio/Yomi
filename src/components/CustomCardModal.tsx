@@ -30,7 +30,10 @@ import { speechService } from '../../lib/speech-recognition-service';
 import { saveCustomCard, updateCustomCard } from '../../lib/word-service';
 import { useTheme } from '../../providers/ThemeProvider';
 import { Shadows, Spacing, Typography } from '../constants/theme';
-import { useTranslation } from '../i18n';
+import { getCurrentUserLanguage, useTranslation } from '../i18n';
+
+/** Idioma de la app → idioma del dictado. */
+const DICTATION_LOCALES: Record<string, string> = { es: 'es-ES', en: 'en-US', ja: 'ja-JP', pt: 'pt-BR' };
 
 const TEXT_AREA_HEIGHT = 132;
 const SWAP_DURATION = 700;
@@ -71,7 +74,7 @@ export function CustomCardModal({
   const isSwappingShared = useSharedValue(false);
   const travelDistanceShared = useSharedValue(117); // 212 * 0.55 aprox
   const swapInFlightRef = useRef(false);
-  const midSwapTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const midSwapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isSwapping, setIsSwapping] = useState(false);
   const slotMetricsRef = useRef({
     question: { containerY: 0 },
@@ -264,7 +267,9 @@ export function CustomCardModal({
 
     setListeningTarget(target);
 
-    await speechService.start('es-ES', {
+    // El dictado sigue el idioma de la app y usa siempre el reconocedor nativo
+    // (el modelo offline es solo para evaluar el repaso).
+    await speechService.start(DICTATION_LOCALES[getCurrentUserLanguage()] ?? 'es-ES', {
       onResult: (transcript, isFinal) => {
         const trimmed = transcript.trim();
         if (!trimmed) return;
@@ -288,7 +293,7 @@ export function CustomCardModal({
       onEnd: () => {
         setListeningTarget(null);
       },
-    });
+    }, { preferredEngine: 'native' });
   };
 
   const finishSwap = (newQuestion: string, newAnswer: string) => {

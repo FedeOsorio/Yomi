@@ -2,7 +2,7 @@
   "expo": {
     "name": "Yomi",
     "slug": "Yomi",
-    "version": "0.3.208",
+    "version": "0.4.0",
     "orientation": "default",
     "scheme": [
       "yomi",
@@ -12,7 +12,7 @@
     "userInterfaceStyle": "automatic",
     "android": {
       "package": "com.kuyi.yomi",
-      "versionCode": 30,
+      "versionCode": 31,
       "adaptiveIcon": {
         "backgroundColor": "#2c76bc",
         "foregroundImage": "./assets/images/icon.png"
@@ -74,11 +74,11 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#2c76bc",
+          "backgroundColor": "#2b75bb",
           "image": "./assets/images/splash-icon.png",
           "resizeMode": "contain",
           "dark": {
-            "backgroundColor": "#2c76bc"
+            "backgroundColor": "#2b75bb"
           }
         }
       ],

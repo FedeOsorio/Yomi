@@ -10,6 +10,7 @@ import { OTAUpdateOverlay } from '../components/OTAUpdateOverlay';
 import { useIncomingFileHandler } from '../../lib/incoming-file-service';
 import { useInAppUpdates } from '../hooks/useInAppUpdates';
 import { useGoogleDriveStore } from '../stores/googleDriveStore';
+import { useTranslation } from '../i18n';
 
 WebBrowser.maybeCompleteAuthSession();
 // Desactivar freeze para evitar parpadeos y retrasos de render en transiciones con React 19
@@ -17,6 +18,7 @@ enableFreeze(false);
 
 function RootStack() {
   const { colors } = useTheme();
+  const { t } = useTranslation();
 
   return (
     <Stack
@@ -28,7 +30,7 @@ function RootStack() {
       }}
     >
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen name="search/picker" options={{ presentation: 'modal', title: 'Seleccionar Resultados' }} />
+      <Stack.Screen name="search/picker" options={{ presentation: 'modal', title: t('search.pickerTitle') }} />
       <Stack.Screen name="deck/[id]" options={{ headerShown: false }} />
       <Stack.Screen name="deck/import" options={{ headerShown: false }} />
       <Stack.Screen name="word/[id]" options={{ headerShown: false }} />

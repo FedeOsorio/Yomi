@@ -38,6 +38,7 @@ import {
 } from '../../lib/word-service';
 import { useTheme } from '../../providers/ThemeProvider';
 import { Shadows, Spacing } from '../constants/theme';
+import { useTranslation } from '../i18n';
 
 interface ConjugationPracticeModalProps {
   visible: boolean;
@@ -60,7 +61,7 @@ export interface FormPromptDetails {
   explanation: string;
 }
 
-const FORM_OPTIONS: Array<{ key: ConjugationFilterForm; label: string; suffix: string }> = [
+export const FORM_OPTIONS: Array<{ key: ConjugationFilterForm; label: string; suffix: string }> = [
   { key: 'all', label: 'Aleatorio (Todas)', suffix: '' },
   { key: 'te', label: 'Forma -te', suffix: '' },
   { key: 'nakute', label: 'Forma -te negativa', suffix: '' },
@@ -74,7 +75,7 @@ const FORM_OPTIONS: Array<{ key: ConjugationFilterForm; label: string; suffix: s
   { key: 'mashou', label: 'Forma -mashou', suffix: '' },
 ];
 
-const FORM_LABELS: Record<JapaneseConjugationForm, string> = {
+export const FORM_LABELS: Record<JapaneseConjugationForm, string> = {
   te: 'Forma -te',
   nakute: 'Forma -te negativa',
   ta: 'Pasado informal',
@@ -86,6 +87,38 @@ const FORM_LABELS: Record<JapaneseConjugationForm, string> = {
   masen: 'Negativo formal',
   mashou: 'Forma -mashou',
 };
+
+export function getFormOptions(t: (key: string) => string): Array<{ key: ConjugationFilterForm; label: string; suffix: string }> {
+  return [
+    { key: 'all', label: t('conjugation.allForms'), suffix: '' },
+    { key: 'te', label: t('conjugation.formTe'), suffix: '' },
+    { key: 'nakute', label: t('conjugation.formNakute'), suffix: '' },
+    { key: 'ta', label: t('conjugation.formTa'), suffix: '' },
+    { key: 'nai', label: t('conjugation.formNai'), suffix: '' },
+    { key: 'nakatta', label: t('conjugation.formNakatta'), suffix: '' },
+    { key: 'adverbial', label: t('conjugation.formAdverbial'), suffix: '' },
+    { key: 'masu', label: t('conjugation.formMasu'), suffix: '' },
+    { key: 'mashita', label: t('conjugation.formMashita'), suffix: '' },
+    { key: 'masen', label: t('conjugation.formMasen'), suffix: '' },
+    { key: 'mashou', label: t('conjugation.formMashou'), suffix: '' },
+  ];
+}
+
+export function getFormLabel(form: JapaneseConjugationForm, t: (key: string) => string): string {
+  switch (form) {
+    case 'te': return t('conjugation.formTe');
+    case 'nakute': return t('conjugation.formNakute');
+    case 'ta': return t('conjugation.formTa');
+    case 'nai': return t('conjugation.formNai');
+    case 'nakatta': return t('conjugation.formNakatta');
+    case 'adverbial': return t('conjugation.formAdverbial');
+    case 'masu': return t('conjugation.formMasu');
+    case 'mashita': return t('conjugation.formMashita');
+    case 'masen': return t('conjugation.formMasen');
+    case 'mashou': return t('conjugation.formMashou');
+    default: return form;
+  }
+}
 
 /**
  * Obtiene la terminación o sufijo real esperado (Streak 0) para guiar al usuario.
@@ -238,6 +271,7 @@ export function ConjugationPracticeModal({
   deckName,
 }: ConjugationPracticeModalProps) {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const router = useRouter();
   const [showModelRequired, setShowModelRequired] = useState(false);
   const insets = useSafeAreaInsets();
@@ -898,8 +932,9 @@ export function ConjugationPracticeModal({
   };
 
   const currentTargetDetails = getPromptDetailsForForm(currentWord, currentForm);
-  const currentTargetLabel = currentTargetDetails.title;
+  const currentTargetLabel = currentForm ? getFormLabel(currentForm, t) : t('conjugation.formTe');
   const furiganaPairs = currentWord ? parseFurigana(currentWord.kanji, currentWord.reading) : [];
+  const formOptions = getFormOptions(t);
 
   return (
     <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
@@ -919,19 +954,19 @@ export function ConjugationPracticeModal({
       >
         {/* Header superior de práctica */}
         <View style={[styles.headerRow, { borderBottomColor: colors.border }]}>
-          <TouchableOpacity onPress={onClose} style={styles.backBtn} accessibilityLabel="Cerrar práctica">
+          <TouchableOpacity onPress={onClose} style={styles.backBtn} accessibilityLabel={t('conjugation.closePractice')}>
             <Ionicons name="close" size={24} color={colors.text} />
           </TouchableOpacity>
           <View style={styles.brandTitleContainer}>
             <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
-              {deckName || 'Mazo'} <Text style={[styles.subtitle, { color: colors.textMuted }]}>- Práctica de conjugaciones</Text>
+              {deckName || t('deckDetail.deck')} <Text style={[styles.subtitle, { color: colors.textMuted }]}>- {t('conjugation.title')}</Text>
             </Text>
           </View>
           <View style={styles.headerActions}>
             <TouchableOpacity
               style={styles.moreMenuBtn}
               onPress={() => setOptionsMenuVisible(true)}
-              accessibilityLabel="Opciones de conjugación"
+              accessibilityLabel={t('conjugation.optionsTitle')}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
               <Ionicons name="ellipsis-vertical" size={22} color={colors.text} />
@@ -942,7 +977,7 @@ export function ConjugationPracticeModal({
         {/* Selector de Modo / Forma Gramatical */}
         <View style={styles.formSelectorContainer}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.formSelectorScroll}>
-            {FORM_OPTIONS.map((opt) => {
+            {formOptions.map((opt) => {
               const isSelected = selectedForm === opt.key;
               return (
                 <TouchableOpacity
@@ -966,17 +1001,17 @@ export function ConjugationPracticeModal({
         {loading ? (
           <View style={styles.centerContainer}>
             <ActivityIndicator size="large" color={colors.primary} />
-            <Text style={[styles.loadingText, { color: colors.textMuted }]}>Cargando verbos del mazo...</Text>
+            <Text style={[styles.loadingText, { color: colors.textMuted }]}>{t('conjugation.loadingVerbs')}</Text>
           </View>
         ) : queue.length === 0 ? (
           <View style={styles.centerContainer}>
             <Ionicons name="alert-circle-outline" size={54} color={colors.textMuted} />
-            <Text style={[styles.noWordsTitle, { color: colors.text }]}>No se encontraron verbos</Text>
+            <Text style={[styles.noWordsTitle, { color: colors.text }]}>{t('conjugation.noVerbsTitle')}</Text>
             <Text style={[styles.noWordsDesc, { color: colors.textMuted }]}>
-              Este mazo no tiene verbos o adjetivos guardados aún. Agregá verbos como 食べる, 行く o 飲む desde la búsqueda para ejercitar su conjugación.
+              {t('conjugation.noVerbsDesc')}
             </Text>
             <TouchableOpacity style={[styles.primaryActionBtn, { backgroundColor: colors.primary }]} onPress={onClose}>
-              <Text style={styles.primaryActionBtnText}>Volver al Mazo</Text>
+              <Text style={styles.primaryActionBtnText}>{t('conjugation.backToDeck')}</Text>
             </TouchableOpacity>
           </View>
         ) : isFinished ? (
@@ -985,14 +1020,14 @@ export function ConjugationPracticeModal({
             <Ionicons name="trophy" size={64} color="#F59E0B" />
             <Text style={[styles.finishedTitle, { color: colors.text }]}>
               {selectedForm === 'all'
-                ? '¡Sesión Completada!'
-                : `¡Completaste todas las tarjetas de ${FORM_LABELS[selectedForm]}!`}
+                ? t('conjugation.sessionCompleted')
+                : t('conjugation.completedCategory', { form: getFormLabel(selectedForm, t) })}
             </Text>
             <Text style={[styles.finishedScore, { color: colors.primary }]}>
-              {correctCount} de {totalAttempted} correctas
+              {t('conjugation.scoreResult', { correct: correctCount, total: totalAttempted })}
             </Text>
             <Text style={[styles.finishedSubtext, { color: colors.textMuted }]}>
-              Podés repetir esta categoría o tocar cualquier pestaña superior para continuar practicando otras formas.
+              {t('conjugation.sessionCompletedSub')}
             </Text>
             <View style={styles.finishedButtonsRow}>
               <TouchableOpacity
@@ -1000,7 +1035,7 @@ export function ConjugationPracticeModal({
                 onPress={() => handleSelectForm(selectedForm)}
               >
                 <Ionicons name="refresh" size={18} color={colors.text} style={{ marginRight: 6 }} />
-                <Text style={[styles.secondaryActionBtnText, { color: colors.text }]}>Practicar de nuevo</Text>
+                <Text style={[styles.secondaryActionBtnText, { color: colors.text }]}>{t('conjugation.practiceAgain')}</Text>
               </TouchableOpacity>
               {selectedForm !== 'all' && (
                 <TouchableOpacity
@@ -1008,11 +1043,11 @@ export function ConjugationPracticeModal({
                   onPress={() => handleSelectForm('all')}
                 >
                   <Ionicons name="shuffle" size={18} color={colors.primary} style={{ marginRight: 6 }} />
-                  <Text style={[styles.secondaryActionBtnText, { color: colors.primary }]}>Practicar todas las formas</Text>
+                  <Text style={[styles.secondaryActionBtnText, { color: colors.primary }]}>{t('conjugation.practiceAllForms')}</Text>
                 </TouchableOpacity>
               )}
               <TouchableOpacity style={[styles.primaryActionBtn, { backgroundColor: colors.primary, marginTop: 0 }]} onPress={onClose}>
-                <Text style={styles.primaryActionBtnText}>Finalizar</Text>
+                <Text style={styles.primaryActionBtnText}>{t('conjugation.finish')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1022,7 +1057,7 @@ export function ConjugationPracticeModal({
             {/* Barra de Progreso */}
             <View style={styles.progressBarRow}>
               <Text style={[styles.progressText, { color: colors.textMuted }]}>
-                Tarjeta {currentIndex + 1} de {queue.length}
+                {t('conjugation.cardProgress', { current: currentIndex + 1, total: queue.length })}
               </Text>
               <View style={styles.scoreRow}>
                 <Ionicons name="checkmark-circle" size={16} color="#10B981" />
@@ -1068,7 +1103,7 @@ export function ConjugationPracticeModal({
                 {/* Pregunta Objetivo */}
                 <View style={styles.targetPromptBox}>
                   <Text style={[styles.targetPromptText, { color: colors.text }]}>
-                    Pasar a <Text style={{ fontWeight: '800', color: colors.primary }}>{currentTargetLabel}</Text>
+                    {t('conjugation.passTo')} <Text style={{ fontWeight: '800', color: colors.primary }}>{currentTargetLabel}</Text>
                   </Text>
                   {/* Pistas Progresivas según Racha (Streak) simplemente en gris sin la palabra Pista */}
                   {(() => {
@@ -1100,7 +1135,7 @@ export function ConjugationPracticeModal({
                   <View style={[styles.inputRow, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}>
                     <TextInput
                       style={[styles.textInput, { color: colors.text }]}
-                      placeholder="Escribí en romaji o kana..."
+                      placeholder={t('conjugation.placeholderInput')}
                       placeholderTextColor={colors.textMuted}
                       value={textInput}
                       onChangeText={handleTextChange}
@@ -1160,11 +1195,11 @@ export function ConjugationPracticeModal({
                           { color: (isListening || autoVoiceMode) ? '#FFF' : colors.text },
                         ]}
                       >
-                        {(isListening || autoVoiceMode) ? 'Escuchando tu pronunciación...' : 'Responder por voz'}
+                        {(isListening || autoVoiceMode) ? t('conjugation.listeningVoice') : t('conjugation.respondByVoice')}
                       </Text>
                       {!isListening && !autoVoiceMode && (
                         <Text style={[styles.micBtnSubtext, { color: colors.textMuted }]}>
-                          Mantén presionado para modo automático
+                          {t('conjugation.holdForAutoVoice')}
                         </Text>
                       )}
                     </View>
@@ -1204,7 +1239,7 @@ export function ConjugationPracticeModal({
                         { color: isCorrect ? '#10B981' : colors.danger },
                       ]}
                     >
-                      {isCorrect ? '¡Excelente!' : 'Forma correcta:'}
+                      {isCorrect ? t('conjugation.excellent') : t('conjugation.correctForm')}
                     </Text>
                   </View>
 
@@ -1245,7 +1280,7 @@ export function ConjugationPracticeModal({
                     >
                       <Ionicons name="school-outline" size={17} color={colors.primary} style={{ marginRight: 6 }} />
                       <Text style={[styles.disableFormBtnText, { color: colors.text }]}>
-                        Dominada
+                        {t('conjugation.masteredBtn')}
                       </Text>
                     </TouchableOpacity>
 
@@ -1253,7 +1288,7 @@ export function ConjugationPracticeModal({
                       style={[styles.nextBtn, { backgroundColor: colors.primary }]}
                       onPress={handleNextWord}
                     >
-                      <Text style={styles.nextBtnText}>Siguiente</Text>
+                      <Text style={styles.nextBtnText}>{t('conjugation.nextBtn')}</Text>
                       <Ionicons name="chevron-forward" size={18} color="#FFF" />
                     </TouchableOpacity>
                   </View>
@@ -1275,14 +1310,14 @@ export function ConjugationPracticeModal({
             onPress={() => setOptionsMenuVisible(false)}
           >
             <View style={[styles.menuDropdown, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              <Text style={[styles.menuDropdownTitle, { color: colors.textMuted }]}>Opciones de Conjugación</Text>
+              <Text style={[styles.menuDropdownTitle, { color: colors.textMuted }]}>{t('conjugation.optionsTitle')}</Text>
 
               <TouchableOpacity
                 style={[styles.menuDropdownItem, { borderBottomColor: colors.border }]}
                 onPress={openAddWordsModal}
               >
                 <Ionicons name="add-circle-outline" size={20} color={colors.primary} style={{ marginRight: 10 }} />
-                <Text style={[styles.menuDropdownText, { color: colors.text, fontWeight: '600' }]}>Agregar palabras</Text>
+                <Text style={[styles.menuDropdownText, { color: colors.text, fontWeight: '600' }]}>{t('conjugation.addWords')}</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -1290,7 +1325,7 @@ export function ConjugationPracticeModal({
                 onPress={openRemoveWordsModal}
               >
                 <Ionicons name="trash-outline" size={20} color={colors.danger} style={{ marginRight: 10 }} />
-                <Text style={[styles.menuDropdownText, { color: colors.danger, fontWeight: '600' }]}>Eliminar palabras</Text>
+                <Text style={[styles.menuDropdownText, { color: colors.danger, fontWeight: '600' }]}>{t('conjugation.removeWords')}</Text>
               </TouchableOpacity>
             </View>
           </Pressable>
@@ -1310,7 +1345,7 @@ export function ConjugationPracticeModal({
               </TouchableOpacity>
               <View style={styles.brandTitleContainer}>
                 <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
-                  {deckName || 'Mazo'} <Text style={[styles.subtitle, { color: colors.textMuted }]}>- Agregar palabras</Text>
+                  {deckName || t('deckDetail.deck')} <Text style={[styles.subtitle, { color: colors.textMuted }]}>- {t('conjugation.addWords')}</Text>
                 </Text>
               </View>
             </View>
@@ -1319,10 +1354,10 @@ export function ConjugationPracticeModal({
             {rawWords.some((w) => (w.disabledConjugations?.length || 0) > 0) && (
               <View style={{ padding: Spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border }}>
                 <Text style={[styles.sectionHeaderTitle, { color: colors.text }]}>
-                  Conjugaciones dominadas
+                  {t('conjugation.masteredSectionTitle')}
                 </Text>
                 <Text style={[styles.sectionHeaderSubtitle, { color: colors.textMuted }]}>
-                  No se incluyen en la práctica.
+                  {t('conjugation.masteredSectionSubtitle')}
                 </Text>
                 {rawWords
                   .filter((w) => (w.disabledConjugations?.length || 0) > 0)
@@ -1334,7 +1369,7 @@ export function ConjugationPracticeModal({
                         w.category,
                         f as JapaneseConjugationForm
                       );
-                      const formLabel = FORM_LABELS[f as JapaneseConjugationForm] || f;
+                      const formLabel = getFormLabel(f as JapaneseConjugationForm, t);
                       return {
                         wordId: w.id,
                         baseKanji: w.kanji,
@@ -1374,7 +1409,7 @@ export function ConjugationPracticeModal({
                         onPress={() => handleReactivateForm(item.wordId, item.form)}
                       >
                         <Ionicons name="refresh" size={14} color={colors.primary} />
-                        <Text style={[styles.removeWordBtnText, { color: colors.primary }]}>Estudiar</Text>
+                        <Text style={[styles.removeWordBtnText, { color: colors.primary }]}>{t('conjugation.studyBtn')}</Text>
                       </TouchableOpacity>
                     </View>
                   ))}
@@ -1384,14 +1419,14 @@ export function ConjugationPracticeModal({
             {loadingManagement ? (
               <View style={styles.centerContainer}>
                 <ActivityIndicator size="large" color={colors.primary} />
-                <Text style={[styles.loadingText, { color: colors.textMuted }]}>Cargando palabras del mazo...</Text>
+                <Text style={[styles.loadingText, { color: colors.textMuted }]}>{t('conjugation.loadingDeckWords')}</Text>
               </View>
             ) : availableWordsToAdd.length === 0 ? (
               <View style={styles.centerContainer}>
                 <Ionicons name="checkmark-circle-outline" size={54} color="#10B981" />
-                <Text style={[styles.noWordsTitle, { color: colors.text }]}>Todas las palabras agregadas</Text>
+                <Text style={[styles.noWordsTitle, { color: colors.text }]}>{t('conjugation.allWordsAddedTitle')}</Text>
                 <Text style={[styles.noWordsDesc, { color: colors.textMuted }]}>
-                  Todos los verbos y adjetivos en forma base de tu mazo ya forman parte de la práctica de conjugaciones.
+                  {t('conjugation.allWordsAddedDesc')}
                 </Text>
               </View>
             ) : (
@@ -1416,7 +1451,7 @@ export function ConjugationPracticeModal({
                       onPress={() => handleAddWordToConjugations(item)}
                     >
                       <Ionicons name="add" size={18} color="#FFF" />
-                      <Text style={styles.addWordBtnText}>Agregar</Text>
+                      <Text style={styles.addWordBtnText}>{t('conjugation.addWordBtn')}</Text>
                     </TouchableOpacity>
                   </View>
                 )}
@@ -1439,7 +1474,7 @@ export function ConjugationPracticeModal({
               </TouchableOpacity>
               <View style={styles.brandTitleContainer}>
                 <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
-                  {deckName || 'Mazo'} <Text style={[styles.subtitle, { color: colors.textMuted }]}>- Eliminar palabras</Text>
+                  {deckName || t('deckDetail.deck')} <Text style={[styles.subtitle, { color: colors.textMuted }]}>- {t('conjugation.removeWords')}</Text>
                 </Text>
               </View>
             </View>
@@ -1447,9 +1482,9 @@ export function ConjugationPracticeModal({
             {rawWords.length === 0 ? (
               <View style={styles.centerContainer}>
                 <Ionicons name="alert-circle-outline" size={54} color={colors.textMuted} />
-                <Text style={[styles.noWordsTitle, { color: colors.text }]}>No hay palabras en práctica</Text>
+                <Text style={[styles.noWordsTitle, { color: colors.text }]}>{t('conjugation.noWordsInPracticeTitle')}</Text>
                 <Text style={[styles.noWordsDesc, { color: colors.textMuted }]}>
-                  Agregá palabras desde el menú de opciones para ejercitar conjugaciones.
+                  {t('conjugation.noWordsInPracticeDesc')}
                 </Text>
               </View>
             ) : (
@@ -1474,7 +1509,7 @@ export function ConjugationPracticeModal({
                       onPress={() => handleRemoveWordFromConjugations(item)}
                     >
                       <Ionicons name="trash-outline" size={16} color={colors.danger} />
-                      <Text style={[styles.removeWordBtnText, { color: colors.danger }]}>Quitar</Text>
+                      <Text style={[styles.removeWordBtnText, { color: colors.danger }]}>{t('conjugation.removeWordBtn')}</Text>
                     </TouchableOpacity>
                   </View>
                 )}

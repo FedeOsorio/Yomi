@@ -3,8 +3,10 @@ import { View, Text, StyleSheet, Platform, ActivityIndicator } from 'react-nativ
 import * as Updates from 'expo-updates';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, withRepeat, withSequence } from 'react-native-reanimated';
+import { useTranslation } from '../i18n';
 
 export function OTAUpdateOverlay() {
+  const { t } = useTranslation();
   // En entorno web o desarrollo local no se aplican actualizaciones OTA
   if (Platform.OS === 'web' || __DEV__) return null;
 
@@ -81,9 +83,9 @@ export function OTAUpdateOverlay() {
           <Ionicons name="sparkles" size={38} color="#3B82F6" />
         </Animated.View>
         <ActivityIndicator size="large" color="#3B82F6" style={styles.spinner} />
-        <Text style={styles.title}>Actualizando Yomi...</Text>
+        <Text style={styles.title}>{t('common.updatingTitle')}</Text>
         <Text style={styles.subtitle}>
-          Descargando la última versión.{'\n'}La aplicación se reiniciará automáticamente.
+          {t('common.updatingSubtitle')}
         </Text>
       </View>
     </Animated.View>

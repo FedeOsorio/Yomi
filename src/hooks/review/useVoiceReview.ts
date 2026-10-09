@@ -10,6 +10,7 @@ import { MODEL_NOT_DOWNLOADED, sherpaVoiceService } from '../../../lib/sherpa-se
 import { speechService, usesOfflineModel } from '../../../lib/speech-recognition-service';
 import { checkVoiceMatch, DueCardWithContext } from '../../../lib/srs-engine';
 import { CardEvaluation, useReviewStore } from '../../stores/reviewStore';
+import { useTranslation } from '../../i18n';
 import type { useAutoAdvance } from './useAutoAdvance';
 import type { useCardFlip } from './useCardFlip';
 
@@ -31,6 +32,7 @@ const getContextualStrings = (card: DueCardWithContext): string[] => {
  * a la siguiente tarjeta. Todo el estado de voz de la pantalla de repaso vive acá.
  */
 export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance: ReturnType<typeof useAutoAdvance>) {
+  const { t } = useTranslation();
   const router = useRouter();
   const isListening = useReviewStore((s) => s.isListening);
   const store = useReviewStore.getState;
@@ -83,11 +85,11 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
   /** Carga en memoria el modelo de voz (ya descargado) para el idioma. */
   const prepareModel = async (lang: string): Promise<boolean> => {
     if (!usesOfflineModel(lang) || sherpaVoiceService.isReady(lang)) return true;
-    setSetupLabel('Cargando motor de voz…');
+    setSetupLabel(t('review.loadingVoiceEngine'));
     try {
       const loaded = await sherpaVoiceService.loadModel(lang);
       if (!loaded && sherpaVoiceService.lastError === MODEL_NOT_DOWNLOADED) setShowModelRequired(true);
-      else if (!loaded) Alert.alert('Motor de voz', sherpaVoiceService.lastError ?? 'No se pudo cargar el modelo de voz.');
+      else if (!loaded) Alert.alert(t('review.voiceEngineTitle'), sherpaVoiceService.lastError ?? t('review.voiceEngineError'));
       return loaded;
     } finally {
       setSetupLabel(null);
@@ -101,7 +103,7 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
   const ensureReady = async (lang: string, onModelMissing: () => void): Promise<boolean> => {
     const hasPerm = (await speechService.checkPermissions()) || (await speechService.requestPermissions());
     if (!hasPerm) {
-      Alert.alert('Permiso de Micrófono', 'Para practicar con voz es necesario permitir el acceso al micrófono desde los Ajustes del dispositivo.');
+      Alert.alert(t('review.micPermissionTitle'), t('review.micPermissionMsg'));
       return false;
     }
     if (usesOfflineModel(lang) && !(await sherpaVoiceService.isModelDownloaded())) {
@@ -248,7 +250,7 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
             setShowModelRequired(true);
             return;
           }
-          Alert.alert('Error de micrófono', err || 'No fue posible iniciar la captura de voz.');
+          Alert.alert(t('review.micErrorTitle'), err || t('review.micErrorDefault'));
         },
       },
       { contextualStrings: getContextualStrings(card) }
@@ -257,7 +259,7 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
     if (!started && !isStale()) {
       setIsListening(false);
       setSpeechStatus('idle');
-      if (!reportedError) Alert.alert('Micrófono no iniciado', 'No se pudo iniciar la grabación. Toca el micrófono para reintentar.');
+      if (!reportedError) Alert.alert(t('review.micNotStartedTitle'), t('review.micNotStartedMsg'));
     }
   };
 

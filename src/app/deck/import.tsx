@@ -42,9 +42,11 @@ import {
 } from '../../../lib/qa-importer';
 import { saveBatchWords, saveBatchCustomCards } from '../../../lib/word-service';
 import { notifyDataChanged } from '../../../lib/backup-service';
+import { useTranslation } from '../../i18n';
 
 export default function ImportDeckScreen() {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ deckId?: string; type?: string }>();
   const router = useRouter();
@@ -123,7 +125,7 @@ export default function ImportDeckScreen() {
 
   const handleAnalyzeText = () => {
     if (!rawText.trim()) {
-      Alert.alert('Atención', 'Pega o escribe el contenido de las tarjetas a importar.');
+      Alert.alert(t('common.attention'), t('importDeck.alertPasteRequired'));
       return;
     }
 
@@ -132,8 +134,8 @@ export default function ImportDeckScreen() {
       const result = parseCustomQaText(rawText);
       if (result.items.length === 0) {
         Alert.alert(
-          'No se detectaron tarjetas',
-          'Asegúrate de incluir "Pregunta:" y "Respuesta:" para cada tarjeta, o separarlas con tabulación o barra vertical (|).'
+          t('importDeck.alertNoCardsDetected'),
+          t('importDeck.alertNoCardsDetectedMsg')
         );
         return;
       }
@@ -151,7 +153,7 @@ export default function ImportDeckScreen() {
     // Modo 2: Importación estándar de vocabulario (CSV / TSV)
     const result = parseVocabularyFile(rawText.trim());
     if (result.items.length === 0) {
-      Alert.alert('Error', 'No se detectaron filas válidas de vocabulario en el texto ingresado.');
+      Alert.alert(t('common.error'), t('importDeck.alertNoRowsDetected'));
       return;
     }
 
@@ -181,7 +183,7 @@ export default function ImportDeckScreen() {
       if (ext === 'apkg') {
         const result = await extractAnkiPackageAsync(file.uri);
         if (result.items.length === 0) {
-          Alert.alert('Aviso', 'No se encontraron notas válidas en el archivo .apkg.');
+          Alert.alert(t('common.notice'), t('importDeck.alertNoApkgNotes'));
           return;
         }
 
@@ -223,7 +225,7 @@ export default function ImportDeckScreen() {
       } else {
         const content = await FileSystem.readAsStringAsync(file.uri);
         if (!content.trim()) {
-          Alert.alert('Aviso', 'El archivo seleccionado está vacío.');
+          Alert.alert(t('common.notice'), t('importDeck.alertEmptyFile'));
           return;
         }
 
@@ -234,8 +236,8 @@ export default function ImportDeckScreen() {
           const result = parseCustomQaText(content);
           if (result.items.length === 0) {
             Alert.alert(
-              'No se detectaron preguntas y respuestas',
-              'El archivo no contiene el formato esperado "Pregunta: ... Respuesta: ...".'
+              t('importDeck.alertNoCardsDetected'),
+              t('importDeck.alertNoQaInFile')
             );
             return;
           }
@@ -257,7 +259,7 @@ export default function ImportDeckScreen() {
         // De lo contrario, archivo de vocabulario tabular
         const result = parseVocabularyFile(content.trim());
         if (result.items.length === 0) {
-          Alert.alert('Error', 'No se detectaron filas válidas de vocabulario en el archivo.');
+          Alert.alert(t('common.error'), t('importDeck.alertNoRowsDetected'));
           return;
         }
 
@@ -272,7 +274,7 @@ export default function ImportDeckScreen() {
       }
     } catch (e: any) {
       console.error('Error al procesar archivo:', e);
-      Alert.alert('Error al leer archivo', e?.message || 'No se pudo procesar el archivo seleccionado.');
+      Alert.alert(t('common.error'), e?.message || t('importDeck.alertFileReadError'));
     } finally {
       setIsProcessing(false);
     }
@@ -281,7 +283,7 @@ export default function ImportDeckScreen() {
   const handleDeleteQaItem = (itemId: string) => {
     const updated = qaItems.filter((it) => it.id !== itemId);
     if (updated.length === 0) {
-      Alert.alert('Sin tarjetas', 'Has descartado todas las tarjetas. Volviendo a la pantalla de entrada.');
+      Alert.alert(t('importDeck.alertNoCardsDetected'), t('importDeck.alertAllDiscarded'));
       setQaItems([]);
       setStep('input');
       return;
@@ -300,7 +302,7 @@ export default function ImportDeckScreen() {
     const cleanQ = editQ.trim();
     const cleanA = editA.trim();
     if (!cleanQ || !cleanA) {
-      Alert.alert('Atención', 'La pregunta y la respuesta no pueden quedar vacías.');
+      Alert.alert(t('common.attention'), t('importDeck.alertFieldsRequired'));
       return;
     }
 
@@ -317,7 +319,7 @@ export default function ImportDeckScreen() {
 
     if (targetMode === 'new') {
       if (!newDeckName.trim()) {
-        Alert.alert('Atención', 'Ingresa un nombre para el nuevo mazo.');
+        Alert.alert(t('common.attention'), t('importDeck.alertEnterDeckName'));
         return;
       }
       setIsProcessing(true);
@@ -329,12 +331,12 @@ export default function ImportDeckScreen() {
         );
       } catch (e) {
         setIsProcessing(false);
-        Alert.alert('Error', 'No se pudo crear el nuevo mazo.');
+        Alert.alert(t('common.error'), t('importDeck.alertCreateDeckError'));
         return;
       }
     } else {
       if (!targetDeckId) {
-        Alert.alert('Atención', 'Selecciona el mazo de destino.');
+        Alert.alert(t('common.attention'), t('importDeck.alertSelectDeck'));
         return;
       }
     }
@@ -347,13 +349,13 @@ export default function ImportDeckScreen() {
         notifyDataChanged();
 
         Alert.alert(
-          '¡Importación Exitosa!',
-          `Se importaron ${inserted} tarjetas correctamente al mazo.${
-            skipped > 0 ? ` (${skipped} repetidas se omitieron)` : ''
+          t('importDeck.alertSuccessTitle'),
+          `${t('importDeck.alertSuccessMsgCards', { count: inserted })}${
+            skipped > 0 ? t('importDeck.alertSuccessSkipped', { count: skipped }) : ''
           }`,
           [
             {
-              text: 'Ver Mazo',
+              text: t('importDeck.alertViewDeck'),
               onPress: () => {
                 router.replace(`/deck/${targetDeckId}`);
               },
@@ -370,13 +372,13 @@ export default function ImportDeckScreen() {
         notifyDataChanged();
 
         Alert.alert(
-          '¡Importación Exitosa!',
-          `Se importaron ${inserted} palabras correctamente al mazo.${
-            skipped > 0 ? ` (${skipped} repetidas se omitieron)` : ''
+          t('importDeck.alertSuccessTitle'),
+          `${t('importDeck.alertSuccessMsgWords', { count: inserted })}${
+            skipped > 0 ? t('importDeck.alertSuccessSkipped', { count: skipped }) : ''
           }`,
           [
             {
-              text: 'Ver Mazo',
+              text: t('importDeck.alertViewDeck'),
               onPress: () => {
                 router.replace(`/deck/${targetDeckId}`);
               },
@@ -385,7 +387,7 @@ export default function ImportDeckScreen() {
         );
       }
     } catch (e) {
-      Alert.alert('Error', 'Ocurrió un error al guardar las tarjetas en la base de datos.');
+      Alert.alert(t('common.error'), t('importDeck.alertSaveDbError'));
     } finally {
       setIsProcessing(false);
     }
@@ -405,7 +407,7 @@ export default function ImportDeckScreen() {
           <Text style={[styles.brandText, { color: accentColor }]}>Yomi</Text>
           <Text style={[styles.brandSep, { color: colors.textMuted }]}> • </Text>
           <Text style={[styles.title, { color: colors.text }]}>
-            Importar
+            {t('importDeck.title')}
           </Text>
         </View>
       </View>
@@ -420,7 +422,7 @@ export default function ImportDeckScreen() {
           <>
             {/* Destino de la Importación */}
             <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              <Text style={[styles.sectionTitle, { color: colors.text }]}>1. Mazo de Destino</Text>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('importDeck.stepDestination')}</Text>
 
               <View style={styles.modeToggleRow}>
                 <TouchableOpacity
@@ -436,7 +438,7 @@ export default function ImportDeckScreen() {
                       { color: targetMode === 'new' ? '#FFF' : colors.textMuted },
                     ]}
                   >
-                    Crear Nuevo Mazo
+                    {t('importDeck.createNewDeck')}
                   </Text>
                 </TouchableOpacity>
 
@@ -455,7 +457,7 @@ export default function ImportDeckScreen() {
                       { color: targetMode === 'existing' ? '#FFF' : colors.textMuted },
                     ]}
                   >
-                    Mazo Existente
+                    {t('importDeck.existingDeck')}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -463,7 +465,7 @@ export default function ImportDeckScreen() {
               {targetMode === 'new' ? (
                 <View style={styles.newDeckFields}>
                   {/* Selector de Tipo de Mazo para Crear */}
-                  <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Tipo de mazo:</Text>
+                  <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>{t('importDeck.deckTypeLabel')}</Text>
                   <View style={styles.deckTypeToggleRow}>
                     <TouchableOpacity
                       style={[
@@ -488,7 +490,7 @@ export default function ImportDeckScreen() {
                           { color: importedDeckType === 'custom' ? '#10B981' : colors.text },
                         ]}
                       >
-                        Personalizado
+                        {t('importDeck.customType')}
                       </Text>
                     </TouchableOpacity>
 
@@ -515,12 +517,12 @@ export default function ImportDeckScreen() {
                           { color: importedDeckType === 'language' ? colors.primary : colors.text },
                         ]}
                       >
-                        Idioma (Vocabulario)
+                        {t('importDeck.languageType')}
                       </Text>
                     </TouchableOpacity>
                   </View>
 
-                  <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Nombre del mazo:</Text>
+                  <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>{t('importDeck.deckNameLabel')}</Text>
                   <TextInput
                     style={[
                       styles.input,
@@ -528,8 +530,8 @@ export default function ImportDeckScreen() {
                     ]}
                     placeholder={
                       isCustomMode
-                        ? 'Ej. Farmacología, Derecho Constitucional'
-                        : 'Ej. Vocabulario Anki N5'
+                        ? t('importDeck.customPlaceholder')
+                        : t('importDeck.languagePlaceholder')
                     }
                     placeholderTextColor={colors.textMuted}
                     value={newDeckName}
@@ -538,7 +540,7 @@ export default function ImportDeckScreen() {
 
                   {!isCustomMode && (
                     <>
-                      <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Idioma de las tarjetas:</Text>
+                      <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>{t('importDeck.cardsLanguageLabel')}</Text>
                       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.langScroll}>
                         {SUPPORTED_LANGUAGES.map((lang) => {
                           const isSel = selectedLang === lang.code;
@@ -572,7 +574,7 @@ export default function ImportDeckScreen() {
                 </View>
               ) : (
                 <View style={styles.existingDeckSection}>
-                  <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Seleccionar mazo:</Text>
+                  <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>{t('importDeck.selectDeckLabel')}</Text>
                   {decks.map((d) => {
                     const isSelected = selectedDeckId === d.id;
                     const isCustom = d.type === 'custom';
@@ -610,7 +612,7 @@ export default function ImportDeckScreen() {
                         <View style={styles.deckSelectTextCol}>
                           <Text style={[styles.deckSelectTitle, { color: colors.text }]}>{d.name}</Text>
                           <Text style={[styles.deckSelectSub, { color: colors.textMuted }]}>
-                            {d.wordCount} {isCustom ? 'tarjetas' : d.wordCount === 1 ? 'palabra' : 'palabras'}
+                            {d.wordCount} {isCustom ? (d.wordCount === 1 ? t('decks.cardSingular') : t('decks.cardPlural')) : (d.wordCount === 1 ? t('decks.wordSingular') : t('decks.wordPlural'))}
                           </Text>
                         </View>
                         {isSelected && <Ionicons name="checkmark-circle" size={20} color={activeColor} />}
@@ -625,7 +627,7 @@ export default function ImportDeckScreen() {
             <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <View style={styles.contentHeaderRow}>
                 <Text style={[styles.sectionTitle, { color: colors.text }]}>
-                  {isCustomMode ? '2. Tarjetas' : '2. Elige un Archivo o Pega Texto'}
+                  {isCustomMode ? t('importDeck.stepCards') : t('importDeck.stepFilesOrText')}
                 </Text>
                 {!isCustomMode && (
                   <View style={[styles.badgeHint, { backgroundColor: colors.surfaceHighlight }]}>
@@ -643,7 +645,7 @@ export default function ImportDeckScreen() {
                   ]}
                 >
                   <Text style={[styles.aiHelperDesc, { color: colors.text }]}>
-                    Pega el texto generado por tu IA o tus notas usando este formato:
+                    {t('importDeck.aiHelperDesc')}
                   </Text>
 
                   <View
@@ -653,13 +655,13 @@ export default function ImportDeckScreen() {
                     ]}
                   >
                     <Text style={[styles.qaFormatCode, { color: colors.text }]}>
-                      <Text style={{ color: '#10B981', fontWeight: 'bold' }}>Pregunta:</Text> [tu pregunta]{'\n'}
-                      <Text style={{ color: '#10B981', fontWeight: 'bold' }}>Respuesta:</Text> [tu respuesta]
+                      <Text style={{ color: '#10B981', fontWeight: 'bold' }}>{t('importDeck.questionLabel')}</Text> [tu pregunta]{'\n'}
+                      <Text style={{ color: '#10B981', fontWeight: 'bold' }}>{t('importDeck.answerLabel')}</Text> [tu respuesta]
                     </Text>
                   </View>
 
                   <Text style={[styles.aiHelperSub, { color: colors.textMuted }]}>
-                    O copia nuestra plantilla lista para enviársela a tu IA junto con tus apuntes:
+                    {t('importDeck.aiPromptHelperSub')}
                   </Text>
 
                   <TouchableOpacity
@@ -670,7 +672,7 @@ export default function ImportDeckScreen() {
                     activeOpacity={0.8}
                   >
                     <Ionicons name="copy-outline" size={16} color="#FFF" style={{ marginRight: 6 }} />
-                    <Text style={styles.aiPromptBtnText}>Copiar plantilla para IA</Text>
+                    <Text style={styles.aiPromptBtnText}>{t('importDeck.aiPromptCopyBtn')}</Text>
                   </TouchableOpacity>
                 </View>
               )}
@@ -696,10 +698,10 @@ export default function ImportDeckScreen() {
                     </View>
                     <View style={styles.filePickerTextCol}>
                       <Text style={[styles.filePickerTitle, { color: colors.text }]}>
-                        Seleccionar archivo (.apkg, .txt, .csv, .yomi)
+                        {t('importDeck.selectFile')}
                       </Text>
                       <Text style={[styles.filePickerSub, { color: colors.textMuted }]}>
-                        Importa paquetes de Anki o exportaciones de texto
+                        {t('importDeck.selectFileSub')}
                       </Text>
                     </View>
                     <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
@@ -708,7 +710,7 @@ export default function ImportDeckScreen() {
                   <View style={styles.dividerRow}>
                     <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
                     <Text style={[styles.dividerText, { color: colors.textMuted }]}>
-                      O PEGA NOTAS EN TEXTO PLANO
+                      {t('importDeck.orPastePlain')}
                     </Text>
                     <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
                   </View>
@@ -722,7 +724,7 @@ export default function ImportDeckScreen() {
                 ]}
                 placeholder={
                   isCustomMode
-                    ? `Pregunta: ¿Cuáles son las tres leyes de Newton?\nRespuesta: 1. Inercia, 2. Fuerza (F=m*a), 3. Acción y reacción.`
+                    ? `${t('importDeck.questionLabel')} ¿Cuáles son las tres leyes de Newton?\n${t('importDeck.answerLabel')} 1. Inercia, 2. Fuerza (F=m*a), 3. Acción y reacción.`
                     : `Ejemplo:\n会う\tあう\tto meet\n青い\tao\tblue\n食べる\tたべる\tcomer`
                 }
                 placeholderTextColor={colors.textMuted}
@@ -741,7 +743,7 @@ export default function ImportDeckScreen() {
               >
                 <Ionicons name="document-text-outline" size={18} color="#FFF" style={{ marginRight: 6 }} />
                 <Text style={styles.primaryActionBtnText}>
-                  {isCustomMode ? 'Analizar Tarjetas' : 'Analizar Texto Pegado'}
+                  {isCustomMode ? t('importDeck.analyzeCardsBtn') : t('importDeck.analyzeTextBtn')}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -754,9 +756,9 @@ export default function ImportDeckScreen() {
               <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                 <View style={styles.previewHeaderRow}>
                   <View style={{ flex: 1 }}>
-                    <Text style={[styles.sectionTitle, { color: colors.text }]}>Vista Previa de Tarjetas</Text>
+                    <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('importDeck.previewCardsTitle')}</Text>
                     <Text style={[styles.previewSub, { color: colors.textMuted }]}>
-                      {qaItems.length} {qaItems.length === 1 ? 'tarjeta lista' : 'tarjetas listas'} para agregar al mazo
+                      {t('importDeck.previewReadyCards', { count: qaItems.length })}
                     </Text>
                   </View>
                   <TouchableOpacity
@@ -764,24 +766,24 @@ export default function ImportDeckScreen() {
                     onPress={() => setStep('input')}
                   >
                     <Ionicons name="create-outline" size={16} color="#10B981" />
-                    <Text style={[styles.editBtnText, { color: '#10B981' }]}>Modificar</Text>
+                    <Text style={[styles.editBtnText, { color: '#10B981' }]}>{t('importDeck.modifyBtn')}</Text>
                   </TouchableOpacity>
                 </View>
 
                 {/* Resumen */}
                 <View style={[styles.summaryBox, { backgroundColor: colors.surfaceHighlight }]}>
                   <Text style={[styles.summaryLabel, { color: colors.textMuted }]}>
-                    Mazo de destino:{' '}
+                    {t('importDeck.targetDeckLabel')}{' '}
                     <Text style={{ color: colors.text, fontWeight: 'bold' }}>
                       {targetMode === 'new'
-                        ? newDeckName.trim() || 'Nuevo Mazo'
-                        : selectedDeck?.name || 'Mazo seleccionado'}
+                        ? newDeckName.trim() || t('decks.createNewDeck')
+                        : selectedDeck?.name || t('importDeck.selectDeckLabel')}
                     </Text>
                   </Text>
                   <Text style={[styles.summaryLabel, { color: colors.textMuted }]}>
-                    Formato detectado:{' '}
+                    {t('importDeck.formatDetectedLabel')}{' '}
                     <Text style={{ color: '#10B981', fontWeight: 'bold' }}>
-                      Personalizado (IA / Texto)
+                      {t('importDeck.customAiFormat')}
                     </Text>
                   </Text>
                 </View>
@@ -806,7 +808,7 @@ export default function ImportDeckScreen() {
                 )}
 
                 <Text style={[styles.previewSampleTitle, { color: colors.text, marginTop: Spacing.xs }]}>
-                  Tarjetas detectadas (puedes editar o descartar):
+                  {t('importDeck.detectedCardsLabel')}
                 </Text>
 
                 {/* Lista interactiva de tarjetas parsed */}
@@ -842,13 +844,13 @@ export default function ImportDeckScreen() {
 
                     {/* Pregunta */}
                     <View style={styles.qaSection}>
-                      <Text style={[styles.qaFieldLabel, { color: '#10B981' }]}>PREGUNTA (FRENTE):</Text>
+                      <Text style={[styles.qaFieldLabel, { color: '#10B981' }]}>{t('importDeck.questionFront')}</Text>
                       <Text style={[styles.qaQuestionText, { color: colors.text }]}>{item.question}</Text>
                     </View>
 
                     {/* Respuesta */}
                     <View style={styles.qaSection}>
-                      <Text style={[styles.qaFieldLabel, { color: colors.textMuted }]}>RESPUESTA (REVERSO):</Text>
+                      <Text style={[styles.qaFieldLabel, { color: colors.textMuted }]}>{t('importDeck.answerBack')}</Text>
                       <Text style={[styles.qaAnswerText, { color: colors.text }]}>{item.answer}</Text>
                     </View>
                   </View>
@@ -866,7 +868,7 @@ export default function ImportDeckScreen() {
                     <>
                       <Ionicons name="cloud-download-outline" size={20} color="#FFF" style={{ marginRight: 6 }} />
                       <Text style={styles.primaryActionBtnText}>
-                        Importar {qaItems.length} {qaItems.length === 1 ? 'Tarjeta' : 'Tarjetas'} al Mazo
+                        {t('importDeck.importCardsBtn', { count: qaItems.length })}
                       </Text>
                     </>
                   )}
@@ -879,9 +881,9 @@ export default function ImportDeckScreen() {
               <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                 <View style={styles.previewHeaderRow}>
                   <View>
-                    <Text style={[styles.sectionTitle, { color: colors.text }]}>Vista Previa de Importación</Text>
+                    <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('importDeck.previewWordsTitle')}</Text>
                     <Text style={[styles.previewSub, { color: colors.textMuted }]}>
-                      {parseResult.totalParsed} palabras listas para agregar
+                      {t('importDeck.previewReadyWords', { count: parseResult.totalParsed })}
                     </Text>
                   </View>
                   <TouchableOpacity
@@ -889,28 +891,28 @@ export default function ImportDeckScreen() {
                     onPress={() => setStep('input')}
                   >
                     <Ionicons name="create-outline" size={16} color={colors.primary} />
-                    <Text style={[styles.editBtnText, { color: colors.primary }]}>Modificar</Text>
+                    <Text style={[styles.editBtnText, { color: colors.primary }]}>{t('importDeck.modifyBtn')}</Text>
                   </TouchableOpacity>
                 </View>
 
                 {/* Resumen de columnas detectadas */}
                 <View style={[styles.summaryBox, { backgroundColor: colors.surfaceHighlight }]}>
                   <Text style={[styles.summaryLabel, { color: colors.textMuted }]}>
-                    Delimitador detectado:{' '}
+                    {t('importDeck.delimiterLabel')}{' '}
                     <Text style={{ color: colors.text, fontWeight: 'bold' }}>
-                      {parseResult.delimiter === '\t' ? 'Tabulación (TSV)' : `"${parseResult.delimiter}"`}
+                      {parseResult.delimiter === '\t' ? t('importDeck.tsvTab') : `"${parseResult.delimiter}"`}
                     </Text>
                   </Text>
                   <Text style={[styles.summaryLabel, { color: colors.textMuted }]}>
-                    Encabezados:{' '}
+                    {t('importDeck.headersLabel')}{' '}
                     <Text style={{ color: colors.text, fontWeight: 'bold' }}>
-                      {parseResult.hasHeader ? 'Sí (omitidos como datos)' : 'No (todas son filas de datos)'}
+                      {parseResult.hasHeader ? t('importDeck.headersYes') : t('importDeck.headersNo')}
                     </Text>
                   </Text>
                 </View>
 
                 {/* Muestra de las primeras tarjetas */}
-                <Text style={[styles.previewSampleTitle, { color: colors.text }]}>Primeras 5 palabras detectadas:</Text>
+                <Text style={[styles.previewSampleTitle, { color: colors.text }]}>{t('importDeck.firstWordsLabel')}</Text>
                 {parseResult.items.slice(0, 5).map((item, idx) => (
                   <View
                     key={idx}
@@ -941,7 +943,7 @@ export default function ImportDeckScreen() {
                     <>
                       <Ionicons name="cloud-download-outline" size={20} color="#FFF" style={{ marginRight: 6 }} />
                       <Text style={styles.primaryActionBtnText}>
-                        Importar {parseResult.totalParsed} Palabras a Yomi
+                        {t('importDeck.importWordsBtn', { count: parseResult.totalParsed })}
                       </Text>
                     </>
                   )}
@@ -969,14 +971,14 @@ export default function ImportDeckScreen() {
               onPress={(e) => e.stopPropagation()}
             >
               <View style={styles.promptModalHeader}>
-                <Text style={[styles.promptModalTitle, { color: colors.text }]}>Editar Tarjeta</Text>
+                <Text style={[styles.promptModalTitle, { color: colors.text }]}>{t('importDeck.editCardTitle')}</Text>
                 <TouchableOpacity onPress={() => setEditingQaItem(null)}>
                   <Ionicons name="close" size={22} color={colors.textMuted} />
                 </TouchableOpacity>
               </View>
 
               <Text style={[styles.fieldLabel, { color: '#10B981', marginTop: Spacing.xs }]}>
-                Pregunta (Frente):
+                {t('importDeck.questionFront')}
               </Text>
               <TextInput
                 style={[
@@ -991,7 +993,7 @@ export default function ImportDeckScreen() {
               />
 
               <Text style={[styles.fieldLabel, { color: colors.textMuted, marginTop: Spacing.xs }]}>
-                Respuesta (Reverso):
+                {t('importDeck.answerBack')}
               </Text>
               <TextInput
                 style={[
@@ -1010,14 +1012,14 @@ export default function ImportDeckScreen() {
                   style={[styles.cancelBtn, { borderColor: colors.border }]}
                   onPress={() => setEditingQaItem(null)}
                 >
-                  <Text style={[styles.cancelBtnText, { color: colors.textMuted }]}>Cancelar</Text>
+                  <Text style={[styles.cancelBtnText, { color: colors.textMuted }]}>{t('common.cancel')}</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
                   style={[styles.saveBtn, { backgroundColor: '#10B981' }]}
                   onPress={handleSaveEditQaItem}
                 >
-                  <Text style={styles.saveBtnText}>Guardar</Text>
+                  <Text style={styles.saveBtnText}>{t('common.save')}</Text>
                 </TouchableOpacity>
               </View>
             </Pressable>

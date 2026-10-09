@@ -37,9 +37,11 @@ import { useTheme } from '../../../providers/ThemeProvider';
 import { parseAux } from '../../../lib/word-aux';
 import { KanjiStrokeViewer, preloadStrokeSvg } from '../../components/kanji/KanjiStrokeViewer';
 import { Shadows, Spacing, Typography } from '../../constants/theme';
+import { useTranslation } from '../../i18n';
 
 export default function WordDetailScreen() {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams();
   const router = useRouter();
@@ -107,7 +109,7 @@ export default function WordDetailScreen() {
 
     if (selectedMeanings.includes(meaning)) {
       if (selectedMeanings.length <= 1) {
-        Alert.alert('Aviso', 'Debes mantener al menos un significado seleccionado para repasar.');
+        Alert.alert(t('common.notice'), t('wordDetail.mustKeepOneMeaning'));
         return;
       }
       nextSelected = selectedMeanings.filter((m) => m !== meaning);
@@ -127,17 +129,17 @@ export default function WordDetailScreen() {
     if (!data) return;
     const currentList = cleanAndFormatMeanings(data.word.meanings);
     if (currentList.length <= 1) {
-      Alert.alert('Aviso', 'No puedes eliminar el único significado de la palabra.');
+      Alert.alert(t('common.notice'), t('wordDetail.cannotDeleteOnlyMeaning'));
       return;
     }
 
     Alert.alert(
-      'Eliminar significado',
-      `¿Deseas eliminar permanentemente "${meaning}" de esta palabra?`,
+      t('wordDetail.deleteMeaning'),
+      t('wordDetail.deleteMeaningConfirm', { meaning }),
       [
-        { text: 'Cancelar', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Eliminar',
+          text: t('common.delete'),
           style: 'destructive',
           onPress: async () => {
             try {
@@ -155,7 +157,7 @@ export default function WordDetailScreen() {
               });
               setSelectedMeanings(res.updatedSelected);
             } catch (e) {
-              Alert.alert('Error', 'No se pudo eliminar el significado.');
+              Alert.alert(t('common.error'), t('wordDetail.failedDeleteMeaning'));
             }
           },
         },
@@ -172,7 +174,7 @@ export default function WordDetailScreen() {
     if (!data || !editingMeaning) return;
     const trimmed = editMeaningText.trim();
     if (!trimmed) {
-      Alert.alert('Aviso', 'El significado no puede estar vacío.');
+      Alert.alert(t('common.notice'), t('wordDetail.meaningCannotBeEmpty'));
       return;
     }
 
@@ -192,7 +194,7 @@ export default function WordDetailScreen() {
       setEditingMeaning(null);
       setEditMeaningText('');
     } catch (e) {
-      Alert.alert('Error', 'No se pudo actualizar el significado.');
+      Alert.alert(t('common.error'), t('wordDetail.failedUpdateMeaning'));
     }
   };
 
@@ -210,7 +212,7 @@ export default function WordDetailScreen() {
     if (!isJap) return;
     const trimmed = editReadingText.trim();
     if (!trimmed) {
-      Alert.alert('Aviso', 'La lectura no puede estar vacía.');
+      Alert.alert(t('common.notice'), t('wordDetail.readingCannotBeEmpty'));
       return;
     }
 
@@ -236,7 +238,7 @@ export default function WordDetailScreen() {
       setIsEditingReading(false);
       speakText(trimmed, isJap ? 'ja-JP' : (data.deck?.languageCode || 'zh-CN'), trimmed);
     } catch (e) {
-      Alert.alert('Error', 'No se pudo actualizar la lectura.');
+      Alert.alert(t('common.error'), t('wordDetail.failedUpdateReading'));
     }
   };
 
@@ -339,12 +341,12 @@ export default function WordDetailScreen() {
   const handleDelete = () => {
     if (!data) return;
     Alert.alert(
-      'Eliminar palabra',
-      `¿Deseas eliminar "${data.word.simplified}" de tu mazo?`,
+      t('wordDetail.deleteWord'),
+      t('wordDetail.deleteWordConfirm', { word: data.word.simplified }),
       [
-        { text: 'Cancelar', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Eliminar',
+          text: t('common.delete'),
           style: 'destructive',
           onPress: async () => {
             await deleteWord(data.word.id);

@@ -12,6 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../providers/ThemeProvider';
 import { Shadows, Spacing, Typography } from '../constants/theme';
+import { useTranslation } from '../i18n';
 
 export interface InfoModalFeature {
   icon?: keyof typeof Ionicons.glyphMap;
@@ -51,13 +52,15 @@ export function InfoModal({
   subtitle,
   description,
   features,
-  primaryButtonText = 'Entendido',
+  primaryButtonText,
   onPrimaryPress,
   secondaryButtonText,
   onSecondaryPress,
   children,
 }: InfoModalProps) {
   const { colors, isDark } = useTheme();
+  const { t } = useTranslation();
+  const resolvedPrimaryText = primaryButtonText || t('profile.understood');
 
   const effectiveIconColor = iconColor || colors.primary;
   const effectiveIconBg = iconBgColor || (isDark ? 'rgba(59, 130, 246, 0.16)' : 'rgba(59, 130, 246, 0.1)');
@@ -187,7 +190,7 @@ export function InfoModal({
               activeOpacity={0.85}
               onPress={handlePrimaryPress}
             >
-              <Text style={styles.primaryBtnText}>{primaryButtonText}</Text>
+              <Text style={styles.primaryBtnText}>{resolvedPrimaryText}</Text>
             </TouchableOpacity>
 
             {secondaryButtonText && (

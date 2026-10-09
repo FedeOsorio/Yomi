@@ -6,8 +6,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { DictionaryEntry } from '../../../lib/search-engine';
 import { getDefaultDeckId } from '../../../lib/deck-service';
 import { saveWords } from '../../../lib/word-service';
+import { useTranslation } from '../../i18n';
 
 export default function PickerScreen() {
+  const { t } = useTranslation();
   const { candidates } = useLocalSearchParams();
   const router = useRouter();
   const entries: DictionaryEntry[] = candidates ? JSON.parse(candidates as string) : [];
@@ -33,7 +35,7 @@ export default function PickerScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.headerText}>Seleccioná los caracteres correctos para armar la palabra:</Text>
+      <Text style={styles.headerText}>{t('search.pickerHeader')}</Text>
       
       <FlatList
         data={entries}
@@ -69,7 +71,7 @@ export default function PickerScreen() {
         onPress={handleConfirm}
       >
         <Text style={styles.confirmBtnText}>
-          Guardar {selectedIds.size > 0 ? selectedIds.size : ''} palabra(s)
+          {t('search.pickerSaveWords', { count: selectedIds.size })}
         </Text>
       </TouchableOpacity>
     </View>

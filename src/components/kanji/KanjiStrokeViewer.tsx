@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import Svg, { ClipPath, Defs, G, Path, Text as SvgText } from 'react-native-svg';
 import { getStorageItem, setStorageItem } from '../../../lib/storage-service';
+import { useTranslation } from '../../i18n';
 
 export function getKanjiHex(char: string): string {
   if (!char) return '';
@@ -227,6 +228,7 @@ export function KanjiStrokeViewer({
   textMutedColor,
   isChinese = false,
 }: KanjiStrokeViewerProps) {
+  const { t } = useTranslation();
   const [svgPaths, setSvgPaths] = useState<string[]>([]);
   const [svgClipPaths, setSvgClipPaths] = useState<string[]>([]);
   const [kanjiTexts, setKanjiTexts] = useState<{ text: string; x: string; y: string }[]>([]);
@@ -330,7 +332,9 @@ export function KanjiStrokeViewer({
     return (
       <View style={styles.animatorContainer}>
         <ActivityIndicator size="large" color={primaryColor} />
-        <Text style={[styles.animatorSub, { color: textMutedColor }]}>Cargando trazado de {char}...</Text>
+        <Text style={[styles.animatorSub, { color: textMutedColor }]}>
+          {t('wordDetail.loadingStroke', { char })}
+        </Text>
       </View>
     );
   }
@@ -338,7 +342,7 @@ export function KanjiStrokeViewer({
   if (error || svgPaths.length === 0) {
     return (
       <View style={styles.animatorContainer}>
-        <Text style={styles.animatorError}>Trazado no disponible para este carácter</Text>
+        <Text style={styles.animatorError}>{t('wordDetail.strokeUnavailable')}</Text>
       </View>
     );
   }

@@ -6,23 +6,27 @@ import {
   completePlayStoreUpdate,
 } from '../lib/in-app-updates';
 
+import { useTranslation } from '../i18n';
+
 /**
  * Hook para comprobar automáticamente si existe una nueva versión de Yomi
  * en Google Play al abrir la aplicación y gestionar su descarga en segundo plano.
  */
 export function useInAppUpdates() {
+  const { t } = useTranslation();
+
   useEffect(() => {
     checkForAppUpdates();
 
     const unsubscribe = subscribeToPlayStoreUpdateReady((ready) => {
       if (ready) {
         Alert.alert(
-          'Actualización de Google Play lista',
-          'La nueva versión se descargó en segundo plano. ¿Deseas reiniciar la aplicación ahora para aplicarla?',
+          t('common.updateReadyTitle'),
+          t('common.updateReadyMsg'),
           [
-            { text: 'Más tarde', style: 'cancel' },
+            { text: t('common.later'), style: 'cancel' },
             {
-              text: 'Reiniciar',
+              text: t('common.restart'),
               onPress: () => {
                 completePlayStoreUpdate();
               },
