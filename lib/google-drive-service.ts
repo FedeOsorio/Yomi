@@ -37,16 +37,37 @@ export const GOOGLE_DRIVE_SCOPES = [
   'https://www.googleapis.com/auth/userinfo.profile',
 ];
 
+type GoogleLoginResult = {
+  profile: GoogleUserProfile;
+  token: string;
+  metadata: GoogleDriveBackupMetadata | null;
+};
+
+// Intentos ante "state_mismatch": una respuesta de Google de un intento anterior
+// (p. ej. una pestaña vieja que quedó abierta) no coincide con el intento actual.
+const MAX_AUTH_ATTEMPTS = 2;
+
+let loginInFlight: Promise<GoogleLoginResult> | null = null;
+
+/**
+ * Inicia sesión con Google. Si ya hay un inicio de sesión en curso (doble toque),
+ * devuelve el mismo en vez de abrir otro, para que no se crucen las respuestas.
+ */
+export function loginWithGoogleAsync(): Promise<GoogleLoginResult> {
+  if (!loginInFlight) {
+    loginInFlight = runGoogleLogin().finally(() => {
+      loginInFlight = null;
+    });
+  }
+  return loginInFlight;
+}
+
 /**
  * Inicia sesión con Google de forma 100% directa y asíncrona.
  * Crea una nueva solicitud con un nuevo verificador PKCE cada vez,
  * evitando cualquier bloqueo por reutilización de sesiones previas.
  */
-export async function loginWithGoogleAsync(): Promise<{
-  profile: GoogleUserProfile;
-  token: string;
-  metadata: GoogleDriveBackupMetadata | null;
-}> {
+async function runGoogleLogin(): Promise<GoogleLoginResult> {
   const clientId = Platform.OS === 'android'
     ? process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID
     : Platform.OS === 'ios'
@@ -63,21 +84,38 @@ export async function loginWithGoogleAsync(): Promise<{
 
   console.log('[GoogleAuth] Starting loginWithGoogleAsync with clientId:', clientId);
 
-  // Crear una instancia limpia de AuthRequest con PKCE único
-  const authRequest = new AuthRequest({
-    clientId,
-    scopes: GOOGLE_DRIVE_SCOPES,
-    redirectUri,
-    responseType: ResponseType.Code,
-    usePKCE: true,
-    extraParams: {
-      prompt: 'consent select_account',
-      access_type: 'offline',
-    },
-  });
+  let authRequest: AuthRequest;
+  let result: Awaited<ReturnType<AuthRequest['promptAsync']>>;
+  for (let attempt = 1; ; attempt++) {
+    // Crear una instancia limpia de AuthRequest con PKCE único
+    authRequest = new AuthRequest({
+      clientId,
+      scopes: GOOGLE_DRIVE_SCOPES,
+      redirectUri,
+      responseType: ResponseType.Code,
+      usePKCE: true,
+      extraParams: {
+        prompt: 'consent select_account',
+        access_type: 'offline',
+      },
+    });
 
-  const result = await authRequest.promptAsync(Google.discovery);
-  console.log('[GoogleAuth] promptAsync returned:', result.type);
+    result = await authRequest.promptAsync(Google.discovery);
+    console.log('[GoogleAuth] promptAsync returned:', result.type, 'attempt:', attempt);
+
+    const isStateMismatch = result.type === 'error' && result.error?.code === 'state_mismatch';
+    if (!isStateMismatch) break;
+
+    if (attempt >= MAX_AUTH_ATTEMPTS) {
+      throw new Error('No se pudo completar el inicio de sesión con Google. Cerrá la app por completo y volvé a intentarlo.');
+    }
+
+    // La respuesta era de un intento anterior: se descarta y se reintenta con uno nuevo
+    console.warn('[GoogleAuth] state_mismatch, reintentando con una solicitud nueva');
+    try {
+      WebBrowser.dismissAuthSession();
+    } catch {}
+  }
 
   if (result.type === 'cancel' || result.type === 'dismiss') {
     throw new Error('USER_CANCELLED');

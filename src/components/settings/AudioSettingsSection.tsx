@@ -19,9 +19,9 @@ type Colors = {
 };
 
 const LANGUAGES = [
-  { code: 'ja-JP', flag: '🇯🇵', key: 'japanese' as const, sample: 'こんにちは' },
-  { code: 'zh-CN', flag: '🇨🇳', key: 'chinese' as const, sample: '你好' },
-  { code: 'en-US', flag: '🇺🇸', key: 'english' as const, sample: 'Hello' },
+  { code: 'ja-JP', flag: '🇯🇵', labelKey: 'audio.langJapanese' as const, sample: 'こんにちは' },
+  { code: 'zh-CN', flag: '🇨🇳', labelKey: 'audio.langChinese' as const, sample: '你好' },
+  { code: 'en-US', flag: '🇺🇸', labelKey: 'audio.langEnglish' as const, sample: 'Hello' },
 ];
 
 /** Una fila por idioma: probar la voz y elegir entre las voces instaladas en el teléfono. */
@@ -51,7 +51,7 @@ function VoiceRow({ lang, colors }: { lang: (typeof LANGUAGES)[number]; colors: 
     <View style={[styles.row, { backgroundColor: colors.surfaceHighlight }]}>
       <TouchableOpacity style={styles.rowMain} onPress={() => speakText(lang.sample, lang.code)}>
         <Text style={styles.flag}>{lang.flag}</Text>
-        <Text style={[styles.rowLabel, { color: colors.text }]}>{t(`tabs.${lang.key}`)}</Text>
+        <Text style={[styles.rowLabel, { color: colors.text }]}>{t(lang.labelKey)}</Text>
         <Ionicons name="play-circle-outline" size={20} color={colors.primary} />
       </TouchableOpacity>
       {voices.length > 1 ? (

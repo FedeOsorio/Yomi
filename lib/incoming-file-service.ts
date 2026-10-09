@@ -6,6 +6,7 @@ import { parseBackupFile, restoreBackupPackage, notifyDataChanged } from './back
 import { extractAnkiPackageAsync } from './anki-importer';
 import { createDeck } from './deck-service';
 import { saveBatchWords } from './word-service';
+import { t } from '../src/i18n';
 
 let lastHandledUri = '';
 let lastHandledTimestamp = 0;
@@ -57,30 +58,29 @@ export async function processIncomingBackupFile(uri: string): Promise<boolean> {
       FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => {});
 
       if (result.items.length === 0) {
-        Alert.alert('Mazo de Anki vacío', 'El archivo .apkg no contiene notas válidas para importar.');
+        Alert.alert(t('incoming.emptyAnkiTitle'), t('incoming.emptyAnkiMsg'));
         return false;
       }
 
       Alert.alert(
-        'Importar Mazo de Anki',
-        `Se recibió el mazo "${result.deckName}" con ${result.totalNotes} tarjetas.\n\n¿Deseás importarlo a tu colección?`,
+        t('incoming.importAnkiTitle'),
+        t('incoming.importAnkiMsg', { name: result.deckName, count: result.totalNotes }),
         [
-          { text: 'Cancelar', style: 'cancel' },
+          { text: t('common.cancel'), style: 'cancel' },
           {
-            text: 'Importar Mazo',
+            text: t('incoming.importAnkiBtn'),
             onPress: async () => {
               try {
                 const deckId = await createDeck(result.deckName, result.languageCode, result.deckType);
                 const { inserted, skipped } = await saveBatchWords(deckId, result.items);
                 notifyDataChanged();
+                const skippedMsg = skipped > 0 ? ` ${t('incoming.importSkippedMsg', { count: skipped })}` : '';
                 Alert.alert(
-                  '¡Importación Exitosa!',
-                  `Se importaron ${inserted} palabras al mazo "${result.deckName}".${
-                    skipped > 0 ? ` (${skipped} repetidas omitidas)` : ''
-                  }`,
+                  t('incoming.importSuccessTitle'),
+                  `${t('incoming.importSuccessMsg', { count: inserted, deck: result.deckName })}${skippedMsg}`,
                   [
                     {
-                      text: 'Ver Mazo',
+                      text: t('incoming.viewDeckBtn'),
                       onPress: () => {
                         router.push(`/deck/${deckId}`);
                       },
@@ -88,7 +88,7 @@ export async function processIncomingBackupFile(uri: string): Promise<boolean> {
                   ]
                 );
               } catch (err: any) {
-                Alert.alert('Error al importar mazo', err?.message || 'No se pudo guardar el mazo.');
+                Alert.alert(t('incoming.importAnkiErrorTitle'), err?.message || t('incoming.importAnkiErrorMsg'));
               }
             },
           },
@@ -113,41 +113,60 @@ export async function processIncomingBackupFile(uri: string): Promise<boolean> {
     const pkg = parseBackupFile(fileContent);
 
     const foldersBullet = pkg.metadata.foldersCount
-      ? `• ${pkg.metadata.foldersCount} ${pkg.metadata.foldersCount === 1 ? 'carpeta' : 'carpetas'}\n`
+      ? `• ${pkg.metadata.foldersCount} ${pkg.metadata.foldersCount === 1 ? t('profile.folderSingular') : t('profile.folderPlural')}\n`
       : '';
     Alert.alert(
-      'Copia de seguridad de Yomi',
-      `Se recibió un paquete de respaldo con:\n${foldersBullet}• ${pkg.metadata.decksCount} mazos\n• ${pkg.metadata.wordsCount} palabras\n• ${pkg.metadata.srsCount} tarjetas SRS\n\n¿Cómo deseás importarlo?`,
+      t('incoming.yomiBackupTitle'),
+      t('incoming.yomiBackupMsg', {
+        folders: foldersBullet,
+        decks: pkg.metadata.decksCount,
+        words: pkg.metadata.wordsCount,
+        srs: pkg.metadata.srsCount,
+      }),
       [
-        { text: 'Cancelar', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Combinar',
+          text: t('profile.merge'),
           onPress: async () => {
             try {
               const stats = await restoreBackupPackage(pkg, 'merge');
-              const foldersText = stats.foldersCount ? `${stats.foldersCount} carpetas, ` : '';
+              const foldersText = stats.foldersCount
+                ? `${stats.foldersCount} ${stats.foldersCount === 1 ? t('profile.folderSingular') : t('profile.folderPlural')}, `
+                : '';
               Alert.alert(
-                'Importación Exitosa',
-                `Se combinaron ${foldersText}${stats.decksCount} mazos, ${stats.wordsCount} palabras y ${stats.srsCount} tarjetas SRS en tu colección.`
+                t('incoming.importSuccessTitle'),
+                t('incoming.mergeSuccessMsg', {
+                  folders: foldersText,
+                  decks: stats.decksCount,
+                  words: stats.wordsCount,
+                  srs: stats.srsCount,
+                })
               );
             } catch (err: any) {
-              Alert.alert('Error al importar', err.message || 'No se pudo combinar la copia.');
+              Alert.alert(t('incoming.mergeErrorTitle'), err.message || t('incoming.mergeErrorMsg'));
             }
           },
         },
         {
-          text: 'Reemplazar Todo',
+          text: t('profile.replaceAll'),
           style: 'destructive',
           onPress: async () => {
             try {
               const stats = await restoreBackupPackage(pkg, 'replace');
-              const foldersText = stats.foldersCount ? `${stats.foldersCount} carpetas, ` : '';
+              const foldersText = stats.foldersCount
+                ? `${stats.foldersCount} ${stats.foldersCount === 1 ? t('profile.folderSingular') : t('profile.folderPlural')}, `
+                : '';
               Alert.alert(
-                'Restauración Exitosa',
-                `Se restauraron ${foldersText}${stats.decksCount} mazos, ${stats.wordsCount} palabras y ${stats.srsCount} tarjetas SRS.`
+                t('profile.restoreSuccessTitle'),
+                t('incoming.replaceSuccessMsg', {
+                  folders: foldersText,
+                  decks: stats.decksCount,
+                  words: stats.wordsCount,
+                  srs: stats.srsCount,
+                })
               );
             } catch (err: any) {
-              Alert.alert('Error al restaurar', err.message || 'No se pudo restaurar la copia.');
+              Alert.alert(t('incoming.replaceErrorTitle'), err.message || t('incoming.replaceErrorMsg'));
             }
           },
         },
@@ -157,8 +176,8 @@ export async function processIncomingBackupFile(uri: string): Promise<boolean> {
   } catch (err: any) {
     // Si no es un archivo válido o está dañado
     Alert.alert(
-      'Archivo no compatible',
-      err?.message || 'El archivo recibido no es una copia de seguridad válida de Yomi ni un paquete de Anki compatible.'
+      t('incoming.unsupportedFileTitle'),
+      err?.message || t('incoming.unsupportedFileMsg')
     );
     return false;
   }

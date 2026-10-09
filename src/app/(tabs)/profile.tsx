@@ -133,12 +133,12 @@ export default function ProfileScreen() {
   const handleConnectGoogle = async () => {
     if (Platform.OS === 'android' && !process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID) {
       Alert.alert(
-        'Configuración de Google para Android',
-        'Google no permite usar IDs de tipo Web en aplicaciones Android nativas ("custom scheme uri are not allowed for web client type").\n\nDebés crear un ID de cliente de tipo "Android" en Google Cloud Console y configurarlo en tu archivo .env como EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID.\n\n¿Deseás activar una cuenta de prueba local para verificar la interfaz y el respaldo?',
+        t('profile.googleConfigAndroidTitle'),
+        t('profile.googleConfigAndroidMsg'),
         [
-          { text: 'Cancelar', style: 'cancel' },
+          { text: t('common.cancel'), style: 'cancel' },
           {
-            text: 'Modo de Prueba',
+            text: t('profile.demoMode'),
             onPress: async () => {
               const demoUser: GoogleUserProfile = {
                 email: 'usuario.demo@gmail.com',
@@ -147,7 +147,7 @@ export default function ProfileScreen() {
               const { setStorageItem } = await import('../../../lib/storage-service');
               await setStorageItem('yomi_google_user_profile', JSON.stringify(demoUser));
               useGoogleDriveStore.getState().setGoogleUser(demoUser);
-              Alert.alert('Modo de Prueba Activo', 'Se vinculó la cuenta de prueba usuario.demo@gmail.com.');
+              Alert.alert(t('profile.demoModeActiveTitle'), t('profile.demoModeActiveMsg'));
             },
           },
         ]
@@ -159,8 +159,8 @@ export default function ProfileScreen() {
     if (res.success && res.user) {
       if (res.missingDriveScope) {
         Alert.alert(
-          'Permiso de Google Drive pendiente',
-          `Se vinculó la cuenta ${res.user.email}, pero no se otorgó permiso a Google Drive.\n\nAl iniciar sesión en Google, asegurate de marcar la casilla de verificación de Google Drive para permitir respaldar en la nube.`
+          t('profile.driveScopePendingTitle'),
+          t('profile.driveScopePendingMsg', { email: res.user.email })
         );
       } else if (res.backupMeta && res.backupMeta.modifiedTime) {
         const formattedDate = new Date(res.backupMeta.modifiedTime).toLocaleString(undefined, {
@@ -169,15 +169,15 @@ export default function ProfileScreen() {
         });
 
         Alert.alert(
-          'Copia de seguridad encontrada',
-          `Vinculado con ${res.user.email}.\n\nSe encontró una copia de seguridad en Google Drive del ${formattedDate}.\n\n¿Deseás restaurarla ahora en este dispositivo?`,
+          t('profile.backupFoundTitle'),
+          t('profile.driveBackupFoundOnConnect', { email: res.user.email, date: formattedDate }),
           [
             {
-              text: 'Ahora no',
+              text: t('profile.notNow'),
               style: 'cancel',
             },
             {
-              text: 'Restaurar',
+              text: t('profile.restoreFromDrive'),
               onPress: () => {
                 handleRestoreFromGoogleDrive();
               },
@@ -185,10 +185,10 @@ export default function ProfileScreen() {
           ]
         );
       } else {
-        Alert.alert('Google Drive Conectado', `Vinculado exitosamente con ${res.user.email}.`);
+        Alert.alert(t('profile.driveConnectedTitle'), t('profile.driveConnectedMsg', { email: res.user.email }));
       }
     } else if (res.error && res.error !== 'USER_CANCELLED') {
-      Alert.alert('Error al vincular', res.error);
+      Alert.alert(t('profile.linkErrorTitle'), res.error);
     }
   };
 
@@ -211,78 +211,101 @@ export default function ProfileScreen() {
 
   const handleBackupToGoogleDrive = async () => {
     if (!googleUser) {
-      Alert.alert('Cuenta no conectada', 'Por favor conecta tu cuenta de Google primero.');
+      Alert.alert(t('profile.accountNotConnectedTitle'), t('profile.accountNotConnectedMsg'));
       return;
     }
 
     const res = await backupToDrive();
     if (res.success && res.stats) {
       const foldersText = res.stats.foldersCount
-        ? `${res.stats.foldersCount} ${res.stats.foldersCount === 1 ? 'carpeta' : 'carpetas'}, `
+        ? `${res.stats.foldersCount} ${res.stats.foldersCount === 1 ? t('profile.folderSingular') : t('profile.folderPlural')}, `
         : '';
       Alert.alert(
-        'Copia en Google Drive Exitosa',
-        `Se respaldaron ${foldersText}${res.stats.decksCount} mazos, ${res.stats.wordsCount} palabras y ${res.stats.srsCount} tarjetas SRS en tu espacio privado de Google Drive.`
+        t('profile.driveBackupSuccessTitle'),
+        t('profile.driveBackupSuccessMsg', {
+          folders: foldersText,
+          decks: res.stats.decksCount,
+          words: res.stats.wordsCount,
+          srs: res.stats.srsCount,
+        })
       );
     } else if (res.error) {
-      Alert.alert('Error al respaldar en Drive', res.error);
+      Alert.alert(t('profile.driveBackupErrorTitle'), res.error);
     }
   };
 
   const handleRestoreFromGoogleDrive = async () => {
     const user = googleUser || useGoogleDriveStore.getState().googleUser;
     if (!user) {
-      Alert.alert('Cuenta no conectada', 'Por favor conecta tu cuenta de Google primero.');
+      Alert.alert(t('profile.accountNotConnectedTitle'), t('profile.accountNotConnectedMsg'));
       return;
     }
 
     const inspection = await inspectBackup();
     if (!inspection.success || !inspection.pkg) {
-      Alert.alert('Sin copias en Google Drive', inspection.error || 'No se encontró ninguna copia previa en tu cuenta.');
+      Alert.alert(t('profile.noDriveBackupsTitle'), inspection.error || t('profile.noDriveBackupsMsg'));
       return;
     }
 
     const pkg = inspection.pkg;
     const formattedDate = new Date(pkg.createdAt).toLocaleString();
     const foldersBullet = pkg.metadata.foldersCount
-      ? `• ${pkg.metadata.foldersCount} ${pkg.metadata.foldersCount === 1 ? 'carpeta' : 'carpetas'}\n`
+      ? `• ${pkg.metadata.foldersCount} ${pkg.metadata.foldersCount === 1 ? t('profile.folderSingular') : t('profile.folderPlural')}\n`
       : '';
 
     Alert.alert(
-      'Restaurar desde Google Drive',
-      `Se encontró tu copia del ${formattedDate} con:\n${foldersBullet}• ${pkg.metadata.decksCount} mazos\n• ${pkg.metadata.wordsCount} palabras\n• ${pkg.metadata.srsCount} tarjetas SRS.\n\n¿Cómo deseás restaurar tus datos en este dispositivo?`,
+      t('profile.restoreDrivePromptTitle'),
+      t('profile.restoreDrivePromptMsg', {
+        date: formattedDate,
+        folders: foldersBullet,
+        decks: pkg.metadata.decksCount,
+        words: pkg.metadata.wordsCount,
+        srs: pkg.metadata.srsCount,
+      }),
       [
-        { text: 'Cancelar', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Combinar',
+          text: t('profile.merge'),
           onPress: async () => {
             const res = await restoreDriveBackup('merge', pkg);
             if (res.success && res.res) {
               await fetchStats();
-              const foldersText = res.res.foldersCount ? `${res.res.foldersCount} carpetas, ` : '';
+              const foldersText = res.res.foldersCount
+                ? `${res.res.foldersCount} ${res.res.foldersCount === 1 ? t('profile.folderSingular') : t('profile.folderPlural')}, `
+                : '';
               Alert.alert(
-                'Restauración Exitosa',
-                `Se combinaron los datos desde Google Drive: ${foldersText}${res.res.decksCount} mazos y ${res.res.wordsCount} palabras disponibles.`
+                t('profile.restoreSuccessTitle'),
+                t('profile.restoreMergedDriveMsg', {
+                  folders: foldersText,
+                  decks: res.res.decksCount,
+                  words: res.res.wordsCount,
+                })
               );
             } else if (res.error) {
-              Alert.alert('Error al restaurar', res.error);
+              Alert.alert(t('profile.restoreErrorTitle'), res.error);
             }
           },
         },
         {
-          text: 'Reemplazar Todo',
+          text: t('profile.replaceAll'),
           style: 'destructive',
           onPress: async () => {
             const res = await restoreDriveBackup('replace', pkg);
             if (res.success && res.res) {
               await fetchStats();
-              const foldersText = res.res.foldersCount ? `${res.res.foldersCount} carpetas, ` : '';
+              const foldersText = res.res.foldersCount
+                ? `${res.res.foldersCount} ${res.res.foldersCount === 1 ? t('profile.folderSingular') : t('profile.folderPlural')}, `
+                : '';
               Alert.alert(
-                'Restauración Exitosa',
-                `Se restauró la copia completa desde Google Drive: ${foldersText}${res.res.decksCount} mazos y ${res.res.wordsCount} palabras.`
+                t('profile.restoreSuccessTitle'),
+                t('profile.restoreReplacedDriveMsg', {
+                  folders: foldersText,
+                  decks: res.res.decksCount,
+                  words: res.res.wordsCount,
+                })
               );
             } else if (res.error) {
-              Alert.alert('Error al restaurar', res.error);
+              Alert.alert(t('profile.restoreErrorTitle'), res.error);
             }
           },
         },
@@ -298,14 +321,19 @@ export default function ProfileScreen() {
       const nowIso = new Date().toISOString();
       setLastBackupTime(nowIso);
       const foldersBullet = res.stats.foldersCount
-        ? `• ${res.stats.foldersCount} ${res.stats.foldersCount === 1 ? 'carpeta' : 'carpetas'}\n`
+        ? `• ${res.stats.foldersCount} ${res.stats.foldersCount === 1 ? t('profile.folderSingular') : t('profile.folderPlural')}\n`
         : '';
       Alert.alert(
-        'Copia guardada con éxito',
-        `Se guardó el archivo en tu teléfono con:\n${foldersBullet}• ${res.stats.decksCount} mazos\n• ${res.stats.wordsCount} palabras\n• ${res.stats.srsCount} tarjetas de repaso.`
+        t('profile.localBackupSuccessTitle'),
+        t('profile.localBackupSuccessMsg', {
+          folders: foldersBullet,
+          decks: res.stats.decksCount,
+          words: res.stats.wordsCount,
+          srs: res.stats.srsCount,
+        })
       );
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'No se pudo guardar el archivo.');
+      Alert.alert(t('common.error'), e.message || t('profile.saveFileErrorMsg'));
     } finally {
       setIsBackingUp(false);
     }
@@ -333,45 +361,63 @@ export default function ProfileScreen() {
 
       const formattedDate = new Date(pkg.createdAt).toLocaleString();
       const foldersBullet = pkg.metadata.foldersCount
-        ? `• ${pkg.metadata.foldersCount} ${pkg.metadata.foldersCount === 1 ? 'carpeta' : 'carpetas'}\n`
+        ? `• ${pkg.metadata.foldersCount} ${pkg.metadata.foldersCount === 1 ? t('profile.folderSingular') : t('profile.folderPlural')}\n`
         : '';
       Alert.alert(
-        'Restaurar Copia de Seguridad',
-        `Se encontró una copia del ${formattedDate} con:\n${foldersBullet}• ${pkg.metadata.decksCount} mazos\n• ${pkg.metadata.wordsCount} palabras\n• ${pkg.metadata.srsCount} tarjetas de repaso.\n\n¿Cómo deseás restaurar tus datos?`,
+        t('profile.restoreLocalPromptTitle'),
+        t('profile.restoreLocalPromptMsg', {
+          date: formattedDate,
+          folders: foldersBullet,
+          decks: pkg.metadata.decksCount,
+          words: pkg.metadata.wordsCount,
+          srs: pkg.metadata.srsCount,
+        }),
         [
-          { text: 'Cancelar', style: 'cancel', onPress: () => setIsRestoring(false) },
+          { text: t('common.cancel'), style: 'cancel', onPress: () => setIsRestoring(false) },
           {
-            text: 'Combinar',
+            text: t('profile.merge'),
             onPress: async () => {
               try {
                 const res = await restoreBackupPackage(pkg, 'merge');
                 await fetchStats();
-                const foldersText = res.foldersCount ? `${res.foldersCount} carpetas, ` : '';
+                const foldersText = res.foldersCount
+                  ? `${res.foldersCount} ${res.foldersCount === 1 ? t('profile.folderSingular') : t('profile.folderPlural')}, `
+                  : '';
                 Alert.alert(
-                  'Restauración Exitosa',
-                  `Se combinaron los datos correctamente: ${foldersText}${res.decksCount} mazos y ${res.wordsCount} palabras disponibles.`
+                  t('profile.restoreSuccessTitle'),
+                  t('profile.restoreMergedLocalMsg', {
+                    folders: foldersText,
+                    decks: res.decksCount,
+                    words: res.wordsCount,
+                  })
                 );
               } catch (err: any) {
-                Alert.alert('Error al restaurar', err.message || 'Error durante la restauración.');
+                Alert.alert(t('profile.restoreErrorTitle'), err.message || t('common.error'));
               } finally {
                 setIsRestoring(false);
               }
             },
           },
           {
-            text: 'Reemplazar Todo',
+            text: t('profile.replaceAll'),
             style: 'destructive',
             onPress: async () => {
               try {
                 const res = await restoreBackupPackage(pkg, 'replace');
                 await fetchStats();
-                const foldersText = res.foldersCount ? `${res.foldersCount} carpetas, ` : '';
+                const foldersText = res.foldersCount
+                  ? `${res.foldersCount} ${res.foldersCount === 1 ? t('profile.folderSingular') : t('profile.folderPlural')}, `
+                  : '';
                 Alert.alert(
-                  'Restauración Exitosa',
-                  `Se restauró la copia completa: ${foldersText}${res.decksCount} mazos y ${res.wordsCount} palabras.`
+                  t('profile.restoreSuccessTitle'),
+                  t('profile.restoreReplacedLocalMsg', {
+                    folders: foldersText,
+                    decks: res.decksCount,
+                    words: res.wordsCount,
+                  })
                 );
               } catch (err: any) {
-                Alert.alert('Error al restaurar', err.message || 'Error durante la restauración.');
+                Alert.alert(t('profile.restoreErrorTitle'), err.message || t('common.error'));
               } finally {
                 setIsRestoring(false);
               }
@@ -381,7 +427,7 @@ export default function ProfileScreen() {
       );
     } catch (e: any) {
       setIsRestoring(false);
-      Alert.alert('Error al leer el archivo', e.message || 'No se pudo leer el archivo de copia de seguridad.');
+      Alert.alert(t('profile.readFileErrorTitle'), e.message || t('profile.readFileErrorMsg'));
     }
   };
 
@@ -689,7 +735,7 @@ export default function ProfileScreen() {
             if (res.success && res.meta) {
               Alert.alert(t('profile.backupFoundTitle'), t('profile.lastBackup', { date: new Date(res.meta.modifiedTime).toLocaleString() }));
             } else if (res.success) {
-              Alert.alert('Google Drive', t('profile.backupNotFound'));
+              Alert.alert(t('profile.googleDrive'), t('profile.backupNotFound'));
             } else if (res.error) {
               Alert.alert(t('common.error'), res.error);
             }
