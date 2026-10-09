@@ -49,23 +49,6 @@ const InnerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   useEffect(() => {
     if (migrationsReady) {
       (async () => {
-        try {
-          await userExpoDb.execAsync(`
-            CREATE TABLE IF NOT EXISTS folders (
-              id TEXT PRIMARY KEY NOT NULL,
-              name TEXT NOT NULL,
-              color TEXT,
-              created_at INTEGER NOT NULL
-            );
-          `);
-          const tableInfo = await userExpoDb.getAllAsync<{ name: string }>(`PRAGMA table_info(folders);`);
-          const hasColor = tableInfo.some((col) => col.name === 'color');
-          if (!hasColor) {
-            await userExpoDb.execAsync(`ALTER TABLE folders ADD COLUMN color TEXT;`);
-          }
-        } catch (e) {
-          console.warn('Verificación tabla folders:', e);
-        }
         await runDataRepair();
         setDataReady(true);
         // Puede usar internet: en segundo plano, sin bloquear la app

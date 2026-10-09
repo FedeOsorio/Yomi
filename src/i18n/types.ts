@@ -129,6 +129,13 @@ export interface TranslationSchema {
     deleteFolderNotice: string;
     deleteFolderError: string;
     folderPlaceholder: string;
+    home: string;
+    editFolder: string;
+    newSubfolder: string;
+    moveFolder: string;
+    moveFolderTitle: string;
+    insideFolder: string;
+    moveError: string;
   };
   customCard: {
     newCard: string;

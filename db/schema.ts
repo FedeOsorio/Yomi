@@ -12,6 +12,10 @@ export const folders = sqliteTable('folders', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   color: text('color'),
+  /** Carpeta que la contiene (null = está en Inicio). Sin FK: la integridad la cuida deck-service. */
+  parentId: text('parent_id'),
+  /** Orden entre carpetas hermanas. */
+  position: integer('position').notNull().default(0),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
 

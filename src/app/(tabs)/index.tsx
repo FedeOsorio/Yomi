@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
+  BackHandler,
   Keyboard,
   Modal,
   Pressable,
@@ -32,11 +33,6 @@ import {
   createDeck,
   deleteDeck,
   getFolders,
-  createFolder,
-  renameFolder,
-  deleteFolder,
-  reorderFolders,
-  assignDeckToFolder,
   Folder,
   DeckWithStats,
   SUPPORTED_LANGUAGES,
@@ -46,6 +42,9 @@ import { onDataChanged } from '../../../lib/backup-service';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { Shadows, Spacing, Typography } from '../../constants/theme';
 import { FolderFilterBar } from '../../components/FolderFilterBar';
+import { FolderBreadcrumb } from '../../components/folders/FolderBreadcrumb';
+import { useFolderManager } from '../../hooks/useFolderManager';
+import { countDecksRecursive, getChildFolders, getFolderPath } from '../../../lib/folder-tree';
 import { useTranslation } from '../../i18n';
 
 export default function HomeScreen() {
@@ -54,7 +53,8 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const [decks, setDecks] = useState<DeckWithStats[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
-  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
+  // Carpeta abierta (null = Inicio, donde se ven todos los mazos)
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [menuVisible, setMenuVisible] = useState(false);
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [newDeckName, setNewDeckName] = useState('');
@@ -105,11 +105,6 @@ export default function HomeScreen() {
   const tabBottomMargin = Platform.OS === 'android' ? Math.max(insets.bottom + 4, 8) : Math.max(insets.bottom, 6);
   const fabBottomPosition = tabBottomMargin + 60 + 16;
 
-  const fetchFolders = async () => {
-    const f = await getFolders();
-    setFolders(f);
-  };
-
   const fetchDecks = async () => {
     const [d, f] = await Promise.all([getDecksWithStats(), getFolders()]);
     setDecks(d);
@@ -128,24 +123,47 @@ export default function HomeScreen() {
     });
   }, []);
 
-  const deckCounts = useMemo(() => {
-    const counts: { [folderId: string]: number; total: number; unassigned: number } = {
-      total: decks.length,
-      unassigned: 0,
-    };
-    for (const d of decks) {
-      if (d.folderId) {
-        counts[d.folderId] = (counts[d.folderId] || 0) + 1;
-      } else {
-        counts.unassigned++;
-      }
-    }
-    return counts;
-  }, [decks]);
+  const folderManager = useFolderManager(folders, {
+    onFolderDeleted: (folder) => {
+      if (folder.id === currentFolderId) setCurrentFolderId(folder.parentId);
+    },
+  });
 
-  const displayedDecks = selectedFolderId
-    ? decks.filter((d) => d.folderId === selectedFolderId)
-    : decks;
+  // Si la carpeta abierta desapareció (p. ej. tras restaurar un respaldo), volver a Inicio
+  useEffect(() => {
+    if (currentFolderId && !folders.some((f) => f.id === currentFolderId)) {
+      setCurrentFolderId(null);
+    }
+  }, [folders, currentFolderId]);
+
+  const currentPath = useMemo(() => getFolderPath(folders, currentFolderId), [folders, currentFolderId]);
+  const visibleFolders = useMemo(() => getChildFolders(folders, currentFolderId), [folders, currentFolderId]);
+  const deckCounts = useMemo(() => countDecksRecursive(folders, decks), [folders, decks]);
+  const subfolderCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const f of folders) if (f.parentId) counts[f.parentId] = (counts[f.parentId] || 0) + 1;
+    return counts;
+  }, [folders]);
+
+  const goUp = useCallback(() => {
+    const current = folders.find((f) => f.id === currentFolderId);
+    setCurrentFolderId(current?.parentId ?? null);
+  }, [folders, currentFolderId]);
+
+  // Botón atrás de Android: sube un nivel antes de salir de la pantalla
+  useFocusEffect(
+    useCallback(() => {
+      if (!currentFolderId) return;
+      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+        goUp();
+        return true;
+      });
+      return () => sub.remove();
+    }, [currentFolderId, goUp])
+  );
+
+  // En Inicio se ven todos los mazos; dentro de una carpeta, solo los suyos (las subcarpetas van arriba)
+  const displayedDecks = currentFolderId ? decks.filter((d) => d.folderId === currentFolderId) : decks;
 
   const handleOpenSearch = () => {
     setMenuVisible(false);
@@ -165,29 +183,6 @@ export default function HomeScreen() {
     });
   };
 
-  const handleCreateFolder = async (name: string, color?: string | null) => {
-    await createFolder(name, color);
-    await fetchFolders();
-  };
-
-  const handleRenameFolder = async (folderId: string, newName: string, color?: string | null) => {
-    await renameFolder(folderId, newName, color);
-    await fetchFolders();
-  };
-
-  const handleReorderFolders = async (orderedIds: string[]) => {
-    await reorderFolders(orderedIds);
-    await fetchFolders();
-  };
-
-  const handleDeleteFolder = async (folderId: string) => {
-    await deleteFolder(folderId);
-    if (selectedFolderId === folderId) {
-      setSelectedFolderId(null);
-    }
-    await Promise.all([fetchDecks(), fetchFolders()]);
-  };
-
   const handleCreateDeck = async () => {
     if (!newDeckName.trim()) {
       Alert.alert(t('common.attention'), t('decks.alertNameRequired'));
@@ -199,7 +194,7 @@ export default function HomeScreen() {
         newDeckName.trim(),
         deckType === 'custom' ? 'es-ES' : selectedLang,
         deckType,
-        selectedFolderId
+        currentFolderId
       );
       setNewDeckName('');
       closeCreateModal();
@@ -230,28 +225,6 @@ export default function HomeScreen() {
     );
   };
 
-  const handleMoveDeckToFolder = (deck: DeckWithStats) => {
-    const options = [
-      {
-        text: t('decks.noFolderGeneral'),
-        onPress: async () => {
-          await assignDeckToFolder(deck.id, null);
-          await fetchDecks();
-        },
-      },
-      ...folders.map((f) => ({
-        text: f.name + (deck.folderId === f.id ? ` ${t('decks.currentFolder')}` : ''),
-        onPress: async () => {
-          await assignDeckToFolder(deck.id, f.id);
-          await fetchDecks();
-        },
-      })),
-      { text: t('common.cancel'), style: 'cancel' as const },
-    ];
-
-    Alert.alert(t('decks.moveDeckTitle'), t('decks.moveDeckPrompt', { name: deck.name }), options);
-  };
-
   const handleDeckLongPress = (item: DeckWithStats) => {
     Alert.alert(
       item.name,
@@ -260,7 +233,7 @@ export default function HomeScreen() {
         { text: t('common.cancel'), style: 'cancel' },
         {
           text: t('decks.moveToFolder'),
-          onPress: () => handleMoveDeckToFolder(item),
+          onPress: () => folderManager.openMoveDeck(item),
         },
         {
           text: t('decks.deleteDeckBtn'),
@@ -273,32 +246,32 @@ export default function HomeScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* Barra de Filtro de Carpetas estilo Samsung Notes */}
+      {currentFolderId && <FolderBreadcrumb path={currentPath} onNavigate={setCurrentFolderId} />}
+
+      {/* Carpetas del nivel actual, estilo Samsung Notes */}
       <FolderFilterBar
-        folders={folders}
-        selectedFolderId={selectedFolderId}
+        folders={visibleFolders}
         deckCounts={deckCounts}
-        onSelectFolder={setSelectedFolderId}
-        onCreateFolder={handleCreateFolder}
-        onRenameFolder={handleRenameFolder}
-        onDeleteFolder={handleDeleteFolder}
-        onReorderFolders={handleReorderFolders}
+        subfolderCounts={subfolderCounts}
+        onOpenFolder={(folder) => setCurrentFolderId(folder.id)}
+        onFolderLongPress={folderManager.openActions}
+        onCreateFolder={() => folderManager.openCreate(currentFolderId)}
       />
 
       {displayedDecks.length === 0 ? (
         <View style={styles.emptyContainer}>
           <Ionicons
-            name={selectedFolderId ? 'folder-open-outline' : 'albums-outline'}
+            name={currentFolderId ? 'folder-open-outline' : 'albums-outline'}
             size={64}
             color={colors.textMuted}
           />
           <Text style={[styles.emptyText, { color: colors.textMuted }]}>
-            {selectedFolderId
+            {currentFolderId
               ? t('decks.emptyNoDecksInFolder')
               : t('decks.emptyNoDecks')}
           </Text>
           <Text style={[styles.emptySubtext, { color: colors.textMuted }]}>
-            {selectedFolderId
+            {currentFolderId
               ? t('decks.emptyNoDecksInFolderSub')
               : t('decks.emptyNoDecksSub')}
           </Text>
@@ -308,7 +281,7 @@ export default function HomeScreen() {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{
             paddingHorizontal: Spacing.md,
-            paddingTop: folders.length > 0 ? 0 : Spacing.md,
+            paddingTop: visibleFolders.length > 0 ? 0 : Spacing.md,
             paddingBottom: Math.max(tabBottomMargin + 64, 80),
           }}
           style={{ flex: 1, overflow: 'visible' }}
@@ -316,7 +289,8 @@ export default function HomeScreen() {
           {displayedDecks.map((item) => {
             const isCustom = item.type === 'custom';
             const langMeta = ALL_LANGUAGES.find((l) => l.code === item.languageCode);
-            const folder = folders.find((f) => f.id === item.folderId);
+            // La insignia de carpeta solo hace falta en Inicio (dentro de una carpeta todos son de ella)
+            const folder = currentFolderId ? undefined : folders.find((f) => f.id === item.folderId);
 
             return (
               <Animated.View
@@ -690,6 +664,8 @@ export default function HomeScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {folderManager.modals}
     </View>
   );
 }

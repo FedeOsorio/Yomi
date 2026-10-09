@@ -1,12 +1,16 @@
 import { db } from '../db';
 import { decks, words, srsItems, folders } from '../db/schema';
 import * as crypto from 'expo-crypto';
-import { eq, and, sql, asc } from 'drizzle-orm';
+import { eq, and, sql, asc, isNull } from 'drizzle-orm';
+import { canMoveFolder } from './folder-tree';
 
 export interface Folder {
   id: string;
   name: string;
   color?: string | null;
+  /** Carpeta que la contiene (null = Inicio). */
+  parentId: string | null;
+  position: number;
   createdAt: Date;
 }
 
@@ -61,95 +65,89 @@ export async function createDeck(
   return id;
 }
 
+/** Todas las carpetas, ordenadas entre hermanas. Una carpeta cuyo padre ya no existe se muestra en Inicio. */
 export async function getFolders(): Promise<Folder[]> {
-  try {
-    const result = await db.select().from(folders).orderBy(asc(folders.createdAt));
-    return result.map((f) => ({
-      id: f.id,
-      name: f.name,
-      color: f.color || null,
-      createdAt: f.createdAt,
-    }));
-  } catch (err) {
-    try {
-      await db.run(sql`ALTER TABLE folders ADD COLUMN color text;`);
-      const result = await db.select().from(folders).orderBy(asc(folders.createdAt));
-      return result.map((f) => ({
-        id: f.id,
-        name: f.name,
-        color: f.color || null,
-        createdAt: f.createdAt,
-      }));
-    } catch {
-      return [];
+  const rows = await db.select().from(folders).orderBy(asc(folders.position), asc(folders.createdAt));
+  const ids = new Set(rows.map((f) => f.id));
+  const result: Folder[] = rows.map((f) => ({
+    id: f.id,
+    name: f.name,
+    color: f.color || null,
+    parentId: f.parentId && ids.has(f.parentId) ? f.parentId : null,
+    position: f.position,
+    createdAt: f.createdAt,
+  }));
+  // Un ciclo (A dentro de B y B dentro de A, p. ej. tras combinar un respaldo) dejaría carpetas
+  // inalcanzables: se corta mostrando en Inicio la carpeta donde se cierra el ciclo.
+  const byId = new Map(result.map((f) => [f.id, f]));
+  for (const folder of result) {
+    const seen = new Set<string>([folder.id]);
+    let parent = folder.parentId ? byId.get(folder.parentId) : undefined;
+    while (parent) {
+      if (seen.has(parent.id)) {
+        folder.parentId = null;
+        break;
+      }
+      seen.add(parent.id);
+      parent = parent.parentId ? byId.get(parent.parentId) : undefined;
     }
   }
+  return result;
 }
 
+/** Guarda el orden de un grupo de carpetas hermanas. */
 export async function reorderFolders(folderIds: string[]): Promise<void> {
-  const baseTime = Date.now() - folderIds.length * 10000;
   for (let i = 0; i < folderIds.length; i++) {
-    await db
-      .update(folders)
-      .set({ createdAt: new Date(baseTime + i * 1000) })
-      .where(eq(folders.id, folderIds[i]));
+    await db.update(folders).set({ position: i }).where(eq(folders.id, folderIds[i]));
   }
 }
 
-export async function createFolder(name: string, color?: string | null): Promise<string> {
+/** Posición para una carpeta nueva: al final de sus hermanas. */
+async function nextPosition(parentId: string | null): Promise<number> {
+  const [row] = await db
+    .select({ max: sql<number | null>`max(${folders.position})` })
+    .from(folders)
+    .where(parentId ? eq(folders.parentId, parentId) : isNull(folders.parentId));
+  return (row?.max ?? -1) + 1;
+}
+
+export async function createFolder(name: string, color?: string | null, parentId: string | null = null): Promise<string> {
   const id = crypto.randomUUID();
-  try {
-    await db.insert(folders).values({
-      id,
-      name: name.trim(),
-      color: color || null,
-      createdAt: new Date(),
-    });
-    return id;
-  } catch (err: any) {
-    console.warn('Error en createFolder, intentando auto-reparar esquema de folders:', err);
-    try {
-      await db.run(sql`ALTER TABLE folders ADD COLUMN color text;`);
-    } catch {}
-    await db.insert(folders).values({
-      id,
-      name: name.trim(),
-      color: color || null,
-      createdAt: new Date(),
-    });
-    return id;
-  }
+  await db.insert(folders).values({
+    id,
+    name: name.trim(),
+    color: color || null,
+    parentId,
+    position: await nextPosition(parentId),
+    createdAt: new Date(),
+  });
+  return id;
 }
 
 export async function renameFolder(folderId: string, newName: string, color?: string | null): Promise<void> {
-  const updateData: { name: string; color?: string | null } = { name: newName.trim() };
-  if (color !== undefined) {
-    updateData.color = color;
-  }
-  try {
-    await db
-      .update(folders)
-      .set(updateData)
-      .where(eq(folders.id, folderId));
-  } catch (err) {
-    try {
-      await db.run(sql`ALTER TABLE folders ADD COLUMN color text;`);
-    } catch {}
-    await db
-      .update(folders)
-      .set(updateData)
-      .where(eq(folders.id, folderId));
-  }
+  await db
+    .update(folders)
+    .set({ name: newName.trim(), ...(color !== undefined ? { color } : {}) })
+    .where(eq(folders.id, folderId));
 }
 
-export async function deleteFolder(folderId: string): Promise<void> {
-  // Desvincular mazos que apuntaban a esta carpeta
+/** Mueve una carpeta (con todo su contenido) dentro de otra, o a Inicio con null. */
+export async function moveFolder(folderId: string, newParentId: string | null): Promise<void> {
+  if (!canMoveFolder(await getFolders(), folderId, newParentId)) {
+    throw new Error('No se puede mover una carpeta dentro de sí misma');
+  }
   await db
-    .update(decks)
-    .set({ folderId: null })
-    .where(eq(decks.folderId, folderId));
+    .update(folders)
+    .set({ parentId: newParentId, position: await nextPosition(newParentId) })
+    .where(eq(folders.id, folderId));
+}
 
-  // Eliminar la carpeta
+/** Elimina la carpeta. Sus mazos y subcarpetas no se borran: pasan a la carpeta que la contenía. */
+export async function deleteFolder(folderId: string): Promise<void> {
+  const [folder] = await db.select().from(folders).where(eq(folders.id, folderId)).limit(1);
+  const parentId = folder?.parentId ?? null;
+  await db.update(decks).set({ folderId: parentId }).where(eq(decks.folderId, folderId));
+  await db.update(folders).set({ parentId }).where(eq(folders.parentId, folderId));
   await db.delete(folders).where(eq(folders.id, folderId));
 }
 

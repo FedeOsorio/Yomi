@@ -34,6 +34,9 @@ export interface YomiFolderBackupItem {
   id: string;
   name: string;
   color?: string | null;
+  /** Carpeta que la contiene (respaldos anteriores a las subcarpetas no lo traen). */
+  parentId?: string | null;
+  position?: number;
   createdAt: string;
 }
 
@@ -133,6 +136,8 @@ export async function createFullBackupPackage(): Promise<YomiFullBackupPackage> 
     id: f.id,
     name: f.name,
     color: f.color || null,
+    parentId: f.parentId || null,
+    position: f.position ?? 0,
     createdAt: f.createdAt instanceof Date ? f.createdAt.toISOString() : new Date(f.createdAt).toISOString(),
   }));
 
@@ -456,7 +461,13 @@ export async function restoreBackupPackage(
           if (existing.length > 0) {
             await db
               .update(folders)
-              .set({ name: f.name, color: f.color || null })
+              // Respaldos viejos no traen parentId/position: en ese caso se conserva la ubicación actual
+              .set({
+                name: f.name,
+                color: f.color || null,
+                ...(f.parentId !== undefined ? { parentId: f.parentId } : {}),
+                ...(f.position !== undefined ? { position: f.position } : {}),
+              })
               .where(eq(folders.id, f.id));
             continue;
           }
@@ -467,6 +478,8 @@ export async function restoreBackupPackage(
           id: f.id,
           name: f.name,
           color: f.color || null,
+          parentId: f.parentId || null,
+          position: f.position ?? 0,
           createdAt: new Date(f.createdAt),
         });
       } catch (err) {
