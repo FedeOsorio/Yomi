@@ -93,6 +93,8 @@ export const en: TranslationSchema = {
     addCardFab: '+ Add card',
     addWordFab: '+ Add word',
     viewDetailAndStroke: 'View detail & stroke order',
+    searchPlaceholder: 'Search word, reading or meaning',
+    noSearchResults: 'No words match "{{query}}"',
     addToReview: '+ Add to review',
     deleteWordTitle: 'Delete word',
     deleteWordConfirm: 'Are you sure you want to delete "{{text}}" from the deck and reviews?',

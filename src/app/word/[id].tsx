@@ -1,19 +1,25 @@
 import { Ionicons } from '@expo/vector-icons';
+import { eq } from 'drizzle-orm';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Modal,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
+import { Gesture, GestureDetector, ScrollView } from 'react-native-gesture-handler';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { scheduleOnRN } from 'react-native-worklets';
 import { State } from 'ts-fsrs';
+import { db } from '../../../db';
+import { words } from '../../../db/schema';
 import { preloadAudioService, releaseAudioService, speakText, stopSpeech } from '../../../lib/audio-service';
 import { getQuickHskLevel } from '../../../lib/hsk-data';
 import { cleanAndFormatMeanings, extractKanjis, parseFurigana } from '../../../lib/japanese-search';
@@ -38,6 +44,11 @@ import { parseAux } from '../../../lib/word-aux';
 import { KanjiStrokeViewer, preloadStrokeSvg } from '../../components/kanji/KanjiStrokeViewer';
 import { Shadows, Spacing, Typography } from '../../constants/theme';
 import { useTranslation } from '../../i18n';
+import { useDeckBrowseStore } from '../../stores/deckBrowseStore';
+
+// Distancia (px) o velocidad (px/s) horizontal a partir de la cual el deslizamiento cambia de palabra
+const SWIPE_DISTANCE = 80;
+const SWIPE_VELOCITY = 700;
 
 export default function WordDetailScreen() {
   const { colors } = useTheme();
@@ -58,11 +69,100 @@ export default function WordDetailScreen() {
   const [isAudioReady, setIsAudioReady] = useState(false);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
 
+  // --- Navegación entre palabras del mazo deslizando a izquierda / derecha ---
+  const currentId = typeof id === 'string' ? id : undefined;
+  const { width: screenWidth } = useWindowDimensions();
+  const scrollRef = useRef<ScrollView>(null);
+  const swipeDirectionRef = useRef<1 | -1 | 0>(0);
+  const translateX = useSharedValue(0);
+  const contentOpacity = useSharedValue(1);
+  const browseDeckId = useDeckBrowseStore((s) => s.deckId);
+  const browseIds = useDeckBrowseStore((s) => s.wordIds);
+  const [fallbackIds, setFallbackIds] = useState<string[]>([]);
+  const deckId = data?.word.deckId;
+
+  // Lista visible en el mazo (con su búsqueda) si esta palabra salió de ahí; si no, todas las del mazo
+  const fromBrowseList = Boolean(currentId && browseDeckId === deckId && browseIds.includes(currentId));
+  const siblingIds = fromBrowseList ? browseIds : fallbackIds;
+  const currentIndex = currentId ? siblingIds.indexOf(currentId) : -1;
+  const prevId = currentIndex > 0 ? siblingIds[currentIndex - 1] : undefined;
+  const nextId = currentIndex >= 0 && currentIndex < siblingIds.length - 1 ? siblingIds[currentIndex + 1] : undefined;
+
+  useEffect(() => {
+    if (!deckId || fromBrowseList) return;
+    let isMounted = true;
+    db.select({ id: words.id })
+      .from(words)
+      .where(eq(words.deckId, deckId))
+      .then((rows) => {
+        if (isMounted) setFallbackIds(rows.map((r) => r.id));
+      })
+      .catch(() => { });
+    return () => {
+      isMounted = false;
+    };
+  }, [deckId, fromBrowseList]);
+
+  const goToSibling = useCallback((step: 1 | -1) => {
+    const targetId = step === 1 ? nextId : prevId;
+    if (!targetId) return;
+    swipeDirectionRef.current = step;
+    stopSpeech();
+    router.setParams({ id: targetId });
+  }, [nextId, prevId, router]);
+
+  const swipeGesture = useMemo(() => {
+    const hasPrev = Boolean(prevId);
+    const hasNext = Boolean(nextId);
+    return Gesture.Pan()
+      .activeOffsetX([-20, 20])
+      .failOffsetY([-12, 12])
+      .onUpdate((e) => {
+        // Resistencia en los extremos del mazo (no hay palabra anterior / siguiente)
+        const blocked = (e.translationX > 0 && !hasPrev) || (e.translationX < 0 && !hasNext);
+        translateX.value = blocked ? e.translationX * 0.2 : e.translationX;
+      })
+      .onEnd((e) => {
+        const goNext = hasNext && (e.translationX < -SWIPE_DISTANCE || e.velocityX < -SWIPE_VELOCITY);
+        const goPrev = hasPrev && (e.translationX > SWIPE_DISTANCE || e.velocityX > SWIPE_VELOCITY);
+        if (goNext || goPrev) {
+          const step = goNext ? 1 : -1;
+          contentOpacity.value = withTiming(0, { duration: 160 });
+          translateX.value = withTiming(-step * screenWidth, { duration: 180 }, (finished) => {
+            if (finished) scheduleOnRN(goToSibling, step);
+          });
+        } else {
+          translateX.value = withSpring(0, { damping: 20, stiffness: 220 });
+        }
+      });
+  }, [prevId, nextId, screenWidth, goToSibling, translateX, contentOpacity]);
+
+  const swipeAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: contentOpacity.value,
+    transform: [{ translateX: translateX.value }],
+  }));
+
+  // La palabra nueva entra desde el lado hacia el que se deslizó
+  const animateSwipeIn = () => {
+    const step = swipeDirectionRef.current;
+    if (step === 0) return;
+    swipeDirectionRef.current = 0;
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
+    translateX.value = step * screenWidth * 0.35;
+    translateX.value = withTiming(0, { duration: 220 });
+    contentOpacity.value = withTiming(1, { duration: 220 });
+  };
+
   const fetchDetail = async () => {
     if (typeof id === 'string') {
-      setLoading(true);
+      // Al deslizar entre palabras se mantiene la pantalla montada (sin spinner de pantalla completa)
+      if (!data) setLoading(true);
+      setSelectedKanji(null);
+      setEditingMeaning(null);
+      setIsEditingReading(false);
       const res = await getWordDetailWithRelations(id);
       setData(res);
+      animateSwipeIn();
 
       if (res) {
         const isCustom = res.deck?.type === 'custom';
@@ -254,6 +354,7 @@ export default function WordDetailScreen() {
     const cacheKey = `yomi_compounds_cache_v2_${langCode}_${char}`;
 
     let isMounted = true;
+    setAsyncCompounds([]);
     async function loadCompounds() {
       try {
         const cached = await getStorageItem(cacheKey);
@@ -554,6 +655,11 @@ export default function WordDetailScreen() {
           <Text style={[styles.deckName, { color: colors.text }]} numberOfLines={1}>
             {isCustomDeck ? t('customCard.editCard') : t('wordDetail.title')}
           </Text>
+          {currentIndex >= 0 && siblingIds.length > 1 && (
+            <Text style={[styles.positionText, { color: colors.textMuted }]}>
+              {currentIndex + 1} / {siblingIds.length}
+            </Text>
+          )}
         </View>
 
         <TouchableOpacity onPress={handleDelete} style={styles.iconBtn}>
@@ -561,7 +667,9 @@ export default function WordDetailScreen() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <GestureDetector gesture={swipeGesture}>
+      <Animated.View style={[styles.swipeContainer, swipeAnimatedStyle]}>
+      <ScrollView ref={scrollRef} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         {/* Tarjeta Principal de la Palabra */}
         <View style={[styles.mainCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
 
@@ -1032,6 +1140,8 @@ export default function WordDetailScreen() {
           </View>
         )}
       </ScrollView>
+      </Animated.View>
+      </GestureDetector>
 
       {/* Modal de Animación de Trazado de Kanji Paso a Paso */}
       <Modal
@@ -1263,6 +1373,14 @@ const styles = StyleSheet.create({
   deckName: {
     fontSize: 17,
     fontWeight: '600',
+  },
+  positionText: {
+    fontSize: 13,
+    fontWeight: '600',
+    marginLeft: Spacing.sm,
+  },
+  swipeContainer: {
+    flex: 1,
   },
   scrollContent: {
     padding: Spacing.md,

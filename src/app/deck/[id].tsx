@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { eq } from 'drizzle-orm';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { memo, useCallback, useState } from 'react';
-import { Alert, FlatList, Modal, Platform, Pressable, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { memo, useCallback, useDeferredValue, useMemo, useState } from 'react';
+import { Alert, Modal, Platform, Pressable, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { db } from '../../../db';
 import { decks, srsItems, words } from '../../../db/schema';
@@ -11,7 +12,7 @@ import { speakText } from '../../../lib/audio-service';
 import { ALL_LANGUAGES, deleteDeck } from '../../../lib/deck-service';
 import { getQuickHskLevel } from '../../../lib/hsk-data';
 import { cleanAndFormatMeanings } from '../../../lib/japanese-search';
-import { classifyJapaneseWord, detectTextLanguage, isJapaneseDictionaryForm, formatJapaneseReading } from '../../../lib/japanese-utils';
+import { classifyJapaneseWord, detectTextLanguage, isJapaneseDictionaryForm, formatJapaneseReading, katakanaToHiragana, romajiToHiragana } from '../../../lib/japanese-utils';
 import { getQuickJlptLevel } from '../../../lib/jlpt-data';
 import { addCardToReview, deleteWord, generateConjugationsForDeck, removeCardFromReviewByWordId, resolveJapaneseBaseForm } from '../../../lib/word-service';
 import { parseAux } from '../../../lib/word-aux';
@@ -20,6 +21,11 @@ import { ConjugationPracticeModal } from '../../components/ConjugationPracticeMo
 import { CustomCardData, CustomCardModal } from '../../components/CustomCardModal';
 import { Shadows, Spacing, Typography } from '../../constants/theme';
 import { useTranslation } from '../../i18n';
+import { useDeckBrowseStore } from '../../stores/deckBrowseStore';
+
+// Minúsculas y sin tildes latinas (á, ü, tonos del pinyin). Se recompone con NFC para no perder el dakuten (が ≠ か).
+const normalizeForSearch = (text: string) =>
+  text.normalize('NFD').replace(/[̀-ͯ]/g, '').normalize('NFC').toLowerCase().trim();
 
 interface DeckWordCardProps {
   item: any;
@@ -154,8 +160,25 @@ export default function DeckDetailScreen() {
   const [conjugationModalVisible, setConjugationModalVisible] = useState(false);
   const [customCardModalVisible, setCustomCardModalVisible] = useState(false);
   const [editingCard, setEditingCard] = useState<CustomCardData | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const deferredQuery = useDeferredValue(searchQuery);
+  const setBrowseList = useDeckBrowseStore((s) => s.setBrowseList);
 
   const isCustomDeck = deckInfo?.type === 'custom';
+  const isJapaneseDeck = deckInfo?.languageCode === 'ja-JP';
+
+  const filteredWords = useMemo(() => {
+    const q = normalizeForSearch(deferredQuery);
+    if (!q) return deckWords;
+    // En japonés también se acepta escribir la lectura en katakana o romaji (sakura → さくら)
+    const variants = new Set([q]);
+    if (isJapaneseDeck) {
+      variants.add(katakanaToHiragana(q));
+      if (/[a-z]/.test(q)) variants.add(romajiToHiragana(q));
+    }
+    const terms = [...variants].filter(Boolean);
+    return deckWords.filter((w) => terms.some((term) => w.searchIndex.includes(term)));
+  }, [deckWords, deferredQuery, isJapaneseDeck]);
 
   // Cálculo dinámico para garantizar exactamente 16px de separación por encima de la barra en cualquier dispositivo
   const tabBottomMargin = Platform.OS === 'android' ? Math.max(insets.bottom + 4, 8) : Math.max(insets.bottom, 6);
@@ -260,8 +283,23 @@ export default function DeckDetailScreen() {
           })()
           : cleanAndFormatMeanings(w.meanings).slice(0, 3);
 
+        // Texto de búsqueda precalculado: palabra, lectura (también en hiragana), pinyin numérico y significados
+        const searchIndex = normalizeForSearch(
+          [
+            w.simplified,
+            w.traditional,
+            cleanReading,
+            isJapaneseDeck ? katakanaToHiragana(cleanReading) : '',
+            w.pinyinNumeric,
+            displayMeanings.join(' '),
+          ]
+            .filter(Boolean)
+            .join(' ')
+        );
+
         return {
           ...w,
+          searchIndex,
           resolvedLevel: level,
           resolvedCategory: category,
           displayReading: cleanReading,
@@ -419,8 +457,10 @@ export default function DeckDetailScreen() {
   }, [isCustomDeck, deckInfo?.languageCode]);
 
   const handlePressWord = useCallback((wordId: string) => {
+    // El detalle navega entre las palabras visibles en este momento (respetando la búsqueda)
+    if (id) setBrowseList(id, filteredWords.map((w) => w.id));
     router.push(`/word/${wordId}`);
-  }, [router]);
+  }, [router, id, filteredWords, setBrowseList]);
 
   const renderWordItem = useCallback(({ item }: { item: any }) => (
     <DeckWordCard
@@ -601,16 +641,55 @@ export default function DeckDetailScreen() {
           </View>
         </View>
       ) : (
-        <FlatList
-          data={deckWords}
-          keyExtractor={keyExtractor}
-          contentContainerStyle={{ paddingHorizontal: Spacing.md, paddingBottom: 110 }}
-          renderItem={renderWordItem}
-          removeClippedSubviews={Platform.OS === 'android'}
-          maxToRenderPerBatch={10}
-          windowSize={5}
-          initialNumToRender={8}
-        />
+        <>
+          <View style={[styles.searchBar, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Ionicons name="search" size={18} color={colors.textMuted} />
+            <TextInput
+              style={[styles.searchInput, { color: colors.text }]}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder={t('deckDetail.searchPlaceholder')}
+              placeholderTextColor={colors.textMuted}
+              autoCorrect={false}
+              autoCapitalize="none"
+              returnKeyType="search"
+              clearButtonMode="never"
+            />
+            {searchQuery.length > 0 && (
+              <Animated.View entering={FadeIn.duration(150)} exiting={FadeOut.duration(150)}>
+                <TouchableOpacity
+                  onPress={() => setSearchQuery('')}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityLabel={t('common.close')}
+                >
+                  <Ionicons name="close-circle" size={18} color={colors.textMuted} />
+                </TouchableOpacity>
+              </Animated.View>
+            )}
+          </View>
+
+          <Animated.FlatList
+            data={filteredWords}
+            keyExtractor={keyExtractor}
+            contentContainerStyle={{ paddingHorizontal: Spacing.md, paddingBottom: 110 }}
+            renderItem={renderWordItem}
+            itemLayoutAnimation={LinearTransition.duration(200)}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            removeClippedSubviews={Platform.OS === 'android'}
+            maxToRenderPerBatch={10}
+            windowSize={5}
+            initialNumToRender={8}
+            ListEmptyComponent={
+              <Animated.View entering={FadeIn.duration(200)} style={styles.noResultsContainer}>
+                <Ionicons name="search-outline" size={36} color={colors.textMuted} />
+                <Text style={[styles.noResultsText, { color: colors.textMuted }]}>
+                  {t('deckDetail.noSearchResults', { query: searchQuery.trim() })}
+                </Text>
+              </Animated.View>
+            }
+          />
+        </>
       )}
 
       {/* Floating Extended FAB */}
@@ -765,6 +844,32 @@ const styles = StyleSheet.create({
   menuDropdownText: {
     fontSize: 14,
     fontWeight: '600',
+  },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: Spacing.md,
+    marginBottom: Spacing.md,
+    paddingHorizontal: Spacing.sm + 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    height: 44,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    marginLeft: Spacing.sm,
+    paddingVertical: 0,
+  },
+  noResultsContainer: {
+    alignItems: 'center',
+    paddingTop: Spacing.xl,
+    paddingHorizontal: Spacing.md,
+  },
+  noResultsText: {
+    ...Typography.body,
+    marginTop: Spacing.sm,
+    textAlign: 'center',
   },
   card: {
     paddingHorizontal: Spacing.md,

@@ -66,7 +66,8 @@ export function modelForLanguage(code?: string | null): VoiceModelId | null {
 }
 
 /** Peso de las pistas: cuánto se inclina el modelo hacia las palabras de la sesión. */
-const HOTWORDS_SCORE = 2.0;
+// 1.5 (el valor por defecto de sherpa-onnx): con 2.0 el modelo intercalaba kanas de las pistas.
+const HOTWORDS_SCORE = 1.5;
 /** Máximo de pistas cargadas (cada tarjeta aporta su palabra y sus lecturas). */
 const MAX_HOTWORDS = 3000;
 /** Signos que no forman parte de una pista. */

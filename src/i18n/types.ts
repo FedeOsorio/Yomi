@@ -93,6 +93,8 @@ export interface TranslationSchema {
     addCardFab: string;
     addWordFab: string;
     viewDetailAndStroke: string;
+    searchPlaceholder: string;
+    noSearchResults: string;
     addToReview: string;
     deleteWordTitle: string;
     deleteWordConfirm: string;

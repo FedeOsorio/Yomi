@@ -93,6 +93,8 @@ export const ja: TranslationSchema = {
     addCardFab: '+ カードを追加',
     addWordFab: '+ 単語を追加',
     viewDetailAndStroke: '詳細・書き順を見る',
+    searchPlaceholder: '単語・読み・意味で検索',
+    noSearchResults: '「{{query}}」に一致する単語はありません',
     addToReview: '+ 復習に追加',
     deleteWordTitle: '単語を削除',
     deleteWordConfirm: '「{{text}}」をデッキおよび復習から削除してもよろしいですか？',

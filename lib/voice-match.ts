@@ -265,14 +265,19 @@ function matchAlphabetic(card: CardLike, transcript: string): VoiceMatchResult {
 }
 
 /**
- * Palabras que se espera oír para la tarjeta (su escritura y sus lecturas). Se usan como pistas
- * del reconocedor; la evaluación la sigue haciendo checkVoiceMatch.
+ * Palabras que se espera oír para la tarjeta: su escritura y la lectura que muestra la tarjeta.
+ * Se usan como pistas del reconocedor; la evaluación la sigue haciendo checkVoiceMatch.
+ * NO incluye el catálogo de lecturas on/kun de los kanji sueltos: son muchos fragmentos cortos
+ * (のぼ, くだ, きょう…) que, como pistas, hacían que el modelo intercalara kanas de más.
  */
 export function expectedVoiceWords(rawCard: CardLike, lang: string): string[] {
   const card = { ...rawCard, displayText: stripMarkup(rawCard.displayText), displayReading: stripMarkup(rawCard.displayReading) };
   const target = getEffectiveCardLanguage({ ...card, languageCode: card.languageCode || lang }).toLowerCase();
   const surface = (card.displayText || '').replace(/[\[(【（].*?[\])】）]/g, '').replace(PUNCT, '');
-  if (target.startsWith('ja')) return Array.from(new Set([surface, ...expectedJapaneseReadings(card)].filter(Boolean)));
+  if (target.startsWith('ja')) {
+    const furigana = [...(card.displayText || '').matchAll(/[\[(【（](.*?)[\])】）]/g)].flatMap((m) => splitReadings(m[1]));
+    return Array.from(new Set([surface, ...splitReadings(card.displayReading), ...furigana].filter(Boolean)));
+  }
   return Array.from(new Set([surface, ...(card.displayReading || '').split(/[\/\n,、;•|]/).map((r) => r.trim())].filter(Boolean)));
 }
 

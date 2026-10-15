@@ -93,6 +93,8 @@ export const pt: TranslationSchema = {
     addCardFab: '+ Adicionar cartão',
     addWordFab: '+ Adicionar palavra',
     viewDetailAndStroke: 'Ver detalhes e ordem dos traços',
+    searchPlaceholder: 'Buscar palavra, leitura ou significado',
+    noSearchResults: 'Nenhuma palavra corresponde a "{{query}}"',
     addToReview: '+ Adicionar à revisão',
     deleteWordTitle: 'Excluir palavra',
     deleteWordConfirm: 'Tem certeza de que deseja excluir "{{text}}" do baralho e das revisões?',
