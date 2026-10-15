@@ -96,14 +96,12 @@ class SpeechRecognitionService {
 
       if (options.preferredEngine !== 'native' && usesOfflineModel(languageCode)) {
         this.engine = 'sherpa';
-        // Normalmente ya están entre las pistas de la sesión; si no, el modelo se recarga con ellas
-        if (options.contextualStrings) sherpaVoiceService.setVocabulary(options.contextualStrings);
         const ok = await sherpaVoiceService.start(languageCode, {
           onResult: (text) => live() && callbacks.onResult(text, true),
           onError: (msg) => live() && callbacks.onError?.(msg),
           onStart: () => live() && callbacks.onStart?.(),
           onEnd: () => live() && callbacks.onEnd?.(),
-        });
+        }, options.contextualStrings);
         if (!ok) this.engine = null;
         return ok;
       }

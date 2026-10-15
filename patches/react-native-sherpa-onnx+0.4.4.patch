@@ -1,0 +1,218 @@
+diff --git a/node_modules/react-native-sherpa-onnx/android/src/main/java/com/sherpaonnx/SherpaOnnxModule.kt b/node_modules/react-native-sherpa-onnx/android/src/main/java/com/sherpaonnx/SherpaOnnxModule.kt
+index 4d21189..a44bb23 100644
+--- a/node_modules/react-native-sherpa-onnx/android/src/main/java/com/sherpaonnx/SherpaOnnxModule.kt
++++ b/node_modules/react-native-sherpa-onnx/android/src/main/java/com/sherpaonnx/SherpaOnnxModule.kt
+@@ -651,6 +651,19 @@ class SherpaOnnxModule(reactContext: ReactApplicationContext) :
+     sttHelper.transcribeSamples(instanceId, samples, sampleRate.toInt(), promise)
+   }
+ 
++  /**
++   * [patch Yomi] Transcribe from float PCM samples with hotwords for this decode only (transducer models).
++   */
++  override fun transcribeSamplesWithHotwords(
++    instanceId: String,
++    samples: ReadableArray,
++    sampleRate: Double,
++    hotwords: String,
++    promise: Promise
++  ) {
++    sttHelper.transcribeSamplesWithHotwords(instanceId, samples, sampleRate.toInt(), hotwords, promise)
++  }
++
+   /**
+    * Update recognizer config at runtime.
+    */
+diff --git a/node_modules/react-native-sherpa-onnx/android/src/main/java/com/sherpaonnx/SherpaOnnxSttHelper.kt b/node_modules/react-native-sherpa-onnx/android/src/main/java/com/sherpaonnx/SherpaOnnxSttHelper.kt
+index e015357..2e5c02b 100644
+--- a/node_modules/react-native-sherpa-onnx/android/src/main/java/com/sherpaonnx/SherpaOnnxSttHelper.kt
++++ b/node_modules/react-native-sherpa-onnx/android/src/main/java/com/sherpaonnx/SherpaOnnxSttHelper.kt
+@@ -391,7 +391,20 @@ internal class SherpaOnnxSttHelper(
+     }
+   }
+ 
+-  fun transcribeSamples(instanceId: String, samples: com.facebook.react.bridge.ReadableArray, sampleRate: Int, promise: Promise) {
++  fun transcribeSamples(instanceId: String, samples: com.facebook.react.bridge.ReadableArray, sampleRate: Int, promise: Promise) =
++    transcribeSamplesWithHotwords(instanceId, samples, sampleRate, "", promise)
++
++  /**
++   * [patch Yomi] Like transcribeSamples, but with hotwords for THIS decode only
++   * (transducer models; several hotwords separated by "/"). Uses sherpa-onnx OfflineRecognizer.createStream(hotwords).
++   */
++  fun transcribeSamplesWithHotwords(
++    instanceId: String,
++    samples: com.facebook.react.bridge.ReadableArray,
++    sampleRate: Int,
++    hotwords: String,
++    promise: Promise
++  ) {
+     try {
+       val inst = getInstance(instanceId) ?: run {
+         promise.reject("TRANSCRIBE_ERROR", "STT instance not found: $instanceId")
+@@ -403,7 +416,10 @@ internal class SherpaOnnxSttHelper(
+         return
+       }
+       val floatSamples = FloatArray(samples.size()) { i -> samples.getDouble(i).toFloat() }
+-      val stream: OfflineStream = rec.createStream()
++      val modelType = inst.currentSttModelType
++      val stream: OfflineStream =
++        if (hotwords.isNotBlank() && modelType != null && supportsHotwords(modelType)) rec.createStream(hotwords.trim())
++        else rec.createStream()
+       try {
+         if (inst.currentSttModelType == "qwen3_asr") {
+           val hw = inst.qwen3HotwordsForStream
+@@ -806,7 +822,8 @@ internal class SherpaOnnxSttHelper(
+       ruleFsts = ruleFsts,
+       ruleFars = ruleFars
+     )
+-    return if (hotwordsFile.isNotEmpty() && (modelType == "transducer" || modelType == "nemo_transducer")) {
++    // [patch Yomi] modelingUnit set => per-decode hotwords will be used: needs modified_beam_search from the start.
++    return if ((hotwordsFile.isNotEmpty() || modelingUnit.isNotEmpty()) && (modelType == "transducer" || modelType == "nemo_transducer")) {
+       baseConfig.copy(
+         decodingMethod = "modified_beam_search",
+         maxActivePaths = maxOf(4, baseConfig.maxActivePaths)
+diff --git a/node_modules/react-native-sherpa-onnx/ios/SherpaOnnx+STT.mm b/node_modules/react-native-sherpa-onnx/ios/SherpaOnnx+STT.mm
+index b7727f3..c783ea2 100644
+--- a/node_modules/react-native-sherpa-onnx/ios/SherpaOnnx+STT.mm
++++ b/node_modules/react-native-sherpa-onnx/ios/SherpaOnnx+STT.mm
+@@ -391,6 +391,17 @@ static NSDictionary *sttResultToDict(const sherpaonnx::SttRecognitionResult& r)
+     }
+ }
+ 
++// [patch Yomi] Per-decode hotwords are only implemented on Android; on iOS they are ignored.
++- (void)transcribeSamplesWithHotwords:(NSString *)instanceId
++                              samples:(NSArray<NSNumber *> *)samples
++                           sampleRate:(double)sampleRate
++                             hotwords:(NSString *)hotwords
++                              resolve:(RCTPromiseResolveBlock)resolve
++                               reject:(RCTPromiseRejectBlock)reject
++{
++    [self transcribeSamples:instanceId samples:samples sampleRate:sampleRate resolve:resolve reject:reject];
++}
++
+ - (void)setSttConfig:(NSString *)instanceId
+              options:(NSDictionary *)options
+               resolve:(RCTPromiseResolveBlock)resolve
+diff --git a/node_modules/react-native-sherpa-onnx/lib/module/stt/index.js b/node_modules/react-native-sherpa-onnx/lib/module/stt/index.js
+index 01880f8..e18eed7 100644
+--- a/node_modules/react-native-sherpa-onnx/lib/module/stt/index.js
++++ b/node_modules/react-native-sherpa-onnx/lib/module/stt/index.js
+@@ -137,6 +137,12 @@ export async function createSTT(options) {
+       const raw = await SherpaOnnx.transcribeSamples(instanceId, samples, sampleRate);
+       return normalizeSttResult(raw);
+     },
++    // [patch Yomi] hotwords only for this decode (transducer models; "/" separates hotwords)
++    async transcribeSamplesWithHotwords(samples, sampleRate, hotwords) {
++      guard();
++      const raw = await SherpaOnnx.transcribeSamplesWithHotwords(instanceId, samples, sampleRate, hotwords);
++      return normalizeSttResult(raw);
++    },
+     async setConfig(config) {
+       guard();
+       const map = {};
+diff --git a/node_modules/react-native-sherpa-onnx/lib/typescript/src/NativeSherpaOnnx.d.ts b/node_modules/react-native-sherpa-onnx/lib/typescript/src/NativeSherpaOnnx.d.ts
+index 173ecdc..b5f5bee 100644
+--- a/node_modules/react-native-sherpa-onnx/lib/typescript/src/NativeSherpaOnnx.d.ts
++++ b/node_modules/react-native-sherpa-onnx/lib/typescript/src/NativeSherpaOnnx.d.ts
+@@ -98,6 +98,16 @@ export interface Spec extends TurboModule {
+         event: string;
+         durations: number[];
+     }>;
++    /** [patch Yomi] transcribeSamples with hotwords for this decode only. */
++    transcribeSamplesWithHotwords(instanceId: string, samples: number[], sampleRate: number, hotwords: string): Promise<{
++        text: string;
++        tokens: string[];
++        timestamps: number[];
++        lang: string;
++        emotion: string;
++        event: string;
++        durations: number[];
++    }>;
+     /**
+      * Update recognizer config at runtime (decodingMethod, maxActivePaths, hotwordsFile, hotwordsScore, blankPenalty, ruleFsts, ruleFars).
+      */
+diff --git a/node_modules/react-native-sherpa-onnx/lib/typescript/src/stt/types.d.ts b/node_modules/react-native-sherpa-onnx/lib/typescript/src/stt/types.d.ts
+index b0384a4..bc85a2f 100644
+--- a/node_modules/react-native-sherpa-onnx/lib/typescript/src/stt/types.d.ts
++++ b/node_modules/react-native-sherpa-onnx/lib/typescript/src/stt/types.d.ts
+@@ -236,6 +236,8 @@ export interface SttEngine {
+     readonly instanceId: string;
+     transcribeFile(filePath: string): Promise<SttRecognitionResult>;
+     transcribeSamples(samples: number[], sampleRate: number): Promise<SttRecognitionResult>;
++    /** [patch Yomi] Hotwords only for this decode (transducer models; "/" separates hotwords). */
++    transcribeSamplesWithHotwords(samples: number[], sampleRate: number, hotwords: string): Promise<SttRecognitionResult>;
+     setConfig(options: SttRuntimeConfig): Promise<void>;
+     destroy(): Promise<void>;
+ }
+diff --git a/node_modules/react-native-sherpa-onnx/src/NativeSherpaOnnx.ts b/node_modules/react-native-sherpa-onnx/src/NativeSherpaOnnx.ts
+index 6b880f2..e50821a 100644
+--- a/node_modules/react-native-sherpa-onnx/src/NativeSherpaOnnx.ts
++++ b/node_modules/react-native-sherpa-onnx/src/NativeSherpaOnnx.ts
+@@ -129,6 +129,24 @@ export interface Spec extends TurboModule {
+     durations: number[];
+   }>;
+ 
++  /**
++   * [patch Yomi] Like transcribeSamples, with hotwords for this decode only (transducer models; "/" separates hotwords).
++   */
++  transcribeSamplesWithHotwords(
++    instanceId: string,
++    samples: number[],
++    sampleRate: number,
++    hotwords: string
++  ): Promise<{
++    text: string;
++    tokens: string[];
++    timestamps: number[];
++    lang: string;
++    emotion: string;
++    event: string;
++    durations: number[];
++  }>;
++
+   /**
+    * Update recognizer config at runtime (decodingMethod, maxActivePaths, hotwordsFile, hotwordsScore, blankPenalty, ruleFsts, ruleFars).
+    */
+diff --git a/node_modules/react-native-sherpa-onnx/src/stt/index.ts b/node_modules/react-native-sherpa-onnx/src/stt/index.ts
+index 0e83716..e44fa18 100644
+--- a/node_modules/react-native-sherpa-onnx/src/stt/index.ts
++++ b/node_modules/react-native-sherpa-onnx/src/stt/index.ts
+@@ -211,6 +211,22 @@ export async function createSTT(
+       return normalizeSttResult(raw);
+     },
+ 
++    // [patch Yomi] hotwords only for this decode (transducer models; "/" separates hotwords)
++    async transcribeSamplesWithHotwords(
++      samples: number[],
++      sampleRate: number,
++      hotwords: string
++    ): Promise<SttRecognitionResult> {
++      guard();
++      const raw = await SherpaOnnx.transcribeSamplesWithHotwords(
++        instanceId,
++        samples,
++        sampleRate,
++        hotwords
++      );
++      return normalizeSttResult(raw);
++    },
++
+     async setConfig(config: SttRuntimeConfig): Promise<void> {
+       guard();
+       const map: Record<string, string | number> = {};
+diff --git a/node_modules/react-native-sherpa-onnx/src/stt/types.ts b/node_modules/react-native-sherpa-onnx/src/stt/types.ts
+index c05b12b..d869e78 100644
+--- a/node_modules/react-native-sherpa-onnx/src/stt/types.ts
++++ b/node_modules/react-native-sherpa-onnx/src/stt/types.ts
+@@ -312,6 +312,12 @@ export interface SttEngine {
+     samples: number[],
+     sampleRate: number
+   ): Promise<SttRecognitionResult>;
++  /** [patch Yomi] Hotwords only for this decode (transducer models; "/" separates hotwords). */
++  transcribeSamplesWithHotwords(
++    samples: number[],
++    sampleRate: number,
++    hotwords: string
++  ): Promise<SttRecognitionResult>;
+   setConfig(options: SttRuntimeConfig): Promise<void>;
+   destroy(): Promise<void>;
+ }

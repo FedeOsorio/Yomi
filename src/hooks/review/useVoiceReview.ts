@@ -81,14 +81,9 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
     router.push({ pathname: '/profile', params: { section: 'audio' } });
   };
 
-  /**
-   * Carga en memoria el modelo de voz (ya descargado) para el idioma, con las palabras de todas
-   * las tarjetas de la sesión como pistas (así no hay que recargarlo tarjeta por tarjeta).
-   */
+  /** Carga en memoria el modelo de voz (ya descargado) para el idioma. */
   const prepareModel = async (lang: string): Promise<boolean> => {
-    if (!usesOfflineModel(lang)) return true;
-    sherpaVoiceService.setVocabulary(store().dueCards.flatMap(getContextualStrings));
-    if (sherpaVoiceService.isReady(lang)) return true;
+    if (!usesOfflineModel(lang) || sherpaVoiceService.isReady(lang)) return true;
     setSetupLabel(t('review.loadingVoiceEngine'));
     try {
       const loaded = await sherpaVoiceService.loadModel(lang);

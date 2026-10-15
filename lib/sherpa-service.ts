@@ -1,12 +1,13 @@
-import { PermissionsAndroid, Platform } from 'react-native';
+import { PermissionsAndroid, Platform, TurboModuleRegistry } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 
 /**
  * Reconocimiento de voz offline con Sherpa-ONNX. Un modelo por idioma:
  *
- * - Japonés → ReazonSpeech (zipformer transducer, ~160 MB). Acepta "pistas" (hotwords): al cargarlo
- *   se le pasan las palabras de la sesión y el modelo se inclina hacia ellas cuando el audio es
- *   dudoso (まん en vez de ま), sin inventarlas si no se dijeron.
+ * - Japonés → ReazonSpeech (zipformer transducer, ~160 MB). Acepta "pistas" (hotwords): en cada intento
+ *   se le pasa la palabra de la tarjeta y el modelo se inclina hacia ella cuando el audio es dudoso
+ *   (まん en vez de ま), sin inventarla si no se dijo. Las pistas por intento las agrega el parche
+ *   patches/react-native-sherpa-onnx+0.4.4.patch (transcribeSamplesWithHotwords).
  * - Chino e inglés → SenseVoice (~230 MB).
  *
  * Los modelos NO viajan dentro del APK: el usuario los descarga desde Configuración.
@@ -65,12 +66,10 @@ export function modelForLanguage(code?: string | null): VoiceModelId | null {
   return VOICE_MODEL_IDS.find((id) => MODELS[id].langs.includes(lang)) ?? null;
 }
 
-/** Peso de las pistas: cuánto se inclina el modelo hacia las palabras de la sesión. */
+/** Peso de las pistas: cuánto se inclina el modelo hacia la palabra de la tarjeta. */
 // 1.5 (el valor por defecto de sherpa-onnx): con 2.0 el modelo intercalaba kanas de las pistas.
 const HOTWORDS_SCORE = 1.5;
-/** Máximo de pistas cargadas (cada tarjeta aporta su palabra y sus lecturas). */
-const MAX_HOTWORDS = 3000;
-/** Signos que no forman parte de una pista. */
+/** Signos que no forman parte de una pista ("/" separa pistas para el motor). */
 const HOTWORD_NOISE = /[\s。、，．！？!?,.:;・~～\-_'"「」『』（）()[\]【】<>/|]/g;
 
 export const MODEL_NOT_DOWNLOADED = 'MODEL_NOT_DOWNLOADED';
@@ -143,8 +142,6 @@ class SherpaVoiceService {
   private unsubscribers: Array<() => void> = [];
   private callbacks: SherpaCallbacks | null = null;
   private generation = 0;
-  /** Pistas para la próxima carga del modelo japonés (palabras de la sesión). */
-  private vocabulary: string[] = [];
   /** Caracteres que conoce el modelo japonés (una pista con otro carácter se descarta). */
   private tokenSet: Set<string> | null = null;
   lastError: string | null = null;
@@ -255,23 +252,6 @@ class SherpaVoiceService {
 
   // ───────────── Pistas (hotwords) ─────────────
 
-  /**
-   * Palabras que pueden aparecer en la sesión (escritura y lecturas de cada tarjeta).
-   * Solo las usa el modelo japonés. Si hay palabras nuevas, el modelo se recarga en la próxima
-   * carga; se conservan las anteriores para no recargar al ir y volver entre pantallas.
-   */
-  setVocabulary(words: string[]): void {
-    // Una sola letra/kana no se usa como pista: inclinaría al modelo hacia sonidos sueltos (お, さ…)
-    const clean = Array.from(new Set(words.map((w) => (w || '').replace(HOTWORD_NOISE, '')).filter((w) => [...w].length >= 2)));
-    const merged = new Set(this.vocabulary);
-    const before = merged.size;
-    clean.forEach((w) => merged.add(w));
-    if (merged.size === before) return;
-    const list = [...merged];
-    // Si se pasa del máximo, se quedan solo las palabras de la sesión nueva
-    this.vocabulary = list.length > MAX_HOTWORDS ? clean.slice(0, MAX_HOTWORDS) : list;
-  }
-
   private async loadTokenSet(id: VoiceModelId): Promise<Set<string>> {
     if (this.tokenSet) return this.tokenSet;
     const raw = await FileSystem.readAsStringAsync(`${this.modelDirUri(id)}/tokens.txt`);
@@ -279,24 +259,28 @@ class SherpaVoiceService {
     return this.tokenSet;
   }
 
-  /** Escribe el archivo de pistas (solo palabras que el modelo sabe escribir). Devuelve su ruta o ''. */
-  private async writeHotwordsFile(id: VoiceModelId, words: string[]): Promise<string> {
-    if (words.length === 0) return '';
-    const tokens = await this.loadTokenSet(id);
-    const lines = words.filter((w) => [...w].every((ch) => tokens.has(ch)));
-    if (lines.length === 0) return '';
-    const uri = `${FileSystem.documentDirectory}models/hotwords-ja.txt`;
-    await FileSystem.writeAsStringAsync(uri, lines.join('\n') + '\n');
-    return this.toNativePath(uri);
+  /** Pistas listas para el motor: sin signos y solo con caracteres que el modelo sabe escribir. */
+  private async cleanHotwords(id: VoiceModelId, words: string[]): Promise<string> {
+    const tokens = await this.loadTokenSet(id).catch(() => null);
+    const clean = words
+      .map((w) => (w || '').replace(HOTWORD_NOISE, ''))
+      .filter((w) => w && (!tokens || [...w].every((ch) => tokens.has(ch))));
+    return Array.from(new Set(clean)).join('/');
+  }
+
+  /** ¿El binario trae el parche de pistas por intento? (una actualización OTA puede llegar a un binario viejo) */
+  private supportsPerDecodeHotwords(): boolean {
+    const native = TurboModuleRegistry.get<any>('SherpaOnnx');
+    return typeof native?.transcribeSamplesWithHotwords === 'function';
   }
 
   // ───────────── Carga en memoria ─────────────
 
   private wantedKey(id: VoiceModelId, lang: string): string {
-    return id === 'reazon-ja' ? `${id}|${this.vocabulary.join('\u0001')}` : `${id}|${lang}`;
+    return id === 'reazon-ja' ? id : `${id}|${lang}`;
   }
 
-  /** ¿Está cargado y al día (mismo modelo/idioma y mismas pistas)? */
+  /** ¿Está cargado el modelo de ese idioma? */
   isReady(langCode?: string): boolean {
     if (!this.engine) return false;
     if (!langCode) return true;
@@ -331,14 +315,14 @@ class SherpaVoiceService {
         await this.unloadEngine();
         const modelPath = { type: 'file' as const, path: this.toNativePath(this.modelDirUri(id)) };
         if (id === 'reazon-ja') {
-          const hotwordsFile = await this.writeHotwordsFile(id, this.vocabulary);
+          // modelingUnit activa la búsqueda que admite pistas por intento (ver el parche)
           this.engine = await m.stt.createSTT({
             modelPath,
             modelType: 'transducer',
             preferInt8: true,
             numThreads: 2,
             modelingUnit: 'cjkchar',
-            ...(hotwordsFile ? { hotwordsFile, hotwordsScore: HOTWORDS_SCORE } : {}),
+            hotwordsScore: HOTWORDS_SCORE,
           });
         } else {
           this.engine = await m.stt.createSTT({
@@ -382,7 +366,11 @@ class SherpaVoiceService {
     return this.stream !== null;
   }
 
-  async start(langCode: string, callbacks: SherpaCallbacks): Promise<boolean> {
+  /**
+   * Abre el micrófono. `hotwords`: palabras esperadas en este intento (la tarjeta actual); solo las
+   * usa el modelo japonés.
+   */
+  async start(langCode: string, callbacks: SherpaCallbacks, hotwords: string[] = []): Promise<boolean> {
     await this.abort();
     const gen = ++this.generation;
 
@@ -398,6 +386,8 @@ class SherpaVoiceService {
 
     const lang = this.engineLang;
     const m = getModules()!;
+    const engineModel = this.engineModel;
+    const hints = engineModel === 'reazon-ja' && this.supportsPerDecodeHotwords() ? await this.cleanHotwords(engineModel, hotwords) : '';
     let preRoll: number[] = [];
     let utterance: number[] = [];
     let speaking = false;
@@ -425,7 +415,9 @@ class SherpaVoiceService {
       const padded = [...new Array(ms(PAD_BEFORE_MS)).fill(0), ...audio, ...new Array(ms(PAD_AFTER_MS)).fill(0)];
       busy = true;
       try {
-        const result = await this.engine.transcribeSamples(padded, SAMPLE_RATE);
+        const result = hints
+          ? await this.engine.transcribeSamplesWithHotwords(padded, SAMPLE_RATE, hints)
+          : await this.engine.transcribeSamples(padded, SAMPLE_RATE);
         if (gen !== this.generation) return;
         const text = cleanTranscript(result?.text ?? '', lang);
         console.log('[Sherpa] Elocución:', JSON.stringify(result?.text), '→', JSON.stringify(text));
