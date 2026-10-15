@@ -329,9 +329,9 @@ class SherpaVoiceService {
 
         speaking = false;
         voicedMs = 0;
-        // Quitar el silencio final dejando ~200 ms de cola
-        const trim = ended ? Math.max(0, ms(silenceMs - 200)) : 0;
-        const audio = utterance.slice(0, utterance.length - trim);
+        // No se recorta la cola: los sonidos finales suaves (la ん de でん, las vocales que se apagan)
+        // tienen poca energía y el detector los cuenta como silencio; recortarlos los borraba.
+        const audio = utterance;
         utterance = [];
         if (audio.length >= ms(MIN_UTTERANCE_MS)) transcribe(audio);
       });

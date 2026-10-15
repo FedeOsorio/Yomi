@@ -12,6 +12,7 @@ import { parseAux } from './word-aux';
  * conjugaciones ni partículas extra. Solo se tolera:
  *   - escribir la misma lectura con otro sistema (kanji homófono, katakana, romaji),
  *   - vocales largas escritas distinto (おう / おお / ー),
+ *   - は/へ/を escritos donde la palabra lleva わ/え/お (el modelo toma el sonido como partícula),
  *   - 1 error de sonido en palabras largas (≥ 8 letras en romaji).
  */
 
@@ -172,6 +173,13 @@ function matchJapanese(card: CardLike, transcript: string): VoiceMatchResult {
     if (hit) return { isMatch: true, matchedReading: hit, heard: hit };
   }
 
+  // 2b. Mismo sonido escrito como partícula: el modelo oye "kawa" como か + は (partícula "wa").
+  //     Solo vale donde la tarjeta lleva わ/え/お en esa posición; no agrega ni quita sonidos.
+  for (const h of heard) {
+    const hit = expected.find((e) => sameSoundAsParticle(phonetic(h), phonetic(e)));
+    if (hit) return { isMatch: true, matchedReading: hit, heard: hit };
+  }
+
   // 3. Palabras largas: se tolera 1 sonido distinto (comparando en romaji)
   for (const h of heard) {
     const hr = hiraganaToRomaji(phonetic(h));
@@ -194,6 +202,18 @@ function matchJapanese(card: CardLike, transcript: string): VoiceMatchResult {
 
   // Para mostrar: la lectura solo si no hay ambigüedad; si no, lo que se transcribió tal cual
   return { isMatch: false, heard: heard.length === 1 ? heard[0] : clean };
+}
+
+// Kana de partícula → cómo suena (は = wa, へ = e, を = o)
+const PARTICLE_SOUND: Record<string, string> = { は: 'わ', へ: 'え', を: 'お' };
+
+/** ¿`heard` es `expected` con alguna わ/え/お escrita como partícula (は/へ/を)? */
+function sameSoundAsParticle(heard: string, expected: string): boolean {
+  if (heard.length !== expected.length || heard === expected) return false;
+  for (let i = 0; i < heard.length; i++) {
+    if (heard[i] !== expected[i] && PARTICLE_SOUND[heard[i]] !== expected[i]) return false;
+  }
+  return true;
 }
 
 const VOICED: Record<string, string> = {
