@@ -1,10 +1,11 @@
 import { PermissionsAndroid, Platform } from 'react-native';
 import { ExpoSpeechRecognitionModule } from 'expo-speech-recognition';
-import { sherpaVoiceService, toSenseVoiceLang } from './sherpa-service';
+import { modelForLanguage, sherpaVoiceService } from './sherpa-service';
 
 /**
  * Punto de entrada único para el reconocimiento de voz de la app.
  * - Japonés / chino / inglés → Sherpa-ONNX offline (un resultado final por intento).
+ *   En japonés, las palabras esperadas se usan como pistas del modelo (ver sherpa-service).
  * - Cualquier otro idioma (p. ej. español en tarjetas personalizadas) → reconocedor nativo del sistema.
  */
 
@@ -24,7 +25,7 @@ export interface SpeechRecognitionCallbacks {
 }
 
 export interface SpeechRecognitionOptions {
-  /** Palabras esperadas para sesgar el reconocedor nativo (Sherpa las ignora). */
+  /** Palabras esperadas: sesgan el reconocedor nativo y son las pistas del modelo japonés offline. */
   contextualStrings?: string[];
   /** Forzar el reconocedor nativo aunque el idioma lo soporte Sherpa. */
   preferredEngine?: 'auto' | 'native';
@@ -33,7 +34,7 @@ export interface SpeechRecognitionOptions {
 
 /** Indica si el idioma se reconoce con el modelo offline (y por lo tanto necesita descargarlo). */
 export function usesOfflineModel(languageCode: string): boolean {
-  return ['ja', 'zh', 'en'].includes(toSenseVoiceLang(languageCode) ?? '');
+  return modelForLanguage(languageCode) !== null;
 }
 
 class SpeechRecognitionService {
@@ -95,6 +96,8 @@ class SpeechRecognitionService {
 
       if (options.preferredEngine !== 'native' && usesOfflineModel(languageCode)) {
         this.engine = 'sherpa';
+        // Normalmente ya están entre las pistas de la sesión; si no, el modelo se recarga con ellas
+        if (options.contextualStrings) sherpaVoiceService.setVocabulary(options.contextualStrings);
         const ok = await sherpaVoiceService.start(languageCode, {
           onResult: (text) => live() && callbacks.onResult(text, true),
           onError: (msg) => live() && callbacks.onError?.(msg),

@@ -291,6 +291,7 @@ export default function ReviewScreen() {
   const voiceModelModal = (
     <VoiceModelRequiredModal
       visible={voice.showModelRequired}
+      languageCode={voice.modelRequiredLang}
       colors={colors}
       onClose={voice.closeModelRequired}
       onGoToDownload={voice.goToModelDownload}

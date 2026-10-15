@@ -24,7 +24,7 @@ import {
   romajiToHiragana,
   toNormalizedHiragana,
 } from '../../lib/japanese-utils';
-import { MODEL_NOT_DOWNLOADED } from '../../lib/sherpa-service';
+import { MODEL_NOT_DOWNLOADED, sherpaVoiceService } from '../../lib/sherpa-service';
 import { speechService } from '../../lib/speech-recognition-service';
 import { useRouter } from 'expo-router';
 import { VoiceModelRequiredModal } from './review/VoiceModelRequiredModal';
@@ -750,6 +750,13 @@ export function ConjugationPracticeModal({
       expectedReading = expected.reading;
       contextualStrings = [expected.kanji, expected.reading, word.kanji, word.reading].filter(Boolean);
     }
+    // Pistas del modelo de voz para todo el ejercicio de una vez (se carga una sola vez, no por tarjeta)
+    sherpaVoiceService.setVocabulary(
+      queueRef.current.flatMap(({ word, form }) => {
+        const e = conjugateJapanese(word.kanji, word.reading, word.category, form);
+        return [e.kanji, e.reading, word.kanji, word.reading];
+      })
+    );
 
     const started = await speechService.start(
       'ja-JP',
@@ -1520,6 +1527,7 @@ export function ConjugationPracticeModal({
 
         <VoiceModelRequiredModal
           visible={showModelRequired}
+          languageCode="ja-JP"
           colors={colors}
           onClose={() => setShowModelRequired(false)}
           onGoToDownload={() => {

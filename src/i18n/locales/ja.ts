@@ -454,7 +454,7 @@ export const ja: TranslationSchema = {
     offlineSpeechTitle: 'オフライン音声認識',
     modelReady: 'ダウンロード済み。オフラインで動作します。',
     modelDownloading: 'ダウンロード中… {{percent}}%',
-    modelMissing: '未ダウンロード ({{size}} MB)。日本語、中国語、英語の音声復習に必要です。',
+    modelMissing: '未ダウンロード（{{size}} MB）。この言語の音声復習に必要です。',
     downloadModel: 'モデルをダウンロード · {{size}} MB',
     deleteModel: 'モデルを削除',
     downloadFailed: 'ダウンロード失敗',

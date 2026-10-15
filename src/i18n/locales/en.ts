@@ -454,7 +454,7 @@ export const en: TranslationSchema = {
     offlineSpeechTitle: 'Offline Voice Recognition',
     modelReady: 'Downloaded. Works offline.',
     modelDownloading: 'Downloading… {{percent}}%',
-    modelMissing: 'Not downloaded ({{size}} MB). Required for voice review in Japanese, Chinese, and English.',
+    modelMissing: 'Not downloaded ({{size}} MB). Required for voice review in this language.',
     downloadModel: 'Download model · {{size}} MB',
     deleteModel: 'Delete model',
     downloadFailed: 'Download failed',

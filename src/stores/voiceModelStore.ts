@@ -1,39 +1,53 @@
 import { create } from 'zustand';
-import { sherpaVoiceService } from '../../lib/sherpa-service';
+import { sherpaVoiceService, VOICE_MODEL_IDS, VoiceModelId } from '../../lib/sherpa-service';
 
 /**
- * Estado de la descarga del modelo de reconocimiento de voz offline.
- * Vive en un store para que el progreso se mantenga aunque el usuario cambie de pantalla.
+ * Estado de los modelos de reconocimiento de voz offline (uno por idioma).
+ * Vive en un store para que el progreso de descarga se mantenga aunque el usuario cambie de pantalla.
  */
 type Status = 'unknown' | 'missing' | 'downloading' | 'ready';
-
-interface VoiceModelState {
+export interface ModelState {
   status: Status;
   percent: number;
-  refresh: () => Promise<void>;
-  download: () => Promise<boolean>;
-  remove: () => Promise<void>;
 }
 
-export const useVoiceModelStore = create<VoiceModelState>((set, get) => ({
-  status: 'unknown',
-  percent: 0,
+interface VoiceModelState {
+  models: Record<VoiceModelId, ModelState>;
+  refresh: () => Promise<void>;
+  download: (id: VoiceModelId) => Promise<boolean>;
+  remove: (id: VoiceModelId) => Promise<void>;
+}
 
-  refresh: async () => {
-    if (get().status === 'downloading') return;
-    set({ status: (await sherpaVoiceService.isModelDownloaded()) ? 'ready' : 'missing' });
-  },
+const initial = Object.fromEntries(VOICE_MODEL_IDS.map((id) => [id, { status: 'unknown', percent: 0 }])) as Record<
+  VoiceModelId,
+  ModelState
+>;
 
-  download: async () => {
-    if (get().status === 'downloading') return false;
-    set({ status: 'downloading', percent: 0 });
-    const ok = await sherpaVoiceService.downloadModel((percent) => set({ percent }));
-    set({ status: ok ? 'ready' : 'missing', percent: ok ? 100 : 0 });
-    return ok;
-  },
+export const useVoiceModelStore = create<VoiceModelState>((set, get) => {
+  const update = (id: VoiceModelId, state: Partial<ModelState>) =>
+    set({ models: { ...get().models, [id]: { ...get().models[id], ...state } } });
 
-  remove: async () => {
-    await sherpaVoiceService.deleteModel();
-    set({ status: 'missing', percent: 0 });
-  },
-}));
+  return {
+    models: initial,
+
+    refresh: async () => {
+      for (const id of VOICE_MODEL_IDS) {
+        if (get().models[id].status === 'downloading') continue;
+        update(id, { status: (await sherpaVoiceService.isModelDownloaded(id)) ? 'ready' : 'missing' });
+      }
+    },
+
+    download: async (id) => {
+      if (get().models[id].status === 'downloading') return false;
+      update(id, { status: 'downloading', percent: 0 });
+      const ok = await sherpaVoiceService.downloadModel(id, (percent) => update(id, { percent }));
+      update(id, { status: ok ? 'ready' : 'missing', percent: ok ? 100 : 0 });
+      return ok;
+    },
+
+    remove: async (id) => {
+      await sherpaVoiceService.deleteModel(id);
+      update(id, { status: 'missing', percent: 0 });
+    },
+  };
+});

@@ -7,6 +7,7 @@ import { getEffectiveCardLanguage } from '../../../lib/japanese-utils';
 import { registerWordInDictionary } from '../../../lib/phonetic-dictionary';
 import { calculateChineseAccuracyScore } from '../../../lib/pinyin-utils';
 import { MODEL_NOT_DOWNLOADED, sherpaVoiceService } from '../../../lib/sherpa-service';
+import { expectedVoiceWords } from '../../../lib/voice-match';
 import { speechService, usesOfflineModel } from '../../../lib/speech-recognition-service';
 import { checkVoiceMatch, DueCardWithContext } from '../../../lib/srs-engine';
 import { CardEvaluation, useReviewStore } from '../../stores/reviewStore';
@@ -21,11 +22,8 @@ const MAX_VOICE_ATTEMPTS = 3;
 /** Tiempo con la respuesta a la vista antes de pasar sola a la siguiente tarjeta. */
 const ANSWER_VISIBLE_MS = 7000;
 
-/** Palabras esperadas para sesgar el reconocedor nativo (solo se usa en idiomas sin modelo offline). */
-const getContextualStrings = (card: DueCardWithContext): string[] => {
-  const strings = [card.displayText, ...(card.displayReading || '').split(/[\/\n,、;•|]/)];
-  return Array.from(new Set(strings.map((x) => (x || '').trim()).filter(Boolean)));
-};
+/** Palabras esperadas de la tarjeta: sesgan el reconocedor (pistas del modelo japonés). */
+const getContextualStrings = (card: DueCardWithContext): string[] => expectedVoiceWords(card, getEffectiveCardLanguage(card));
 
 /**
  * Repaso manos libres: micrófono, intentos, límite de tiempo, evaluación y paso automático
@@ -42,7 +40,8 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
   const [setupLabel, setSetupLabel] = useState<string | null>(null);
   // Aviso bajo la transcripción ("No coincide · intento 1 de 3")
   const [feedback, setFeedback] = useState<string | null>(null);
-  const [showModelRequired, setShowModelRequired] = useState(false);
+  // Idioma cuyo modelo de voz falta (null = no hay aviso abierto)
+  const [modelRequiredLang, setModelRequiredLang] = useState<string | null>(null);
 
   // Barra de 15 s alrededor del micrófono y "respiración" del botón mientras escucha
   const progressAnim = useRef(new Animated.Value(0)).current;
@@ -78,17 +77,22 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
   };
 
   const goToModelDownload = () => {
-    setShowModelRequired(false);
+    setModelRequiredLang(null);
     router.push({ pathname: '/profile', params: { section: 'audio' } });
   };
 
-  /** Carga en memoria el modelo de voz (ya descargado) para el idioma. */
+  /**
+   * Carga en memoria el modelo de voz (ya descargado) para el idioma, con las palabras de todas
+   * las tarjetas de la sesión como pistas (así no hay que recargarlo tarjeta por tarjeta).
+   */
   const prepareModel = async (lang: string): Promise<boolean> => {
-    if (!usesOfflineModel(lang) || sherpaVoiceService.isReady(lang)) return true;
+    if (!usesOfflineModel(lang)) return true;
+    sherpaVoiceService.setVocabulary(store().dueCards.flatMap(getContextualStrings));
+    if (sherpaVoiceService.isReady(lang)) return true;
     setSetupLabel(t('review.loadingVoiceEngine'));
     try {
       const loaded = await sherpaVoiceService.loadModel(lang);
-      if (!loaded && sherpaVoiceService.lastError === MODEL_NOT_DOWNLOADED) setShowModelRequired(true);
+      if (!loaded && sherpaVoiceService.lastError === MODEL_NOT_DOWNLOADED) setModelRequiredLang(lang);
       else if (!loaded) Alert.alert(t('review.voiceEngineTitle'), sherpaVoiceService.lastError ?? t('review.voiceEngineError'));
       return loaded;
     } finally {
@@ -106,10 +110,10 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
       Alert.alert(t('review.micPermissionTitle'), t('review.micPermissionMsg'));
       return false;
     }
-    if (usesOfflineModel(lang) && !(await sherpaVoiceService.isModelDownloaded())) {
+    if (!(await sherpaVoiceService.hasModelFor(lang))) {
       onModelMissing();
       // Esperar a que cierre el modal de opciones antes de abrir el aviso (dos Modal a la vez fallan en Android)
-      setTimeout(() => setShowModelRequired(true), 250);
+      setTimeout(() => setModelRequiredLang(lang), 250);
       return false;
     }
     return true;
@@ -247,7 +251,7 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
           setSpeechStatus('idle');
           progressAnim.stopAnimation();
           if (err === MODEL_NOT_DOWNLOADED) {
-            setShowModelRequired(true);
+            setModelRequiredLang(lang);
             return;
           }
           Alert.alert(t('review.micErrorTitle'), err || t('review.micErrorDefault'));
@@ -357,8 +361,9 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
     feedback,
     progressAnim,
     pulseAnim,
-    showModelRequired,
-    closeModelRequired: () => setShowModelRequired(false),
+    showModelRequired: modelRequiredLang !== null,
+    modelRequiredLang,
+    closeModelRequired: () => setModelRequiredLang(null),
     goToModelDownload,
     ensureReady,
     prepareModel,

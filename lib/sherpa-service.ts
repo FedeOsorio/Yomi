@@ -2,29 +2,75 @@ import { PermissionsAndroid, Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 
 /**
- * Reconocimiento de voz offline con Sherpa-ONNX + SenseVoice (ja / zh / en / ko / yue).
+ * Reconocimiento de voz offline con Sherpa-ONNX. Un modelo por idioma:
  *
- * - El modelo NO viaja dentro del APK: se descarga una sola vez (~230 MB) a la carpeta
- *   interna de la app la primera vez que el usuario elige repasar por voz.
- * - Cada vez que el usuario habla y hace una pausa se transcribe esa "elocución" completa
- *   y se entrega como UN resultado final (un intento).
+ * - Japonés → ReazonSpeech (zipformer transducer, ~160 MB). Acepta "pistas" (hotwords): al cargarlo
+ *   se le pasan las palabras de la sesión y el modelo se inclina hacia ellas cuando el audio es
+ *   dudoso (まん en vez de ま), sin inventarlas si no se dijeron.
+ * - Chino e inglés → SenseVoice (~230 MB).
+ *
+ * Los modelos NO viajan dentro del APK: el usuario los descarga desde Configuración.
+ * Cada vez que el usuario habla y hace una pausa se transcribe esa "elocución" completa
+ * y se entrega como UN resultado final (un intento).
  */
 
-const MODEL_BASE_URL =
-  'https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main';
-const MODEL_FILES = [
-  { name: 'tokens.txt', minBytes: 300_000 },
-  { name: 'model.int8.onnx', minBytes: 230_000_000 },
-];
-export const SHERPA_MODEL_SIZE_MB = 230;
+export type VoiceModelId = 'reazon-ja' | 'sensevoice';
 
-const SENSEVOICE_LANGS: Record<string, string> = { ja: 'ja', zh: 'zh', en: 'en', ko: 'ko', yue: 'yue' };
-
-/** Código de idioma de SenseVoice para un código BCP-47, o null si el modelo no lo soporta. */
-export function toSenseVoiceLang(code?: string | null): string | null {
-  const base = (code || '').toLowerCase().split('-')[0];
-  return SENSEVOICE_LANGS[base] ?? null;
+interface ModelSpec {
+  /** Carpeta dentro de documentDirectory/models */
+  dir: string;
+  /** Se prueba cada URL base en orden hasta que una funcione. */
+  baseUrls: string[];
+  files: { name: string; minBytes: number }[];
+  sizeMb: number;
+  langs: string[];
 }
+
+const MODELS: Record<VoiceModelId, ModelSpec> = {
+  'reazon-ja': {
+    dir: 'reazonspeech-ja',
+    baseUrls: [
+      'https://huggingface.co/csukuangfj/sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01/resolve/main',
+      'https://huggingface.co/reazon-research/reazonspeech-k2-v2/resolve/main',
+    ],
+    files: [
+      { name: 'tokens.txt', minBytes: 40_000 },
+      { name: 'decoder-epoch-99-avg-1.int8.onnx', minBytes: 2_500_000 },
+      { name: 'joiner-epoch-99-avg-1.int8.onnx', minBytes: 2_500_000 },
+      { name: 'encoder-epoch-99-avg-1.int8.onnx', minBytes: 150_000_000 },
+    ],
+    sizeMb: 160,
+    langs: ['ja'],
+  },
+  sensevoice: {
+    dir: 'sense-voice',
+    baseUrls: ['https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main'],
+    files: [
+      { name: 'tokens.txt', minBytes: 300_000 },
+      { name: 'model.int8.onnx', minBytes: 230_000_000 },
+    ],
+    sizeMb: 230,
+    langs: ['zh', 'en'],
+  },
+};
+
+export const VOICE_MODEL_IDS = Object.keys(MODELS) as VoiceModelId[];
+export const voiceModelSizeMb = (id: VoiceModelId) => MODELS[id].sizeMb;
+
+const baseLang = (code?: string | null) => (code || '').toLowerCase().split('-')[0];
+
+/** Modelo offline que reconoce el idioma, o null si ninguno (se usa el reconocedor nativo). */
+export function modelForLanguage(code?: string | null): VoiceModelId | null {
+  const lang = baseLang(code);
+  return VOICE_MODEL_IDS.find((id) => MODELS[id].langs.includes(lang)) ?? null;
+}
+
+/** Peso de las pistas: cuánto se inclina el modelo hacia las palabras de la sesión. */
+const HOTWORDS_SCORE = 2.0;
+/** Máximo de pistas cargadas (cada tarjeta aporta su palabra y sus lecturas). */
+const MAX_HOTWORDS = 3000;
+/** Signos que no forman parte de una pista. */
+const HOTWORD_NOISE = /[\s。、，．！？!?,.:;・~～\-_'"「」『』（）()[\]【】<>/|]/g;
 
 export const MODEL_NOT_DOWNLOADED = 'MODEL_NOT_DOWNLOADED';
 
@@ -83,37 +129,45 @@ function cleanTranscript(raw: string, lang: string): string {
   return FILLERS.has(text) ? '' : text;
 }
 
+
 class SherpaVoiceService {
   private engine: any = null;
+  /** Qué está cargado: modelo + idioma + pistas (si cambia algo, se recarga). */
+  private engineKey = '';
+  private engineModel: VoiceModelId | null = null;
   private engineLang = '';
   private loading: Promise<boolean> | null = null;
-  private downloading: Promise<boolean> | null = null;
+  private downloading: Partial<Record<VoiceModelId, Promise<boolean>>> = {};
   private stream: any = null;
   private unsubscribers: Array<() => void> = [];
   private callbacks: SherpaCallbacks | null = null;
   private generation = 0;
+  /** Pistas para la próxima carga del modelo japonés (palabras de la sesión). */
+  private vocabulary: string[] = [];
+  /** Caracteres que conoce el modelo japonés (una pista con otro carácter se descarta). */
+  private tokenSet: Set<string> | null = null;
   lastError: string | null = null;
 
   isNativeAvailable(): boolean {
     return getModules() !== null;
   }
 
-  // ───────────── Modelo ─────────────
+  // ───────────── Archivos del modelo ─────────────
 
   /** Directorio del modelo como URI (para expo-file-system). */
-  private modelDirUri(): string {
-    return `${FileSystem.documentDirectory}models/sense-voice`;
+  private modelDirUri(id: VoiceModelId): string {
+    return `${FileSystem.documentDirectory}models/${MODELS[id].dir}`;
   }
 
-  /** Mismo directorio como ruta absoluta SIN "file://" (el código nativo usa java.io.File). */
-  private modelDirPath(): string {
-    return decodeURI(this.modelDirUri().replace(/^file:\/\//, ''));
+  /** Ruta absoluta SIN "file://" (el código nativo usa java.io.File). */
+  private toNativePath(uri: string): string {
+    return decodeURI(uri.replace(/^file:\/\//, ''));
   }
 
-  async isModelDownloaded(): Promise<boolean> {
+  async isModelDownloaded(id: VoiceModelId): Promise<boolean> {
     try {
-      for (const f of MODEL_FILES) {
-        const info = await FileSystem.getInfoAsync(`${this.modelDirUri()}/${f.name}`);
+      for (const f of MODELS[id].files) {
+        const info = await FileSystem.getInfoAsync(`${this.modelDirUri(id)}/${f.name}`);
         if (!info.exists || (info.size ?? 0) < f.minBytes) return false;
       }
       return true;
@@ -122,29 +176,44 @@ class SherpaVoiceService {
     }
   }
 
-  /** Descarga el modelo (una sola vez). Se descarga a ".part" y se renombra al terminar. */
-  downloadModel(onProgress?: (percent: number) => void): Promise<boolean> {
-    if (this.downloading) return this.downloading;
-    this.downloading = (async () => {
+  /** ¿Está descargado el modelo que necesita este idioma? (true si el idioma no usa modelo offline) */
+  async hasModelFor(langCode: string): Promise<boolean> {
+    const id = modelForLanguage(langCode);
+    return id ? this.isModelDownloaded(id) : true;
+  }
+
+  /** Descarga un modelo (una sola vez). Cada archivo baja a ".part" y se renombra al terminar. */
+  downloadModel(id: VoiceModelId, onProgress?: (percent: number) => void): Promise<boolean> {
+    const running = this.downloading[id];
+    if (running) return running;
+    const spec = MODELS[id];
+    const task = (async () => {
       try {
-        const dir = this.modelDirUri();
+        const dir = this.modelDirUri(id);
         await FileSystem.makeDirectoryAsync(dir, { intermediates: true }).catch(() => {});
-        for (const f of MODEL_FILES) {
+        for (const f of spec.files) {
           const target = `${dir}/${f.name}`;
           const info = await FileSystem.getInfoAsync(target);
           if (info.exists && (info.size ?? 0) >= f.minBytes) continue;
 
           const part = `${target}.part`;
-          await FileSystem.deleteAsync(part, { idempotent: true });
-          const isBig = f.name.endsWith('.onnx');
-          const task = FileSystem.createDownloadResumable(`${MODEL_BASE_URL}/${f.name}`, part, {}, (p) => {
-            if (isBig && p.totalBytesExpectedToWrite > 0) {
-              onProgress?.(Math.round((p.totalBytesWritten / p.totalBytesExpectedToWrite) * 100));
+          const isBig = f.minBytes >= 100_000_000;
+          let ok = false;
+          for (const base of spec.baseUrls) {
+            await FileSystem.deleteAsync(part, { idempotent: true });
+            const dl = FileSystem.createDownloadResumable(`${base}/${f.name}`, part, {}, (p) => {
+              if (isBig && p.totalBytesExpectedToWrite > 0) {
+                onProgress?.(Math.round((p.totalBytesWritten / p.totalBytesExpectedToWrite) * 100));
+              }
+            });
+            const res = await dl.downloadAsync().catch(() => null);
+            const partInfo = await FileSystem.getInfoAsync(part);
+            if (res && res.status === 200 && partInfo.exists && (partInfo.size ?? 0) >= f.minBytes) {
+              ok = true;
+              break;
             }
-          });
-          const res = await task.downloadAsync();
-          const partInfo = await FileSystem.getInfoAsync(part);
-          if (!res || res.status !== 200 || !partInfo.exists || (partInfo.size ?? 0) < f.minBytes) {
+          }
+          if (!ok) {
             await FileSystem.deleteAsync(part, { idempotent: true });
             throw new Error(`Descarga incompleta de ${f.name}`);
           }
@@ -158,33 +227,91 @@ class SherpaVoiceService {
         console.warn('[Sherpa] Error descargando el modelo:', err);
         return false;
       } finally {
-        this.downloading = null;
+        delete this.downloading[id];
       }
     })();
-    return this.downloading;
+    this.downloading[id] = task;
+    return task;
   }
 
-  /** Libera el motor y borra el modelo descargado. */
-  async deleteModel(): Promise<void> {
-    await this.abort();
+  /** Libera el motor (si usa ese modelo) y borra el modelo descargado. */
+  async deleteModel(id: VoiceModelId): Promise<void> {
+    if (this.engineModel === id) {
+      await this.abort();
+      await this.unloadEngine();
+    }
+    if (id === 'reazon-ja') this.tokenSet = null;
+    await FileSystem.deleteAsync(this.modelDirUri(id), { idempotent: true });
+  }
+
+  private async unloadEngine(): Promise<void> {
     if (this.engine) await this.engine.destroy().catch(() => {});
     this.engine = null;
+    this.engineKey = '';
+    this.engineModel = null;
     this.engineLang = '';
-    await FileSystem.deleteAsync(this.modelDirUri(), { idempotent: true });
   }
 
-  isReady(lang?: string): boolean {
-    return Boolean(this.engine) && (!lang || this.engineLang === toSenseVoiceLang(lang));
+  // ───────────── Pistas (hotwords) ─────────────
+
+  /**
+   * Palabras que pueden aparecer en la sesión (escritura y lecturas de cada tarjeta).
+   * Solo las usa el modelo japonés. Si hay palabras nuevas, el modelo se recarga en la próxima
+   * carga; se conservan las anteriores para no recargar al ir y volver entre pantallas.
+   */
+  setVocabulary(words: string[]): void {
+    // Una sola letra/kana no se usa como pista: inclinaría al modelo hacia sonidos sueltos (お, さ…)
+    const clean = Array.from(new Set(words.map((w) => (w || '').replace(HOTWORD_NOISE, '')).filter((w) => [...w].length >= 2)));
+    const merged = new Set(this.vocabulary);
+    const before = merged.size;
+    clean.forEach((w) => merged.add(w));
+    if (merged.size === before) return;
+    const list = [...merged];
+    // Si se pasa del máximo, se quedan solo las palabras de la sesión nueva
+    this.vocabulary = list.length > MAX_HOTWORDS ? clean.slice(0, MAX_HOTWORDS) : list;
   }
 
-  /** Carga el modelo en memoria para el idioma indicado (reutiliza el motor si ya está cargado). */
+  private async loadTokenSet(id: VoiceModelId): Promise<Set<string>> {
+    if (this.tokenSet) return this.tokenSet;
+    const raw = await FileSystem.readAsStringAsync(`${this.modelDirUri(id)}/tokens.txt`);
+    this.tokenSet = new Set(raw.split('\n').map((line) => line.split(/\s+/)[0]).filter(Boolean));
+    return this.tokenSet;
+  }
+
+  /** Escribe el archivo de pistas (solo palabras que el modelo sabe escribir). Devuelve su ruta o ''. */
+  private async writeHotwordsFile(id: VoiceModelId, words: string[]): Promise<string> {
+    if (words.length === 0) return '';
+    const tokens = await this.loadTokenSet(id);
+    const lines = words.filter((w) => [...w].every((ch) => tokens.has(ch)));
+    if (lines.length === 0) return '';
+    const uri = `${FileSystem.documentDirectory}models/hotwords-ja.txt`;
+    await FileSystem.writeAsStringAsync(uri, lines.join('\n') + '\n');
+    return this.toNativePath(uri);
+  }
+
+  // ───────────── Carga en memoria ─────────────
+
+  private wantedKey(id: VoiceModelId, lang: string): string {
+    return id === 'reazon-ja' ? `${id}|${this.vocabulary.join('\u0001')}` : `${id}|${lang}`;
+  }
+
+  /** ¿Está cargado y al día (mismo modelo/idioma y mismas pistas)? */
+  isReady(langCode?: string): boolean {
+    if (!this.engine) return false;
+    if (!langCode) return true;
+    const id = modelForLanguage(langCode);
+    return id !== null && this.engineKey === this.wantedKey(id, baseLang(langCode));
+  }
+
+  /** Carga el modelo del idioma en memoria (reutiliza el motor si ya está cargado y al día). */
   async loadModel(langCode: string): Promise<boolean> {
-    const lang = toSenseVoiceLang(langCode);
-    if (!lang) return false;
-    if (this.engine && this.engineLang === lang) return true;
+    const id = modelForLanguage(langCode);
+    const lang = baseLang(langCode);
+    if (!id) return false;
+    if (this.isReady(langCode)) return true;
     if (this.loading) {
       await this.loading;
-      if (this.engine && this.engineLang === lang) return true;
+      if (this.isReady(langCode)) return true;
     }
 
     this.loading = (async () => {
@@ -194,29 +321,40 @@ class SherpaVoiceService {
         this.lastError = 'El módulo nativo de Sherpa-ONNX no está incluido en esta compilación.';
         return false;
       }
-      if (!(await this.isModelDownloaded())) {
+      if (!(await this.isModelDownloaded(id))) {
         this.lastError = MODEL_NOT_DOWNLOADED;
         return false;
       }
+      const key = this.wantedKey(id, lang);
       try {
-        if (this.engine) {
-          await this.engine.destroy().catch(() => {});
-          this.engine = null;
+        await this.unloadEngine();
+        const modelPath = { type: 'file' as const, path: this.toNativePath(this.modelDirUri(id)) };
+        if (id === 'reazon-ja') {
+          const hotwordsFile = await this.writeHotwordsFile(id, this.vocabulary);
+          this.engine = await m.stt.createSTT({
+            modelPath,
+            modelType: 'transducer',
+            preferInt8: true,
+            numThreads: 2,
+            modelingUnit: 'cjkchar',
+            ...(hotwordsFile ? { hotwordsFile, hotwordsScore: HOTWORDS_SCORE } : {}),
+          });
+        } else {
+          this.engine = await m.stt.createSTT({
+            modelPath,
+            modelType: 'sense_voice',
+            preferInt8: true,
+            numThreads: 2,
+            // ITN desactivado: con ITN el modelo convierte números a dígitos y se pierde cómo se pronunció.
+            modelOptions: { senseVoice: { language: lang, useItn: false } },
+          });
         }
-        this.engine = await m.stt.createSTT({
-          modelPath: { type: 'file', path: this.modelDirPath() },
-          modelType: 'sense_voice',
-          preferInt8: true,
-          numThreads: 2,
-          // ITN desactivado: con ITN el modelo convierte números a dígitos ("とおか" y "じゅうにち" → "10日")
-          // y se pierde cómo se pronunció. Sin ITN escribe lo que oyó con kana/kanji.
-          modelOptions: { senseVoice: { language: lang, useItn: false } },
-        });
+        this.engineKey = key;
+        this.engineModel = id;
         this.engineLang = lang;
         return true;
       } catch (err: any) {
-        this.engine = null;
-        this.engineLang = '';
+        await this.unloadEngine();
         this.lastError = err?.message ?? String(err);
         console.warn('[Sherpa] No se pudo cargar el modelo:', err);
         return false;

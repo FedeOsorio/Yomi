@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { memo } from 'react';
 import { Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { SHERPA_MODEL_SIZE_MB } from '../../../lib/sherpa-service';
+import { modelForLanguage, voiceModelSizeMb } from '../../../lib/sherpa-service';
 import { Shadows, Spacing } from '../../constants/theme';
 import { useTranslation } from '../../i18n';
 
@@ -18,6 +18,8 @@ export interface VoiceModelRequiredModalProps {
   onClose: () => void;
   /** Lleva al usuario a Configuración › Prueba de audio. */
   onGoToDownload: () => void;
+  /** Idioma que necesita el modelo (define qué modelo y cuánto pesa). */
+  languageCode?: string | null;
 }
 
 /** Aviso de que falta el modelo de reconocimiento de voz offline. */
@@ -26,8 +28,10 @@ export const VoiceModelRequiredModal = memo(function VoiceModelRequiredModal({
   colors,
   onClose,
   onGoToDownload,
+  languageCode,
 }: VoiceModelRequiredModalProps) {
   const { t } = useTranslation();
+  const sizeMb = voiceModelSizeMb(modelForLanguage(languageCode) ?? 'reazon-ja');
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose}>
@@ -50,7 +54,7 @@ export const VoiceModelRequiredModal = memo(function VoiceModelRequiredModal({
           <View style={[styles.infoRow, { backgroundColor: colors.surfaceHighlight }]}>
             <View style={styles.infoItem}>
               <Ionicons name="cloud-download-outline" size={16} color={colors.textMuted} />
-              <Text style={[styles.infoText, { color: colors.text }]}>{SHERPA_MODEL_SIZE_MB} MB</Text>
+              <Text style={[styles.infoText, { color: colors.text }]}>{sizeMb} MB</Text>
             </View>
             <View style={[styles.infoDivider, { backgroundColor: colors.border }]} />
             <View style={styles.infoItem}>

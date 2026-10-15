@@ -3,7 +3,7 @@ import type { Voice } from 'expo-speech';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { getBestVoiceForLanguage, getVoicesForLanguage, setPreferredVoice, speakText } from '../../../lib/audio-service';
-import { SHERPA_MODEL_SIZE_MB } from '../../../lib/sherpa-service';
+import { VOICE_MODEL_IDS, VoiceModelId, voiceModelSizeMb } from '../../../lib/sherpa-service';
 import { Shadows, Spacing } from '../../constants/theme';
 import { useTranslation } from '../../i18n';
 import { useVoiceModelStore } from '../../stores/voiceModelStore';
@@ -71,24 +71,30 @@ function VoiceRow({ lang, colors }: { lang: (typeof LANGUAGES)[number]; colors: 
   );
 }
 
-/** Descarga / borrado del modelo de reconocimiento de voz offline. */
-function SpeechModelBlock({ colors }: { colors: Colors }) {
-  const { t } = useTranslation();
-  const { status, percent, refresh, download, remove } = useVoiceModelStore();
+/** Idiomas que cubre cada modelo de voz offline. */
+const MODEL_LABELS: Record<VoiceModelId, { flags: string; labelKeys: ('audio.langJapanese' | 'audio.langChinese' | 'audio.langEnglish')[] }> = {
+  'reazon-ja': { flags: '🇯🇵', labelKeys: ['audio.langJapanese'] },
+  sensevoice: { flags: '🇨🇳 🇺🇸', labelKeys: ['audio.langChinese', 'audio.langEnglish'] },
+};
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+/** Descarga / borrado de UN modelo de reconocimiento de voz offline. */
+function SpeechModelRow({ id, colors }: { id: VoiceModelId; colors: Colors }) {
+  const { t } = useTranslation();
+  const { status, percent } = useVoiceModelStore((s) => s.models[id]);
+  const download = useVoiceModelStore((s) => s.download);
+  const remove = useVoiceModelStore((s) => s.remove);
+  const size = voiceModelSizeMb(id);
+  const { flags, labelKeys } = MODEL_LABELS[id];
 
   const onDownload = async () => {
-    const ok = await download();
+    const ok = await download(id);
     if (!ok) Alert.alert(t('audio.downloadFailed'), t('audio.downloadFailedMsg'));
   };
 
   const onDelete = () =>
     Alert.alert(t('audio.deleteModelConfirm'), t('audio.deleteModelMsg'), [
       { text: t('common.cancel'), style: 'cancel' },
-      { text: t('common.delete'), style: 'destructive', onPress: () => remove() },
+      { text: t('common.delete'), style: 'destructive', onPress: () => remove(id) },
     ]);
 
   const statusText =
@@ -97,8 +103,46 @@ function SpeechModelBlock({ colors }: { colors: Colors }) {
       : status === 'downloading'
         ? t('audio.modelDownloading', { percent })
         : status === 'missing'
-          ? t('audio.modelMissing', { size: SHERPA_MODEL_SIZE_MB })
+          ? t('audio.modelMissing', { size })
           : '';
+
+  return (
+    <View style={[styles.modelCard, { backgroundColor: colors.surfaceHighlight }]}>
+      <Text style={[styles.rowLabel, { color: colors.text }]}>
+        {flags}  {labelKeys.map((k) => t(k)).join(' · ')}
+      </Text>
+      <Text style={[styles.sub, { color: colors.textMuted }]}>{statusText}</Text>
+
+      {status === 'downloading' ? (
+        <View style={[styles.progressTrack, { backgroundColor: colors.surface }]}>
+          <View style={[styles.progressFill, { backgroundColor: colors.primary, width: `${percent}%` }]} />
+        </View>
+      ) : status === 'missing' ? (
+        <TouchableOpacity style={[styles.button, { backgroundColor: colors.primary }]} onPress={onDownload}>
+          <Ionicons name="cloud-download-outline" size={18} color="#FFF" style={{ marginRight: 8 }} />
+          <Text style={styles.buttonText}>{t('audio.downloadModel', { size })}</Text>
+        </TouchableOpacity>
+      ) : status === 'ready' ? (
+        <TouchableOpacity style={[styles.button, { backgroundColor: colors.surface }]} onPress={onDelete}>
+          <Ionicons name="trash-outline" size={18} color={colors.danger} style={{ marginRight: 8 }} />
+          <Text style={[styles.buttonText, { color: colors.danger }]}>{t('audio.deleteModel')}</Text>
+        </TouchableOpacity>
+      ) : (
+        <ActivityIndicator color={colors.primary} style={{ marginTop: Spacing.sm }} />
+      )}
+    </View>
+  );
+}
+
+/** Modelos de reconocimiento de voz offline: cada uno se descarga solo si se estudia ese idioma. */
+function SpeechModelBlock({ colors }: { colors: Colors }) {
+  const { t } = useTranslation();
+  const refresh = useVoiceModelStore((s) => s.refresh);
+  const anyMissing = useVoiceModelStore((s) => VOICE_MODEL_IDS.some((id) => s.models[id].status === 'missing'));
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
 
   return (
     <View>
@@ -106,28 +150,10 @@ function SpeechModelBlock({ colors }: { colors: Colors }) {
         <Ionicons name="mic-outline" size={18} color={colors.primary} />
         <Text style={[styles.subTitle, { color: colors.text }]}>{t('audio.offlineSpeechTitle')}</Text>
       </View>
-      <Text style={[styles.sub, { color: colors.textMuted }]}>{statusText}</Text>
-
-      {status === 'downloading' ? (
-        <View style={[styles.progressTrack, { backgroundColor: colors.surfaceHighlight }]}>
-          <View style={[styles.progressFill, { backgroundColor: colors.primary, width: `${percent}%` }]} />
-        </View>
-      ) : status === 'missing' ? (
-        <TouchableOpacity style={[styles.button, { backgroundColor: colors.primary }]} onPress={onDownload}>
-          <Ionicons name="cloud-download-outline" size={18} color="#FFF" style={{ marginRight: 8 }} />
-          <Text style={styles.buttonText}>{t('audio.downloadModel', { size: SHERPA_MODEL_SIZE_MB })}</Text>
-        </TouchableOpacity>
-      ) : status === 'ready' ? (
-        <TouchableOpacity style={[styles.button, { backgroundColor: colors.surfaceHighlight }]} onPress={onDelete}>
-          <Ionicons name="trash-outline" size={18} color={colors.danger} style={{ marginRight: 8 }} />
-          <Text style={[styles.buttonText, { color: colors.danger }]}>{t('audio.deleteModel')}</Text>
-        </TouchableOpacity>
-      ) : (
-        <ActivityIndicator color={colors.primary} style={{ marginTop: Spacing.sm }} />
-      )}
-      {status === 'missing' ? (
-        <Text style={[styles.hint, { color: colors.textMuted }]}>{t('audio.wifiNotice')}</Text>
-      ) : null}
+      {VOICE_MODEL_IDS.map((id) => (
+        <SpeechModelRow key={id} id={id} colors={colors} />
+      ))}
+      {anyMissing ? <Text style={[styles.hint, { color: colors.textMuted }]}>{t('audio.wifiNotice')}</Text> : null}
     </View>
   );
 }
@@ -199,4 +225,5 @@ const styles = StyleSheet.create({
   progressTrack: { height: 8, borderRadius: 4, overflow: 'hidden', marginTop: Spacing.sm },
   progressFill: { height: 8, borderRadius: 4 },
   hint: { fontSize: 11, marginTop: 6, textAlign: 'center' },
+  modelCard: { borderRadius: 10, padding: Spacing.sm, marginTop: Spacing.sm },
 });

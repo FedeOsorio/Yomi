@@ -264,6 +264,18 @@ function matchAlphabetic(card: CardLike, transcript: string): VoiceMatchResult {
   return { isMatch: ok, matchedReading: ok ? card.displayText || '' : undefined, heard: transcript.trim() };
 }
 
+/**
+ * Palabras que se espera oír para la tarjeta (su escritura y sus lecturas). Se usan como pistas
+ * del reconocedor; la evaluación la sigue haciendo checkVoiceMatch.
+ */
+export function expectedVoiceWords(rawCard: CardLike, lang: string): string[] {
+  const card = { ...rawCard, displayText: stripMarkup(rawCard.displayText), displayReading: stripMarkup(rawCard.displayReading) };
+  const target = getEffectiveCardLanguage({ ...card, languageCode: card.languageCode || lang }).toLowerCase();
+  const surface = (card.displayText || '').replace(/[\[(【（].*?[\])】）]/g, '').replace(PUNCT, '');
+  if (target.startsWith('ja')) return Array.from(new Set([surface, ...expectedJapaneseReadings(card)].filter(Boolean)));
+  return Array.from(new Set([surface, ...(card.displayReading || '').split(/[\/\n,、;•|]/).map((r) => r.trim())].filter(Boolean)));
+}
+
 /** Compara UNA elocución completa con la tarjeta. */
 export function checkVoiceMatch(rawCard: CardLike, transcript: string, lang: string): VoiceMatchResult {
   if (!transcript || !transcript.trim()) return { isMatch: false };
