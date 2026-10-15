@@ -36,6 +36,8 @@ const END_SILENCE_MS = 650; // pausa que da la palabra por terminada (tolera っ
 const PRE_ROLL_MS = 450; // audio previo que se conserva para no cortar la primera sílaba
 const MIN_UTTERANCE_MS = 300;
 const MAX_UTTERANCE_MS = 4000;
+const PAD_BEFORE_MS = 250; // silencio agregado al inicio del audio que se transcribe
+const PAD_AFTER_MS = 600; // y al final (para que el modelo no corte la ん final)
 
 const ms = (n: number) => Math.round((n / 1000) * SAMPLE_RATE);
 
@@ -279,9 +281,12 @@ class SherpaVoiceService {
         const gain = Math.min(0.7 / peak, 3);
         for (let i = 0; i < audio.length; i++) audio[i] *= gain;
       }
+      // Silencio digital antes y después: en palabras de una sílaba el modelo tiende a descartar
+      // el último sonido si queda pegado al borde del audio (まん → ま, でん → で).
+      const padded = [...new Array(ms(PAD_BEFORE_MS)).fill(0), ...audio, ...new Array(ms(PAD_AFTER_MS)).fill(0)];
       busy = true;
       try {
-        const result = await this.engine.transcribeSamples(audio, SAMPLE_RATE);
+        const result = await this.engine.transcribeSamples(padded, SAMPLE_RATE);
         if (gen !== this.generation) return;
         const text = cleanTranscript(result?.text ?? '', lang);
         console.log('[Sherpa] Elocución:', JSON.stringify(result?.text), '→', JSON.stringify(text));
