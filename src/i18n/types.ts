@@ -341,6 +341,7 @@ export interface TranslationSchema {
     translationMeaning: string;
     writeMeaningPlaceholder: string;
     wordSavedToast: string;
+    kanjiSection: string;
     noMatchesFor: string;
     saveWordAsCard: string;
     builderSyllableHeader: string;

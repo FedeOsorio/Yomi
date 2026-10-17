@@ -17,7 +17,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { speakText } from '../../lib/audio-service';
 import { ALL_LANGUAGES, DeckWithStats, getDecksWithStats } from '../../lib/deck-service';
 import { getQuickHskLevel } from '../../lib/hsk-data';
-import { JapaneseEntry, resolveJapaneseReading, searchJapanese, translateToSpanish } from '../../lib/japanese-search';
+import { JapaneseEntry, resolveJapaneseReading, searchJapanese, translateBatchToLanguage, translateToSpanish } from '../../lib/japanese-search';
+import { KanjiInfo, searchKanji } from '../../lib/kanji-search';
 import { classifyJapaneseWord, isJapaneseDictionaryForm } from '../../lib/japanese-utils';
 import { DictionaryEntry, getChineseSpanishMeaning, searchByPinyin, SearchResult } from '../../lib/search-engine';
 import { saveCustomWord, saveGenericWord, saveWords } from '../../lib/word-service';
@@ -53,6 +54,8 @@ export default function SearchScreen() {
 
   // Estados Japonés
   const [japaneseResults, setJapaneseResults] = useState<JapaneseEntry[]>([]);
+  // Kanji sueltos que se leen como la búsqueda (tsuku → 付, 着…), con su primer significado traducido
+  const [kanjiResults, setKanjiResults] = useState<(KanjiInfo & { meaning?: string })[]>([]);
 
   // Estados Otros Idiomas (Inglés, Español, etc.)
   const [genericTranslation, setGenericTranslation] = useState('');
@@ -81,6 +84,7 @@ export default function SearchScreen() {
     latestBuiltHanziRef.current = '';
     setChineseResults(null);
     setJapaneseResults([]);
+    setKanjiResults([]);
     setGenericTranslation('');
     setSelectedEntries({});
     setChineseCustomMeaning('');
@@ -126,6 +130,7 @@ export default function SearchScreen() {
     if (!trimmed) {
       setChineseResults(null);
       setJapaneseResults([]);
+      setKanjiResults([]);
       setGenericTranslation('');
       setChineseCustomMeaning('');
       latestBuiltHanziRef.current = '';
@@ -154,6 +159,14 @@ export default function SearchScreen() {
     } else if (isJapanese) {
       // 2. Japonés: Romaji / Kana / Kanji -> Diccionario estructurado con JLPT
       const userLang = getCurrentUserLanguage();
+      // Kanji sueltos (offline, al instante) y luego su significado traducido
+      const kanjiHits = searchKanji(trimmed, 15);
+      setKanjiResults(kanjiHits);
+      translateBatchToLanguage(kanjiHits.map((k) => k.meanings[0] || ''), userLang, 'en')
+        .then((tr) => {
+          if (latestQueryRef.current === text) setKanjiResults(kanjiHits.map((k, i) => ({ ...k, meaning: tr[i] })));
+        })
+        .catch(() => {});
       const jaEntries = await searchJapanese(trimmed, userLang);
       if (latestQueryRef.current === text) {
         setJapaneseResults(jaEntries);
@@ -192,6 +205,7 @@ export default function SearchScreen() {
     if (!text.trim()) {
       setChineseResults(null);
       setJapaneseResults([]);
+      setKanjiResults([]);
       setGenericTranslation('');
       setIsSearching(false);
       return;
@@ -219,6 +233,22 @@ export default function SearchScreen() {
     } catch (e) {
       Alert.alert(t('common.error'), t('search.couldNotSaveWord'));
     }
+  };
+
+  // --- GUARDADO DE UN KANJI SUELTO (con el nivel JLPT del kanji) ---
+  const handleSaveKanji = async (k: KanjiInfo) => {
+    const reading = k.matchedReading || k.on[0] || (k.kun[0] || '').replace(/[()]/g, '');
+    const translated = (await translateBatchToLanguage(k.meanings.slice(0, 3), getCurrentUserLanguage(), 'en')).filter(Boolean);
+    await handleQuickSaveJapanese({
+      id: `kanji_${k.kanji}`,
+      kanji: k.kanji,
+      reading,
+      romaji: query.trim().toLowerCase(),
+      meanings: translated.length > 0 ? translated : k.meanings,
+      isCommon: true,
+      level: k.level,
+      category: 'Kanji',
+    });
   };
 
   // --- GUARDADO RÁPIDO JAPONÉS CON JLPT Y CONJUGACIÓN ---
@@ -454,8 +484,37 @@ export default function SearchScreen() {
             data={japaneseResults}
             keyExtractor={(item) => item.id}
             contentContainerStyle={{ paddingBottom: Spacing.xl }}
+            ListHeaderComponent={
+              kanjiResults.length > 0 ? (
+                <View style={styles.kanjiSection}>
+                  <Text style={[styles.kanjiSectionTitle, { color: colors.textMuted }]}>{t('search.kanjiSection')}</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.kanjiRow}>
+                    {kanjiResults.map((k) => (
+                      <TouchableOpacity
+                        key={k.kanji}
+                        style={[styles.kanjiTile, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                        activeOpacity={0.75}
+                        onPress={() => handleSaveKanji(k)}
+                      >
+                        {k.level ? <Text style={[styles.kanjiTileLevel, { color: colors.primary }]}>{k.level}</Text> : null}
+                        <View style={[styles.kanjiTileAdd, { backgroundColor: colors.primary }]}>
+                          <Ionicons name="add" size={14} color="#FFF" />
+                        </View>
+                        <Text style={[styles.kanjiTileChar, { color: colors.text }]}>{k.kanji}</Text>
+                        <Text style={[styles.kanjiTileReading, { color: colors.primaryHover }]} numberOfLines={1}>
+                          {k.matchedReading || k.on[0] || k.kun[0] || ''}
+                        </Text>
+                        <Text style={[styles.kanjiTileMeaning, { color: colors.textMuted }]} numberOfLines={1}>
+                          {k.meaning || k.meanings[0] || ''}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              ) : null
+            }
             ListEmptyComponent={
-              query.trim().length > 0 && !isSearching ? (
+              query.trim().length > 0 && !isSearching && kanjiResults.length === 0 ? (
                 <View style={styles.emptySearchBox}>
                   <Text style={[styles.emptySearchText, { color: colors.textMuted }]}>
                     {t('search.noMatchesFor', { query })}
@@ -936,6 +995,60 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     includeFontPadding: false,
+  },
+  kanjiSection: {
+    marginBottom: Spacing.sm,
+  },
+  kanjiSectionTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  kanjiRow: {
+    gap: 8,
+    paddingRight: Spacing.md,
+  },
+  kanjiTile: {
+    width: 92,
+    alignItems: 'center',
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingTop: 8,
+    paddingBottom: 10,
+    paddingHorizontal: 6,
+  },
+  kanjiTileLevel: {
+    position: 'absolute',
+    top: 6,
+    left: 8,
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  kanjiTileAdd: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  kanjiTileChar: {
+    fontSize: 34,
+    fontWeight: '600',
+    marginTop: 6,
+  },
+  kanjiTileReading: {
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  kanjiTileMeaning: {
+    fontSize: 11,
+    marginTop: 2,
   },
   levelBadge: {
     backgroundColor: 'rgba(59, 130, 246, 0.15)',

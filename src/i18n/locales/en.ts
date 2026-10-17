@@ -341,6 +341,7 @@ export const en: TranslationSchema = {
     translationMeaning: 'Translation / Meaning:',
     writeMeaningPlaceholder: 'Enter meaning...',
     wordSavedToast: '"{{word}}" saved to your deck.',
+    kanjiSection: 'Kanji',
     noMatchesFor: 'No matches found for "{{query}}".',
     saveWordAsCard: 'Save "{{word}}" as card',
     builderSyllableHeader: 'Word built syllable by syllable. Select desired characters:',

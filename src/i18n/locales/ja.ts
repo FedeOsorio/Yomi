@@ -341,6 +341,7 @@ export const ja: TranslationSchema = {
     translationMeaning: '訳 / 意味:',
     writeMeaningPlaceholder: '意味を入力...',
     wordSavedToast: '「{{word}}」をデッキに保存しました。',
+    kanjiSection: '漢字',
     noMatchesFor: '「{{query}}」に一致する単語が見つかりませんでした。',
     saveWordAsCard: '「{{word}}」をカードとして保存',
     builderSyllableHeader: '音節ごとに組み立てられた単語。文字を選択してください:',

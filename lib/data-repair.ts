@@ -4,6 +4,7 @@ import { decks, srsItems, words } from '../db/schema';
 import { resolveJapaneseReading } from './japanese-search';
 import { classifyJapaneseWord, containsJapanese } from './japanese-utils';
 import { registerWordInDictionary } from './phonetic-dictionary';
+import { getKanjiLevel } from './kanji-search';
 import { getStorageItem, setStorageItem } from './storage-service';
 import { parseAux, stringifyAux } from './word-aux';
 import { resolveJapaneseBaseForm } from './word-service';
@@ -15,6 +16,8 @@ import { resolveJapaneseBaseForm } from './word-service';
  */
 
 const REPAIR_FLAG = 'yomi_data_repair_v1_done';
+/** Reparaciones agregadas después de la v1 (corren una vez también en instalaciones que ya hicieron la v1). */
+const REPAIR_FLAG_V2 = 'yomi_data_repair_v2_done';
 
 /** Mazos de japonés que versiones viejas crearon con idioma 'zh-CN'. */
 async function fixJapaneseDecksMarkedAsChinese(): Promise<number> {
@@ -75,17 +78,51 @@ async function fixMisclassifiedJapaneseWords(): Promise<number> {
   return fixed;
 }
 
-/** Corre las reparaciones de datos. Sin `force`, solo la primera vez. */
+/**
+ * Tarjetas de un kanji suelto guardadas con el nivel JLPT de la PALABRA (員 sola figura como N1)
+ * en vez del nivel del KANJI (員 es N4).
+ */
+async function fixSingleKanjiLevels(): Promise<number> {
+  const rows = await db
+    .select({ id: words.id, text: words.simplified, aux: words.auxiliaryInfo })
+    .from(words)
+    .innerJoin(decks, eq(words.deckId, decks.id))
+    .where(like(decks.languageCode, 'ja%'));
+
+  let fixed = 0;
+  for (const row of rows) {
+    const level = getKanjiLevel((row.text || '').trim());
+    if (!level) continue;
+    const aux = parseAux(row.aux);
+    if (!aux.level || aux.level === level) continue;
+    aux.level = level;
+    await db.update(words).set({ auxiliaryInfo: stringifyAux(aux) }).where(eq(words.id, row.id));
+    fixed++;
+  }
+  return fixed;
+}
+
+/** Corre las reparaciones de datos. Sin `force`, cada una solo la primera vez. */
 export async function runDataRepair(force = false): Promise<void> {
-  if (!force && (await getStorageItem(REPAIR_FLAG)) === 'true') return;
-  try {
-    const decksFixed = await fixJapaneseDecksMarkedAsChinese();
-    const wordsFixed = await fixMisclassifiedJapaneseWords();
-    console.log(`[DataRepair] Mazos corregidos: ${decksFixed}, palabras corregidas: ${wordsFixed}`);
-    await setStorageItem(REPAIR_FLAG, 'true');
-  } catch (err) {
-    // Sin marca: se reintenta en el próximo inicio
-    console.warn('[DataRepair] Error reparando datos:', err);
+  if (force || (await getStorageItem(REPAIR_FLAG)) !== 'true') {
+    try {
+      const decksFixed = await fixJapaneseDecksMarkedAsChinese();
+      const wordsFixed = await fixMisclassifiedJapaneseWords();
+      console.log(`[DataRepair] Mazos corregidos: ${decksFixed}, palabras corregidas: ${wordsFixed}`);
+      await setStorageItem(REPAIR_FLAG, 'true');
+    } catch (err) {
+      // Sin marca: se reintenta en el próximo inicio
+      console.warn('[DataRepair] Error reparando datos:', err);
+    }
+  }
+  if (force || (await getStorageItem(REPAIR_FLAG_V2)) !== 'true') {
+    try {
+      const levelsFixed = await fixSingleKanjiLevels();
+      console.log(`[DataRepair] Niveles de kanji corregidos: ${levelsFixed}`);
+      await setStorageItem(REPAIR_FLAG_V2, 'true');
+    } catch (err) {
+      console.warn('[DataRepair] Error corrigiendo niveles de kanji:', err);
+    }
   }
 }
 

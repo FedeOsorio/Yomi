@@ -1,3 +1,5 @@
+import { KANJI_DATA } from './kanji-data';
+
 /**
  * Base de datos rápida de clasificación JLPT (N5 a N1) para resolución instantánea offline.
  */
@@ -313,6 +315,10 @@ export function getQuickJlptLevel(word: string): string | undefined {
   if (!word) return undefined;
   const trimmed = word.trim();
 
+  // Un kanji suelto: su nivel como KANJI (員 → N4), no el de la palabra 員 sola
+  const kanjiLevel = KANJI_DATA[trimmed]?.[0];
+  if (kanjiLevel) return `N${kanjiLevel}`;
+
   // Coincidencia exacta de palabra completa
   if (JLPT_DICTIONARY[trimmed]) {
     return JLPT_DICTIONARY[trimmed];
@@ -332,7 +338,8 @@ export function getQuickJlptLevel(word: string): string | undefined {
  */
 export function getKanjiJlptLevel(char: string): string | undefined {
   if (!char) return undefined;
-  return JLPT_DICTIONARY[char.trim()];
+  const level = KANJI_DATA[char.trim()]?.[0];
+  return level ? `N${level}` : JLPT_DICTIONARY[char.trim()];
 }
 
 

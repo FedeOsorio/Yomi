@@ -341,6 +341,7 @@ export const es: TranslationSchema = {
     translationMeaning: 'Traducción / Significado:',
     writeMeaningPlaceholder: 'Escribí el significado...',
     wordSavedToast: '"{{word}}" guardada en tu mazo.',
+    kanjiSection: 'Kanji',
     noMatchesFor: 'No se encontraron coincidencias para "{{query}}".',
     saveWordAsCard: 'Guardar "{{word}}" como tarjeta',
     builderSyllableHeader: 'Palabra armada por sílabas. Seleccioná los caracteres deseados:',
