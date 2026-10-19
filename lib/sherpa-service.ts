@@ -67,8 +67,7 @@ export function modelForLanguage(code?: string | null): VoiceModelId | null {
 }
 
 /** Peso de las pistas: cuánto se inclina el modelo hacia la palabra de la tarjeta. */
-// 1.5 (el valor por defecto de sherpa-onnx): con 2.0 el modelo intercalaba kanas de las pistas.
-const HOTWORDS_SCORE = 1.5;
+const HOTWORDS_SCORE = 2.2;
 /** Signos que no forman parte de una pista ("/" separa pistas para el motor). */
 const HOTWORD_NOISE = /[\s。、，．！？!?,.:;・~～\-_'"「」『』（）()[\]【】<>/|]/g;
 
@@ -77,13 +76,13 @@ export const MODEL_NOT_DOWNLOADED = 'MODEL_NOT_DOWNLOADED';
 // Detección de voz (VAD por energía). Todo en milisegundos: el tamaño de cada bloque de
 // audio que entrega el micrófono varía según el teléfono (40–100 ms).
 const SAMPLE_RATE = 16000;
-const SPEECH_START_MS = 180; // voz sostenida necesaria para descartar respiraciones (~100ms) y chasquidos
-const END_SILENCE_MS = 450; // pausa que da la palabra por terminada (tolera っ y pausas breves)
-const PRE_ROLL_MS = 300; // audio previo que se conserva para no cortar la primera consonante
-const MIN_UTTERANCE_MS = 200; // palabras de una mora (こ, じ) duran ~200ms
+const SPEECH_START_MS = 60; // 60ms: reacción inmediata para consonantes oclusivas y africadas (t, k, ts)
+const END_SILENCE_MS = 400; // 400ms de pausa para dar la elocución por terminada
+const PRE_ROLL_MS = 280; // 280ms asegura conservar completo el ataque de consonantes iniciales (ts, k, t, sh)
+const MIN_UTTERANCE_MS = 140; // palabras de una o dos moras rápidas (てん, くち, かい, こ)
 const MAX_UTTERANCE_MS = 4000;
-const PAD_BEFORE_MS = 100; // silencio digital inicial para estabilizar el transductor
-const PAD_AFTER_MS = 150; // silencio digital final para que el modelo no corte finales suaves o ん
+const PAD_BEFORE_MS = 60; // 60ms de silencio digital previo para inicializar el estado del transductor
+const PAD_AFTER_MS = 80; // 80ms de silencio digital final para estabilizar la decodificación
 
 const ms = (n: number) => Math.round((n / 1000) * SAMPLE_RATE);
 
@@ -125,7 +124,7 @@ function cleanTranscript(raw: string, lang: string): string {
     .replace(/[。、，！？!?.,:;…〜～・]/g, '')
     .trim();
   text = lang === 'ja' || lang === 'zh' || lang === 'yue' ? text.replace(/\s+/g, '') : text.replace(/\s+/g, ' ');
-  const FILLERS = new Set(['ああ', 'ええ', 'えー', 'あの', 'ん', 'うーん', 'えっと', '嗯', '啊', '呃', '哦', '呀', 'っ', 'ー', 'つ', 'く', 'ふ', 'ち']);
+  const FILLERS = new Set(['ああ', 'ええ', 'えー', 'あの', 'ん', 'うーん', 'えっと', '嗯', '啊', '呃', '哦', '呀', 'っ', 'ー']);
   return FILLERS.has(text) ? '' : text;
 }
 
@@ -259,18 +258,29 @@ class SherpaVoiceService {
     return this.tokenSet;
   }
 
-  /** Pistas listas para el motor: sin signos. */
+  /** Pistas listas para el motor: sin signos y con tokens separados por espacio para modelos cjkchar. */
   private async cleanHotwords(id: VoiceModelId, words: string[]): Promise<string> {
     const tokens = await this.loadTokenSet(id).catch(() => null);
-    const clean = words
+    const validWords = words
       .map((w) => (w || '').replace(HOTWORD_NOISE, ''))
       .filter((w) => w && (!tokens || [...w].every((ch) => tokens.has(ch))));
-    return Array.from(new Set(clean)).join('/');
+
+    if (id === 'reazon-ja') {
+      // ReazonSpeech usa modelingUnit 'cjkchar': los tokens dentro de cada pista
+      // deben ir separados por espacio ("く に", "と も") para que el ContextGraph
+      // los resuelva contra tokens.txt (donde cada kana/kanji es un token individual).
+      const tokenized = validWords.map((w) => [...w].join(' '));
+      return Array.from(new Set(tokenized)).join('/');
+    }
+
+    return Array.from(new Set(validWords)).join('/');
   }
 
   /** ¿El binario trae el parche de pistas por intento? (una actualización OTA puede llegar a un binario viejo) */
   private supportsPerDecodeHotwords(): boolean {
-    const native = TurboModuleRegistry.get<any>('SherpaOnnx');
+    const native =
+      TurboModuleRegistry.get<any>('SherpaOnnx') ??
+      (require('react-native').NativeModules?.SherpaOnnx);
     return typeof native?.transcribeSamplesWithHotwords === 'function';
   }
 
@@ -324,8 +334,6 @@ class SherpaVoiceService {
             modelingUnit: 'cjkchar',
             hotwordsScore: HOTWORDS_SCORE,
           });
-          // Aumentamos el haz de búsqueda de 4 a 16 para evitar podar monosílabas y homófonos
-          await this.engine.setConfig({ maxActivePaths: 16 }).catch(() => {});
         } else {
           this.engine = await m.stt.createSTT({
             modelPath,
@@ -390,6 +398,7 @@ class SherpaVoiceService {
     const m = getModules()!;
     const engineModel = this.engineModel;
     const hints = engineModel === 'reazon-ja' && this.supportsPerDecodeHotwords() ? await this.cleanHotwords(engineModel, hotwords) : '';
+    console.log('[Sherpa] Pistas configuradas para la elocución:', hints || '(ninguna / binario sin soporte)');
     let preRoll: number[] = [];
     let utterance: number[] = [];
     let speaking = false;
@@ -409,14 +418,12 @@ class SherpaVoiceService {
         const abs = Math.abs(v);
         if (abs > peak) peak = abs;
       }
-      // Si el pico máximo de toda la elocución es menor a 0.035, fue respiración, soplo
-      // o ruido de fondo lejano: descartar sin enviar al modelo.
+      // Si el pico máximo nunca superó 0.035, es respiración, suspiro o ruido ambiente
       if (peak < 0.035) return;
 
-      // Normalización con ganancia moderada (máximo 4x). Una ganancia excesiva (25x) amplifica
-      // el ruido ambiente a volumen ensordecedor y deforma consonantes/silencios internos.
+      // Ganancia suave para normalizar micrófonos discretos sin distorsionar ni inflar ruido
       if (peak < 0.6) {
-        const gain = Math.min(0.7 / peak, 4.0);
+        const gain = Math.min(0.65 / Math.max(peak, 0.05), 3.0);
         for (let i = 0; i < audio.length; i++) audio[i] *= gain;
       }
       const padded = [...new Array(ms(PAD_BEFORE_MS)).fill(0), ...audio, ...new Array(ms(PAD_AFTER_MS)).fill(0)];
@@ -428,6 +435,19 @@ class SherpaVoiceService {
         if (gen !== this.generation) return;
         const text = cleanTranscript(result?.text ?? '', lang);
         console.log('[Sherpa] Elocución:', JSON.stringify(result?.text), '→', JSON.stringify(text));
+
+        // Descartar alucinaciones de "はい" cuando la tarjeta NO espera "はい"
+        if (lang === 'ja' && /^(はい|はいはい|はーい)$/.test(text)) {
+          const cardExpectsHai = hotwords.some((w) => {
+            const c = (w || '').replace(HOTWORD_NOISE, '');
+            return c === 'はい' || c === 'はいはい' || c === '灰' || c === '杯' || c === '拝' || c === '配';
+          });
+          if (!cardExpectsHai) {
+            console.log('[Sherpa] Descartando alucinación "はい" (la tarjeta no lo espera)');
+            return;
+          }
+        }
+
         if (text) callbacks.onResult(text);
       } catch (err) {
         console.warn('[Sherpa] Error transcribiendo:', err);
@@ -446,9 +466,10 @@ class SherpaVoiceService {
         let sum = 0;
         for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
         const rms = Math.sqrt(sum / samples.length);
-        if (!speaking) noiseFloor = noiseFloor * 0.95 + Math.min(rms, 0.02) * 0.05;
-        // Umbral de voz: mínimo 0.012 RMS para que una respiración (0.004-0.008) o alguien a 5m no active la escucha.
-        const isVoice = rms > Math.max(0.012, Math.min(0.035, noiseFloor * 2.2));
+        if (!speaking) noiseFloor = noiseFloor * 0.95 + Math.min(rms, 0.015) * 0.05;
+        // Umbral de voz: mínimo 0.0075 RMS para capturar consonantes sordas/africadas (ts, sh, k)
+        // sin cortar el inicio de palabras como "tsuki" o "shiro".
+        const isVoice = rms > Math.max(0.0075, Math.min(0.025, noiseFloor * 1.9));
 
         if (busy || !speaking) {
           // Esperando que empiece a hablar (o transcribiendo el intento anterior)
@@ -473,10 +494,8 @@ class SherpaVoiceService {
 
         speaking = false;
         voicedMs = 0;
-        // Recortamos el exceso de silencio final acumulado en utterance:
-        // conservamos unos 200ms de silencio ambiental, que junto a PAD_AFTER_MS (150ms) dan ~350ms limpios,
-        // evitando que el transductor decodifique un segundo de ruido muerto que desvía la pronunciación.
-        const keepTrailingSilence = ms(200);
+        // Conservamos 240ms de cola para que el modelo tenga contexto acústico completo de finales nasales (ん) o vocales sordas (ち, き)
+        const keepTrailingSilence = ms(240);
         const excessSilence = Math.max(0, ms(silenceMs) - keepTrailingSilence);
         const audio = excessSilence > 0 && utterance.length > excessSilence + ms(MIN_UTTERANCE_MS)
           ? utterance.slice(0, utterance.length - excessSilence)

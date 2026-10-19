@@ -217,6 +217,19 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
         onResult: (transcript, isFinal) => {
           // Cada elocución terminada es UN intento; los resultados parciales solo se muestran
           if (isStale()) return;
+
+          // Si el motor transcribe "はい" como alucinación y la tarjeta no lo espera, se ignora para no quemar intentos
+          if (lang.startsWith('ja') && /^(はい|はいはい|はーい)$/.test(transcript.replace(/[\s。、，．！？!?,.:;・~～\-_'"「」『』（）()[\]【】]/g, ''))) {
+            const expectsHai = getContextualStrings(card).some((w) => {
+              const c = w.replace(/[\s。、，．！？!?,.:;・~～\-_'"「」『』（）()[\]【】]/g, '');
+              return c === 'はい' || c === 'はいはい' || c === '灰' || c === '杯' || c === '拝' || c === '配';
+            });
+            if (!expectsHai) {
+              console.log('[ReviewVoice] Ignorando alucinación "はい" en la tarjeta actual');
+              return;
+            }
+          }
+
           const result = checkVoiceMatch(card, transcript, lang);
           setSpeechTranscript(result.heard || transcript);
           if (!isFinal) return;

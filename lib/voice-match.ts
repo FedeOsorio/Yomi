@@ -100,8 +100,16 @@ function stripMarkup(text?: string | null): string {
  * cualquiera que conozca). Para palabras devuelve [] : solo vale la lectura de esa palabra.
  */
 export function singleKanjiReadings(displayText?: string | null): string[] {
-  const single = stripMarkup(displayText).replace(/[\[(【（].*?[\])】）]/g, '').replace(PUNCT, '');
-  return single.length === 1 && KANJI_READINGS_MAP[single] ? KANJI_READINGS_MAP[single] : [];
+  const single = stripMarkup(displayText).replace(/[\[(【（].*?[\])】）]/g, '').replace(PUNCT, '').trim();
+  if (single.length === 1 && KANJI_READINGS_MAP[single]) {
+    return KANJI_READINGS_MAP[single];
+  }
+  // Si la tarjeta contiene exactamente un único kanji acompañado de glosa o lectura (ej. "白 / しろ", "白: blanco")
+  const kanjis = single.match(/[\u4e00-\u9faf]/g);
+  if (kanjis && kanjis.length === 1 && KANJI_READINGS_MAP[kanjis[0]]) {
+    return KANJI_READINGS_MAP[kanjis[0]];
+  }
+  return [];
 }
 
 // ───────────── japonés ─────────────
@@ -190,7 +198,14 @@ function matchJapanese(card: CardLike, transcript: string): VoiceMatchResult {
     if (hit) return { isMatch: true, matchedReading: hit, heard: hit };
   }
 
-  // 2b. Mismo sonido escrito como partícula: el modelo oye "kawa" como か + は (partícula "wa").
+  // 2c. Mismo sonido con tolerancia de sokuon (っ) espurio o absorbido ante oclusivas/africadas (ej. くっち vs くち)
+  for (const h of heard) {
+    const hNoSokuon = phonetic(h).replace(/っ/g, '');
+    const hit = expected.find((e) => phonetic(e).replace(/っ/g, '') === hNoSokuon);
+    if (hit) return { isMatch: true, matchedReading: hit, heard: hit };
+  }
+
+  // 2d. Mismo sonido escrito como partícula: el modelo oye "kawa" como か + は (partícula "wa").
   //     Solo vale donde la tarjeta lleva わ/え/お en esa posición; no agrega ni quita sonidos.
   for (const h of heard) {
     const hit = expected.find((e) => sameSoundAsParticle(phonetic(h), phonetic(e)));
@@ -323,7 +338,9 @@ export function expectedVoiceWords(rawCard: CardLike, lang: string): string[] {
   const surface = (card.displayText || '').replace(/[\[(【（].*?[\])】）]/g, '').replace(PUNCT, '');
   if (target.startsWith('ja')) {
     const furigana = [...(card.displayText || '').matchAll(/[\[(【（](.*?)[\])】）]/g)].flatMap((m) => splitReadings(m[1]));
-    return Array.from(new Set([surface, ...splitReadings(card.displayReading), ...furigana].filter(Boolean)));
+    const aux = parseAux(card.auxiliaryInfo);
+    const auxReadings = !card.displayReading ? splitReadings(aux.kanjiReadings || aux.onReading || aux.kunReading) : [];
+    return Array.from(new Set([surface, ...splitReadings(card.displayReading), ...furigana, ...auxReadings].filter(Boolean)));
   }
   return Array.from(new Set([surface, ...(card.displayReading || '').split(/[\/\n,、;•|]/).map((r) => r.trim())].filter(Boolean)));
 }
