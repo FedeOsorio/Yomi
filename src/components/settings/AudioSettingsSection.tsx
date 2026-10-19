@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { getBestVoiceForLanguage, getVoicesForLanguage, setPreferredVoice, speakText } from '../../../lib/audio-service';
 import { VOICE_MODEL_IDS, VoiceModelId, voiceModelSizeMb } from '../../../lib/sherpa-service';
+import { getSpeechEnginePreference, setSpeechEnginePreference, SpeechEnginePreference } from '../../../lib/speech-recognition-service';
 import { Shadows, Spacing } from '../../constants/theme';
 import { useTranslation } from '../../i18n';
 import { useVoiceModelStore } from '../../stores/voiceModelStore';
@@ -134,26 +135,72 @@ function SpeechModelRow({ id, colors }: { id: VoiceModelId; colors: Colors }) {
   );
 }
 
-/** Modelos de reconocimiento de voz offline: cada uno se descarga solo si se estudia ese idioma. */
+/** Selector de motor y modelos de reconocimiento de voz. */
 function SpeechModelBlock({ colors }: { colors: Colors }) {
   const { t } = useTranslation();
   const refresh = useVoiceModelStore((s) => s.refresh);
   const anyMissing = useVoiceModelStore((s) => VOICE_MODEL_IDS.some((id) => s.models[id].status === 'missing'));
+  const [enginePref, setEnginePref] = useState<SpeechEnginePreference>('native');
 
   useEffect(() => {
     refresh();
+    getSpeechEnginePreference().then(setEnginePref);
   }, [refresh]);
+
+  const handleSelectEngine = async (pref: SpeechEnginePreference) => {
+    setEnginePref(pref);
+    await setSpeechEnginePreference(pref);
+  };
 
   return (
     <View>
       <View style={styles.subHeader}>
         <Ionicons name="mic-outline" size={18} color={colors.primary} />
-        <Text style={[styles.subTitle, { color: colors.text }]}>{t('audio.offlineSpeechTitle')}</Text>
+        <Text style={[styles.subTitle, { color: colors.text }]}>Motor de reconocimiento de voz</Text>
       </View>
-      {VOICE_MODEL_IDS.map((id) => (
-        <SpeechModelRow key={id} id={id} colors={colors} />
-      ))}
-      {anyMissing ? <Text style={[styles.hint, { color: colors.textMuted }]}>{t('audio.wifiNotice')}</Text> : null}
+      <Text style={[styles.sub, { color: colors.textMuted, marginBottom: Spacing.sm }]}>
+        Elige qué servicio procesa tu pronunciación durante el repaso:
+      </Text>
+
+      {/* Selector de modo */}
+      <View style={[styles.segmentedContainer, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}>
+        <TouchableOpacity
+          style={[styles.segmentBtn, enginePref === 'native' && { backgroundColor: colors.primary }]}
+          onPress={() => handleSelectEngine('native')}
+          activeOpacity={0.8}
+        >
+          <Text style={[styles.segmentText, { color: enginePref === 'native' ? '#FFF' : colors.textMuted }]}>
+            Nativo (Google / Sistema)
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.segmentBtn, enginePref === 'offline' && { backgroundColor: colors.primary }]}
+          onPress={() => handleSelectEngine('offline')}
+          activeOpacity={0.8}
+        >
+          <Text style={[styles.segmentText, { color: enginePref === 'offline' ? '#FFF' : colors.textMuted }]}>
+            Offline (Sherpa-ONNX)
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      <Text style={[styles.engineDesc, { color: colors.textMuted }]}>
+        {enginePref === 'native'
+          ? '⭐ Recomendado: usa el reconocedor nativo del teléfono (Google en Android, Siri en iOS). Máxima precisión, cancela ruidos de fondo y no inventa palabras.'
+          : 'Reconocimiento 100% offline en el dispositivo. Requiere descargar el paquete de voz correspondiente a continuación.'}
+      </Text>
+
+      {enginePref === 'offline' && (
+        <View style={{ marginTop: Spacing.md }}>
+          <Text style={[styles.subTitle, { color: colors.text, fontSize: 13, marginBottom: 4 }]}>
+            Paquetes offline descargados:
+          </Text>
+          {VOICE_MODEL_IDS.map((id) => (
+            <SpeechModelRow key={id} id={id} colors={colors} />
+          ))}
+          {anyMissing ? <Text style={[styles.hint, { color: colors.textMuted }]}>{t('audio.wifiNotice')}</Text> : null}
+        </View>
+      )}
     </View>
   );
 }
@@ -213,6 +260,29 @@ const styles = StyleSheet.create({
   divider: { height: 1, marginVertical: Spacing.md },
   subHeader: { flexDirection: 'row', alignItems: 'center' },
   subTitle: { fontSize: 15, fontWeight: '700', marginLeft: Spacing.xs },
+  segmentedContainer: {
+    flexDirection: 'row',
+    borderRadius: 10,
+    padding: 3,
+    borderWidth: 1,
+    marginVertical: Spacing.xs,
+  },
+  segmentBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  segmentText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  engineDesc: {
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 4,
+  },
   button: {
     flexDirection: 'row',
     alignItems: 'center',

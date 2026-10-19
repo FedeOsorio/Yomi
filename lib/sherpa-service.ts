@@ -76,9 +76,9 @@ export const MODEL_NOT_DOWNLOADED = 'MODEL_NOT_DOWNLOADED';
 // Detección de voz (VAD por energía). Todo en milisegundos: el tamaño de cada bloque de
 // audio que entrega el micrófono varía según el teléfono (40–100 ms).
 const SAMPLE_RATE = 16000;
-const SPEECH_START_MS = 60; // 60ms: reacción inmediata para consonantes oclusivas y africadas (t, k, ts)
+const SPEECH_START_MS = 75; // 75ms: filtra respiraciones o roces leves sin retardar la captura
 const END_SILENCE_MS = 400; // 400ms de pausa para dar la elocución por terminada
-const PRE_ROLL_MS = 280; // 280ms asegura conservar completo el ataque de consonantes iniciales (ts, k, t, sh)
+const PRE_ROLL_MS = 300; // 300ms conserva completo el ataque de consonantes iniciales (ts, k, t, sh)
 const MIN_UTTERANCE_MS = 140; // palabras de una o dos moras rápidas (てん, くち, かい, こ)
 const MAX_UTTERANCE_MS = 4000;
 const PAD_BEFORE_MS = 60; // 60ms de silencio digital previo para inicializar el estado del transductor
@@ -418,8 +418,8 @@ class SherpaVoiceService {
         const abs = Math.abs(v);
         if (abs > peak) peak = abs;
       }
-      // Si el pico máximo nunca superó 0.035, es respiración, suspiro o ruido ambiente
-      if (peak < 0.035) return;
+      // Si el pico máximo nunca superó 0.04, es respiración, suspiro o ruido ambiente
+      if (peak < 0.04) return;
 
       // Ganancia suave para normalizar micrófonos discretos sin distorsionar ni inflar ruido
       if (peak < 0.6) {
@@ -458,9 +458,12 @@ class SherpaVoiceService {
 
     try {
       const stream = m.audio.createPcmLiveStream({ sampleRate: SAMPLE_RATE, channelCount: 1 });
+      const streamStartAt = Date.now();
+      const SETTLING_MS = 140; // Descarta los primeros 140ms para purgar colas de altavoz y clics de transición
 
       const offData = stream.onData((samples: Float32Array, rate: number) => {
         if (gen !== this.generation || samples.length === 0) return;
+        if (Date.now() - streamStartAt < SETTLING_MS) return;
         const chunkMs = (samples.length / (rate || SAMPLE_RATE)) * 1000;
 
         let sum = 0;

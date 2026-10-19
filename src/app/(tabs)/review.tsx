@@ -69,6 +69,7 @@ export default function ReviewScreen() {
   const isProcessing = useReviewStore((s) => s.isProcessing);
   const sessionCompleted = useReviewStore((s) => s.sessionCompleted);
   const sessionCount = useReviewStore((s) => s.sessionCount);
+  const sessionFailedCount = useReviewStore((s) => s.sessionFailedCardIds.size);
   const isChecked = useReviewStore((s) => s.isChecked);
   const evaluation = useReviewStore((s) => s.evaluation);
   const isListening = useReviewStore((s) => s.isListening);
@@ -346,9 +347,13 @@ export default function ReviewScreen() {
           sessionCompleted={sessionCompleted}
           sessionCount={sessionCount}
           selectedDeckName={selectedDeckName}
+          failedCount={sessionFailedCount}
           colors={colors}
           onExitSession={handleExitSession}
           onPracticeAll={() => promptStudyMethod(selectedDeckId, selectedDeckName, false)}
+          onReviewDueAgain={() => {
+            if (selectedDeckId) startSession(selectedDeckId, selectedDeckName, studyMethod, false);
+          }}
         />
         <ReviewMethodModal
           visible={showMethodModal}

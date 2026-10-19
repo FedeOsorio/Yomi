@@ -8,6 +8,7 @@ export interface SessionSummaryViewProps {
   sessionCompleted: boolean;
   sessionCount: number;
   selectedDeckName: string;
+  failedCount?: number;
   colors: {
     background: string;
     surfaceHighlight: string;
@@ -18,48 +19,88 @@ export interface SessionSummaryViewProps {
   };
   onExitSession: () => void;
   onPracticeAll: () => void;
+  onReviewDueAgain?: () => void;
 }
 
 export const SessionSummaryView = memo(function SessionSummaryView({
   sessionCompleted,
   sessionCount,
   selectedDeckName,
+  failedCount = 0,
   colors,
   onExitSession,
   onPracticeAll,
+  onReviewDueAgain,
 }: SessionSummaryViewProps) {
   const { t } = useTranslation();
+  const hasErrors = failedCount > 0;
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: Spacing.sm }]}>
       <View style={styles.completedBox}>
         <View style={[styles.completedIconBox, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}>
-          <Ionicons name="trophy" size={54} color={colors.primary} />
+          <Ionicons
+            name={hasErrors ? 'refresh-circle-outline' : 'trophy'}
+            size={54}
+            color={hasErrors ? '#F59E0B' : colors.primary}
+          />
         </View>
+
         <Text style={[styles.completedTitle, { color: colors.text }]}>
-          {sessionCompleted ? t('review.completedTitle') : t('review.deckCompletedTitle')}
+          {hasErrors
+            ? 'Tarjetas para reforzar'
+            : sessionCompleted
+            ? t('review.completedTitle')
+            : t('review.deckCompletedTitle')}
         </Text>
+
         <Text style={[styles.completedSub, { color: colors.textMuted }]}>
-          {sessionCompleted
+          {hasErrors
+            ? `Tuviste ${failedCount} tarjeta(s) con errores en esta sesión. Siguen pendientes en el mazo para que las sigas repasando.`
+            : sessionCompleted
             ? t('review.sessionCompletedSub', { count: sessionCount, name: selectedDeckName })
             : t('review.deckCompletedSub', { name: selectedDeckName })}
         </Text>
 
+        {hasErrors && onReviewDueAgain && (
+          <TouchableOpacity
+            style={[styles.primaryBtn, { backgroundColor: colors.primary, marginBottom: 10 }]}
+            onPress={onReviewDueAgain}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="repeat" size={20} color="#FFF" style={{ marginRight: 6 }} />
+            <Text style={styles.primaryBtnText}>Repasar pendientes ahora</Text>
+          </TouchableOpacity>
+        )}
+
         <TouchableOpacity
-          style={[styles.primaryBtn, { backgroundColor: colors.primary }]}
+          style={[
+            hasErrors ? styles.secondaryBtn : styles.primaryBtn,
+            { backgroundColor: hasErrors ? colors.surfaceHighlight : colors.primary, borderColor: colors.border },
+          ]}
           onPress={onExitSession}
           activeOpacity={0.8}
         >
-          <Ionicons name="albums-outline" size={20} color="#FFF" style={{ marginRight: 6 }} />
-          <Text style={styles.primaryBtnText}>{t('review.backToDecks')}</Text>
+          <Ionicons
+            name="albums-outline"
+            size={20}
+            color={hasErrors ? colors.text : '#FFF'}
+            style={{ marginRight: 6 }}
+          />
+          <Text style={hasErrors ? [styles.secondaryBtnText, { color: colors.text }] : styles.primaryBtnText}>
+            {t('review.backToDecks')}
+          </Text>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.secondaryBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}
-          onPress={onPracticeAll}
-          activeOpacity={0.8}
-        >
-          <Text style={[styles.secondaryBtnText, { color: colors.primary }]}>{t('review.practiceAll')}</Text>
-        </TouchableOpacity>
+        {!hasErrors && (
+          <TouchableOpacity
+            style={[styles.secondaryBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}
+            onPress={onPracticeAll}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.secondaryBtnText, { color: colors.primary }]}>{t('review.practiceAll')}</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );

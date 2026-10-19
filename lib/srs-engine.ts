@@ -383,7 +383,7 @@ export async function processCardReview(
   }
 
   const currentItem = currentItems[0];
-  if (options?.wasFailedInSession) return currentItem;
+  if (options?.wasFailedInSession && rating === Rating.Again) return currentItem;
 
   const fsrsCard = toFsrsCard(currentItem);
   const now = new Date();
@@ -408,15 +408,16 @@ export async function processCardReview(
   const prevIntervalHours = Math.max(0, (lastDue.getTime() - lastRev.getTime()) / (3600 * 1000));
   const prevDays = currentItem.scheduledDays || 0;
 
-  // 1. Si falló (Again) o falló previamente en esta misma sesión:
-  // Reinicia de inmediato al escalón mínimo: dentro de 4 horas
+  // 1. Si falló (Again):
+  // La tarjeta NO está aprendida. Queda PENDIENTE DE INMEDIATO (due = now)
+  // para que siga activa en el mazo y el mazo NO se marque falsamente "al día".
   if (effectiveRating === Rating.Again) {
     scheduledDays = 0;
-    finalDue = new Date(now.getTime() + 4 * 60 * 60 * 1000); // +4 horas
+    finalDue = new Date(now.getTime() - 1000); // Due de inmediato
   }
-  // 2. Si es una tarjeta Nueva (primer repaso tras aprenderla):
+  // 2. Si es una tarjeta Nueva (primer repaso tras aprenderla) o se acertó tras haberla fallado en la sesión:
   // Primer escalón mínimo: dentro de 4 horas para consolidar el primer impacto
-  else if (isNewCard) {
+  else if (isNewCard || options?.wasFailedInSession) {
     scheduledDays = 0;
     finalDue = new Date(now.getTime() + 4 * 60 * 60 * 1000); // +4 horas
   }

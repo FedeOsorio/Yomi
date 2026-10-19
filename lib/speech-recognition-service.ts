@@ -1,6 +1,7 @@
 import { PermissionsAndroid, Platform } from 'react-native';
 import { ExpoSpeechRecognitionModule } from 'expo-speech-recognition';
 import { modelForLanguage, sherpaVoiceService } from './sherpa-service';
+import { getStorageItem, setStorageItem } from './storage-service';
 
 /**
  * Punto de entrada único para el reconocimiento de voz de la app.
@@ -18,7 +19,7 @@ const NATIVE_LANG_MAP: Record<string, string> = {
 };
 
 export interface SpeechRecognitionCallbacks {
-  onResult: (transcript: string, isFinal: boolean) => void;
+  onResult: (transcript: string, isFinal: boolean, alternatives?: string[]) => void;
   onError?: (errorMessage: string) => void;
   onEnd?: () => void;
   onStart?: () => void;
@@ -27,9 +28,30 @@ export interface SpeechRecognitionCallbacks {
 export interface SpeechRecognitionOptions {
   /** Palabras esperadas: sesgan el reconocedor nativo y son las pistas del modelo japonés offline. */
   contextualStrings?: string[];
-  /** Forzar el reconocedor nativo aunque el idioma lo soporte Sherpa. */
-  preferredEngine?: 'auto' | 'native';
+  preferredEngine?: 'auto' | 'native' | 'offline';
   continuous?: boolean;
+}
+
+export type SpeechEnginePreference = 'native' | 'offline';
+
+const ENGINE_PREF_KEY = 'yomi_speech_engine_mode';
+let cachedEnginePref: SpeechEnginePreference | null = null;
+
+export async function getSpeechEnginePreference(): Promise<SpeechEnginePreference> {
+  if (cachedEnginePref) return cachedEnginePref;
+  const stored = await getStorageItem(ENGINE_PREF_KEY);
+  if (stored === 'offline' || stored === 'native') {
+    cachedEnginePref = stored;
+    return stored;
+  }
+  // Por defecto 'native': usa el motor nativo de Google/iOS con el paquete de japonés del celular
+  cachedEnginePref = 'native';
+  return 'native';
+}
+
+export async function setSpeechEnginePreference(pref: SpeechEnginePreference): Promise<void> {
+  cachedEnginePref = pref;
+  await setStorageItem(ENGINE_PREF_KEY, pref);
 }
 
 /** Indica si el idioma se reconoce con el modelo offline (y por lo tanto necesita descargarlo). */
@@ -94,7 +116,14 @@ class SpeechRecognitionService {
         return false;
       }
 
-      if (options.preferredEngine !== 'native' && usesOfflineModel(languageCode)) {
+      const pref =
+        options.preferredEngine === 'native'
+          ? 'native'
+          : options.preferredEngine === 'offline'
+            ? 'offline'
+            : await getSpeechEnginePreference();
+
+      if (pref === 'offline' && usesOfflineModel(languageCode)) {
         this.engine = 'sherpa';
         const ok = await sherpaVoiceService.start(languageCode, {
           onResult: (text) => live() && callbacks.onResult(text, true),
@@ -123,8 +152,10 @@ class SpeechRecognitionService {
     this.nativeSubs = [
       ExpoSpeechRecognitionModule.addListener('start', () => live() && callbacks.onStart?.()),
       ExpoSpeechRecognitionModule.addListener('result', (e) => {
-        const text = e.results?.[0]?.transcript ?? '';
-        if (live() && text) callbacks.onResult(text, e.isFinal ?? false);
+        if (!live() || !e.results || e.results.length === 0) return;
+        const text = e.results[0]?.transcript ?? '';
+        const alternatives = e.results.map((r) => r.transcript).filter(Boolean);
+        if (text) callbacks.onResult(text, e.isFinal ?? false, alternatives);
       }),
       ExpoSpeechRecognitionModule.addListener('error', (e) => {
         if (!live() || e.error === 'aborted') return;
@@ -145,6 +176,7 @@ class SpeechRecognitionService {
       ExpoSpeechRecognitionModule.start({
         lang,
         interimResults: true,
+        maxAlternatives: 5,
         continuous: options.continuous ?? true,
         contextualStrings: options.contextualStrings?.slice(0, 100),
       });

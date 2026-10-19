@@ -8,7 +8,7 @@ import { registerWordInDictionary } from '../../../lib/phonetic-dictionary';
 import { calculateChineseAccuracyScore } from '../../../lib/pinyin-utils';
 import { MODEL_NOT_DOWNLOADED, sherpaVoiceService } from '../../../lib/sherpa-service';
 import { expectedVoiceWords } from '../../../lib/voice-match';
-import { speechService, usesOfflineModel } from '../../../lib/speech-recognition-service';
+import { getSpeechEnginePreference, speechService, usesOfflineModel } from '../../../lib/speech-recognition-service';
 import { checkVoiceMatch, DueCardWithContext } from '../../../lib/srs-engine';
 import { CardEvaluation, useReviewStore } from '../../stores/reviewStore';
 import { useTranslation } from '../../i18n';
@@ -81,9 +81,10 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
     router.push({ pathname: '/profile', params: { section: 'audio' } });
   };
 
-  /** Carga en memoria el modelo de voz (ya descargado) para el idioma. */
+  /** Carga en memoria el modelo de voz (ya descargado) para el idioma si está en modo offline. */
   const prepareModel = async (lang: string): Promise<boolean> => {
-    if (!usesOfflineModel(lang) || sherpaVoiceService.isReady(lang)) return true;
+    const pref = await getSpeechEnginePreference();
+    if (pref !== 'offline' || !usesOfflineModel(lang) || sherpaVoiceService.isReady(lang)) return true;
     setSetupLabel(t('review.loadingVoiceEngine'));
     try {
       const loaded = await sherpaVoiceService.loadModel(lang);
@@ -96,7 +97,7 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
   };
 
   /**
-   * Antes de empezar una sesión por voz: permiso de micrófono y modelo descargado.
+   * Antes de empezar una sesión por voz: permiso de micrófono y modelo descargado (si se usa modo offline).
    * Devuelve false (y avisa) si no se puede empezar.
    */
   const ensureReady = async (lang: string, onModelMissing: () => void): Promise<boolean> => {
@@ -105,11 +106,14 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
       Alert.alert(t('review.micPermissionTitle'), t('review.micPermissionMsg'));
       return false;
     }
-    if (!(await sherpaVoiceService.hasModelFor(lang))) {
-      onModelMissing();
-      // Esperar a que cierre el modal de opciones antes de abrir el aviso (dos Modal a la vez fallan en Android)
-      setTimeout(() => setModelRequiredLang(lang), 250);
-      return false;
+    const pref = await getSpeechEnginePreference();
+    if (pref === 'offline') {
+      if (!(await sherpaVoiceService.hasModelFor(lang))) {
+        onModelMissing();
+        // Esperar a que cierre el modal de opciones antes de abrir el aviso (dos Modal a la vez fallan en Android)
+        setTimeout(() => setModelRequiredLang(lang), 250);
+        return false;
+      }
     }
     return true;
   };
@@ -214,8 +218,7 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
           setIsListening(true);
           setSpeechStatus('listening');
         },
-        onResult: (transcript, isFinal) => {
-          // Cada elocución terminada es UN intento; los resultados parciales solo se muestran
+        onResult: (transcript, isFinal, alternatives = []) => {
           if (isStale()) return;
 
           // Si el motor transcribe "はい" como alucinación y la tarjeta no lo espera, se ignora para no quemar intentos
@@ -230,21 +233,36 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
             }
           }
 
-          const result = checkVoiceMatch(card, transcript, lang);
-          setSpeechTranscript(result.heard || transcript);
-          if (!isFinal) return;
+          // Probar la transcripción principal y todas las alternativas que entregó el reconocedor
+          const candidates = Array.from(new Set([transcript, ...alternatives].filter(Boolean)));
+          let matchResult: ReturnType<typeof checkVoiceMatch> | null = null;
+          for (const cand of candidates) {
+            const res = checkVoiceMatch(card, cand, lang);
+            if (res.isMatch) {
+              matchResult = res;
+              break;
+            }
+          }
 
-          console.log('[ReviewVoice] Intento:', transcript, '→', result);
-          if (result.isMatch) {
+          const primaryRes = matchResult || checkVoiceMatch(card, transcript, lang);
+          setSpeechTranscript(primaryRes.heard || transcript);
+
+          // Si coincide, ¡acierto inmediato! No esperamos a que el reconocedor cierre la elocución
+          if (matchResult?.isMatch) {
+            console.log('[ReviewVoice] Acierto inmediato:', matchResult);
             isCardEvaluated.current = true;
             speechService.abort().catch(() => {});
             setIsListening(false);
             setSpeechStatus('evaluating');
             setFeedback(null);
-            setTimeout(() => evaluate(card, true, result.matchedReading), 150);
+            setTimeout(() => evaluate(card, true, matchResult.matchedReading), 150);
             return;
           }
 
+          // Solo cuando el reconocedor da por finalizada la frase (isFinal = true) contamos el intento fallido
+          if (!isFinal) return;
+
+          console.log('[ReviewVoice] Intento no coincidente:', transcript, '→', primaryRes);
           const used = ++attempts.current.count;
           if (used >= MAX_VOICE_ATTEMPTS) {
             evaluate(card, false);
@@ -314,7 +332,10 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
       // advanceCard() no mueve el índice en la última tarjeta: no volver a abrir el micrófono
       const next = state.sessionCompleted ? null : state.getCurrentCard();
       if (next) {
-        startListening(next, getEffectiveCardLanguage(next));
+        // Pausa breve de 120ms para purgar cualquier eco de altavoz o sintetizador antes de abrir el micrófono
+        setTimeout(() => {
+          startListening(next, getEffectiveCardLanguage(next));
+        }, 120);
       } else {
         speechService.abort().catch(() => {});
         setIsListening(false);

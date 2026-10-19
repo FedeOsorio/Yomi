@@ -339,8 +339,19 @@ export function expectedVoiceWords(rawCard: CardLike, lang: string): string[] {
   if (target.startsWith('ja')) {
     const furigana = [...(card.displayText || '').matchAll(/[\[(【（](.*?)[\])】）]/g)].flatMap((m) => splitReadings(m[1]));
     const aux = parseAux(card.auxiliaryInfo);
-    const auxReadings = !card.displayReading ? splitReadings(aux.kanjiReadings || aux.onReading || aux.kunReading) : [];
-    return Array.from(new Set([surface, ...splitReadings(card.displayReading), ...furigana, ...auxReadings].filter(Boolean)));
+    const auxReadings = [aux.kanjiReadings, aux.onReading, aux.kunReading].flatMap(splitReadings);
+    const singleReadings = singleKanjiReadings(card.displayText);
+    return Array.from(
+      new Set(
+        [
+          surface,
+          ...splitReadings(card.displayReading),
+          ...furigana,
+          ...auxReadings,
+          ...singleReadings,
+        ].filter(Boolean)
+      )
+    );
   }
   return Array.from(new Set([surface, ...(card.displayReading || '').split(/[\/\n,、;•|]/).map((r) => r.trim())].filter(Boolean)));
 }
