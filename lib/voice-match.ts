@@ -65,6 +65,17 @@ function phonetic(kana: string): string {
   return kana.replace(/([おこそとのほもよろごぞどぼぽょ])お/g, '$1う').replace(/([えけせてねへめれげぜでべぺ])え/g, '$1い');
 }
 
+/** Colapsa vocales largas seguidas al sonido base para tolerar diferencias de duración (ej. とうも ↔ とも, こお ↔ こ). */
+function collapseLongVowels(kana: string): string {
+  const s = expandChoonpu(kana);
+  return s
+    .replace(/([おこそとのほもよろごぞどぼぽょ])([うお])/g, '$1')
+    .replace(/([えけせてねへめれげぜでべぺ])([いえ])/g, '$1')
+    .replace(/([あかさたなはまやらわがざだばぱ])([あ])/g, '$1')
+    .replace(/([いきしちにひみりぎじぢびぴ])([い])/g, '$1')
+    .replace(/([うくすつぬふむゆるぐずづぶぷ])([う])/g, '$1');
+}
+
 function splitReadings(raw?: string | null): string[] {
   return (raw || '')
     .split(/[\/\n,、;•|]/)
@@ -170,6 +181,12 @@ function matchJapanese(card: CardLike, transcript: string): VoiceMatchResult {
   // 2. Misma lectura (permitiendo vocales largas escritas distinto)
   for (const h of heard) {
     const hit = expected.find((e) => phonetic(e) === phonetic(h));
+    if (hit) return { isMatch: true, matchedReading: hit, heard: hit };
+  }
+
+  // 2b. Mismo sonido con tolerancia de duración en vocales largas (ej. とうも vs とも)
+  for (const h of heard) {
+    const hit = expected.find((e) => collapseLongVowels(phonetic(e)) === collapseLongVowels(phonetic(h)));
     if (hit) return { isMatch: true, matchedReading: hit, heard: hit };
   }
 

@@ -77,7 +77,7 @@ export const MODEL_NOT_DOWNLOADED = 'MODEL_NOT_DOWNLOADED';
 // Detección de voz (VAD por energía). Todo en milisegundos: el tamaño de cada bloque de
 // audio que entrega el micrófono varía según el teléfono (40–100 ms).
 const SAMPLE_RATE = 16000;
-const SPEECH_START_MS = 80; // voz sostenida necesaria para considerar que empezó a hablar (ágil para monosílabas)
+const SPEECH_START_MS = 180; // voz sostenida necesaria para descartar respiraciones (~100ms) y chasquidos
 const END_SILENCE_MS = 450; // pausa que da la palabra por terminada (tolera っ y pausas breves)
 const PRE_ROLL_MS = 300; // audio previo que se conserva para no cortar la primera consonante
 const MIN_UTTERANCE_MS = 200; // palabras de una mora (こ, じ) duran ~200ms
@@ -125,7 +125,7 @@ function cleanTranscript(raw: string, lang: string): string {
     .replace(/[。、，！？!?.,:;…〜～・]/g, '')
     .trim();
   text = lang === 'ja' || lang === 'zh' || lang === 'yue' ? text.replace(/\s+/g, '') : text.replace(/\s+/g, ' ');
-  const FILLERS = new Set(['ああ', 'ええ', 'えー', 'あの', 'ん', 'うーん', 'えっと', '嗯', '啊', '呃', '哦', '呀', 'っ', 'ー']);
+  const FILLERS = new Set(['ああ', 'ええ', 'えー', 'あの', 'ん', 'うーん', 'えっと', '嗯', '啊', '呃', '哦', '呀', 'っ', 'ー', 'つ', 'く', 'ふ', 'ち']);
   return FILLERS.has(text) ? '' : text;
 }
 
@@ -259,13 +259,12 @@ class SherpaVoiceService {
     return this.tokenSet;
   }
 
-  /** Pistas listas para el motor: sin signos y con caracteres separados por espacio en modelos cjkchar. */
+  /** Pistas listas para el motor: sin signos. */
   private async cleanHotwords(id: VoiceModelId, words: string[]): Promise<string> {
     const tokens = await this.loadTokenSet(id).catch(() => null);
     const clean = words
       .map((w) => (w || '').replace(HOTWORD_NOISE, ''))
-      .filter((w) => w && (!tokens || [...w].every((ch) => tokens.has(ch))))
-      .map((w) => (id === 'reazon-ja' ? [...w].join(' ') : w));
+      .filter((w) => w && (!tokens || [...w].every((ch) => tokens.has(ch))));
     return Array.from(new Set(clean)).join('/');
   }
 
@@ -405,16 +404,19 @@ class SherpaVoiceService {
     };
 
     const transcribe = async (audio: number[]) => {
-      // Normalización de volumen: micrófonos Android suelen entregar picos muy bajos (0.02 - 0.05).
-      // El modelo INT8 necesita amplitudes cercanas a 0.75 para no perder resolución acústica.
       let peak = 0;
       for (const v of audio) {
         const abs = Math.abs(v);
         if (abs > peak) peak = abs;
       }
-      if (peak < 0.005) return;
-      if (peak < 0.7) {
-        const gain = Math.min(0.75 / peak, 25);
+      // Si el pico máximo de toda la elocución es menor a 0.035, fue respiración, soplo
+      // o ruido de fondo lejano: descartar sin enviar al modelo.
+      if (peak < 0.035) return;
+
+      // Normalización con ganancia moderada (máximo 4x). Una ganancia excesiva (25x) amplifica
+      // el ruido ambiente a volumen ensordecedor y deforma consonantes/silencios internos.
+      if (peak < 0.6) {
+        const gain = Math.min(0.7 / peak, 4.0);
         for (let i = 0; i < audio.length; i++) audio[i] *= gain;
       }
       const padded = [...new Array(ms(PAD_BEFORE_MS)).fill(0), ...audio, ...new Array(ms(PAD_AFTER_MS)).fill(0)];
@@ -444,8 +446,9 @@ class SherpaVoiceService {
         let sum = 0;
         for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
         const rms = Math.sqrt(sum / samples.length);
-        if (!speaking) noiseFloor = noiseFloor * 0.95 + Math.min(rms, 0.015) * 0.05;
-        const isVoice = rms > Math.max(0.004, Math.min(0.02, noiseFloor * 1.8));
+        if (!speaking) noiseFloor = noiseFloor * 0.95 + Math.min(rms, 0.02) * 0.05;
+        // Umbral de voz: mínimo 0.012 RMS para que una respiración (0.004-0.008) o alguien a 5m no active la escucha.
+        const isVoice = rms > Math.max(0.012, Math.min(0.035, noiseFloor * 2.2));
 
         if (busy || !speaking) {
           // Esperando que empiece a hablar (o transcribiendo el intento anterior)
