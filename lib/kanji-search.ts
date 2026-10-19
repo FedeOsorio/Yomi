@@ -17,13 +17,20 @@ export interface KanjiInfo {
   kun: string[];
   /** Significados en inglés. */
   meanings: string[];
-  /** Lectura que coincidió con la búsqueda (en hiragana, sin separar el okurigana). */
+  /** Lectura que coincidió con la búsqueda, con el okurigana entre paréntesis: つく(る). */
   matchedReading?: string;
 }
 
-/** Kun "つ.く" → "つく"; las formas de prefijo/sufijo ("-つ.き") no se usan para buscar. */
-const kunFull = (k: string) => k.replace(/[.\-]/g, '');
+/** Las formas de prefijo/sufijo ("-つ.き") no se usan para buscar. */
 const isAffix = (k: string) => k.startsWith('-') || k.endsWith('-');
+/** "つく.る" → "つく(る)" */
+const withOkurigana = (k: string) => (k.includes('.') ? k.replace(/\.(.*)$/, '($1)') : k);
+
+/**
+ * ¿La lectura kun coincide con la búsqueda? Vale la forma completa (つ.く → つく) y también la
+ * parte que lee el kanji solo (つく.る → つく: 作 se lee "tsuku" en 作る).
+ */
+const kunMatches = (k: string, q: string) => k.replace('.', '') === q || k.split('.')[0] === q;
 
 export function getKanjiInfo(char: string): KanjiInfo | undefined {
   const row = KANJI_DATA[char];
@@ -38,7 +45,7 @@ export function getKanjiInfo(char: string): KanjiInfo | undefined {
       ? kun
           .split(' ')
           .filter((k) => !isAffix(k))
-          .map((k) => (k.includes('.') ? k.replace(/\.(.*)$/, '($1)') : k))
+          .map(withOkurigana)
       : [],
     meanings: meanings ? meanings.split('; ') : [],
   };
@@ -59,7 +66,7 @@ function compareKanji(a: KanjiInfo, b: KanjiInfo): number {
 }
 
 /**
- * Kanji que se leen como la búsqueda: "tsuku" → 付, 着, 就…; "shi" → 四, 子, 仕…
+ * Kanji que se leen como la búsqueda: "tsuku" → 付, 着, 作…; "shi" → 四, 子, 仕…
  * Acepta romaji, hiragana, katakana o un kanji suelto (devuelve ese kanji).
  */
 export function searchKanji(query: string, limit = 10): KanjiInfo[] {
@@ -78,7 +85,8 @@ export function searchKanji(query: string, limit = 10): KanjiInfo[] {
   for (const [kanji, row] of Object.entries(KANJI_DATA)) {
     const on = row[2] ? row[2].split(' ') : [];
     const kun = row[3] ? row[3].split(' ').filter((k) => !isAffix(k)) : [];
-    const matched = on.includes(reading) ? reading : kun.map(kunFull).includes(reading) ? reading : undefined;
+    const kunHit = kun.find((k) => kunMatches(k, reading));
+    const matched = on.includes(reading) ? reading : kunHit ? withOkurigana(kunHit) : undefined;
     if (matched) hits.push({ ...getKanjiInfo(kanji)!, matchedReading: matched });
   }
   return hits.sort(compareKanji).slice(0, limit);

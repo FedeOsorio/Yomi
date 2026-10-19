@@ -77,13 +77,13 @@ export const MODEL_NOT_DOWNLOADED = 'MODEL_NOT_DOWNLOADED';
 // Detección de voz (VAD por energía). Todo en milisegundos: el tamaño de cada bloque de
 // audio que entrega el micrófono varía según el teléfono (40–100 ms).
 const SAMPLE_RATE = 16000;
-const SPEECH_START_MS = 120; // voz sostenida necesaria para considerar que empezó a hablar
-const END_SILENCE_MS = 650; // pausa que da la palabra por terminada (tolera っ y pausas cortas)
-const PRE_ROLL_MS = 450; // audio previo que se conserva para no cortar la primera sílaba
-const MIN_UTTERANCE_MS = 300;
+const SPEECH_START_MS = 80; // voz sostenida necesaria para considerar que empezó a hablar (ágil para monosílabas)
+const END_SILENCE_MS = 450; // pausa que da la palabra por terminada (tolera っ y pausas breves)
+const PRE_ROLL_MS = 300; // audio previo que se conserva para no cortar la primera consonante
+const MIN_UTTERANCE_MS = 200; // palabras de una mora (こ, じ) duran ~200ms
 const MAX_UTTERANCE_MS = 4000;
-const PAD_BEFORE_MS = 250; // silencio agregado al inicio del audio que se transcribe
-const PAD_AFTER_MS = 600; // y al final (para que el modelo no corte la ん final)
+const PAD_BEFORE_MS = 100; // silencio digital inicial para estabilizar el transductor
+const PAD_AFTER_MS = 150; // silencio digital final para que el modelo no corte finales suaves o ん
 
 const ms = (n: number) => Math.round((n / 1000) * SAMPLE_RATE);
 
@@ -259,12 +259,13 @@ class SherpaVoiceService {
     return this.tokenSet;
   }
 
-  /** Pistas listas para el motor: sin signos y solo con caracteres que el modelo sabe escribir. */
+  /** Pistas listas para el motor: sin signos y con caracteres separados por espacio en modelos cjkchar. */
   private async cleanHotwords(id: VoiceModelId, words: string[]): Promise<string> {
     const tokens = await this.loadTokenSet(id).catch(() => null);
     const clean = words
       .map((w) => (w || '').replace(HOTWORD_NOISE, ''))
-      .filter((w) => w && (!tokens || [...w].every((ch) => tokens.has(ch))));
+      .filter((w) => w && (!tokens || [...w].every((ch) => tokens.has(ch))))
+      .map((w) => (id === 'reazon-ja' ? [...w].join(' ') : w));
     return Array.from(new Set(clean)).join('/');
   }
 
@@ -324,6 +325,8 @@ class SherpaVoiceService {
             modelingUnit: 'cjkchar',
             hotwordsScore: HOTWORDS_SCORE,
           });
+          // Aumentamos el haz de búsqueda de 4 a 16 para evitar podar monosílabas y homófonos
+          await this.engine.setConfig({ maxActivePaths: 16 }).catch(() => {});
         } else {
           this.engine = await m.stt.createSTT({
             modelPath,
@@ -402,16 +405,18 @@ class SherpaVoiceService {
     };
 
     const transcribe = async (audio: number[]) => {
-      // Normalización suave de volumen para micrófonos con poca ganancia
+      // Normalización de volumen: micrófonos Android suelen entregar picos muy bajos (0.02 - 0.05).
+      // El modelo INT8 necesita amplitudes cercanas a 0.75 para no perder resolución acústica.
       let peak = 0;
-      for (const v of audio) peak = Math.max(peak, Math.abs(v));
-      if (peak < 0.01) return;
-      if (peak < 0.6) {
-        const gain = Math.min(0.7 / peak, 3);
+      for (const v of audio) {
+        const abs = Math.abs(v);
+        if (abs > peak) peak = abs;
+      }
+      if (peak < 0.005) return;
+      if (peak < 0.7) {
+        const gain = Math.min(0.75 / peak, 25);
         for (let i = 0; i < audio.length; i++) audio[i] *= gain;
       }
-      // Silencio digital antes y después: en palabras de una sílaba el modelo tiende a descartar
-      // el último sonido si queda pegado al borde del audio (まん → ま, でん → で).
       const padded = [...new Array(ms(PAD_BEFORE_MS)).fill(0), ...audio, ...new Array(ms(PAD_AFTER_MS)).fill(0)];
       busy = true;
       try {
@@ -440,13 +445,13 @@ class SherpaVoiceService {
         for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
         const rms = Math.sqrt(sum / samples.length);
         if (!speaking) noiseFloor = noiseFloor * 0.95 + Math.min(rms, 0.015) * 0.05;
-        const isVoice = rms > Math.max(0.005, Math.min(0.02, noiseFloor * 1.8));
+        const isVoice = rms > Math.max(0.004, Math.min(0.02, noiseFloor * 1.8));
 
         if (busy || !speaking) {
           // Esperando que empiece a hablar (o transcribiendo el intento anterior)
           pushPreRoll(samples);
           if (busy) return;
-          voicedMs = isVoice ? voicedMs + chunkMs : 0;
+          voicedMs = isVoice ? voicedMs + chunkMs : Math.max(0, voicedMs - chunkMs * 0.5);
           if (voicedMs >= SPEECH_START_MS) {
             speaking = true;
             silenceMs = 0;
@@ -465,9 +470,14 @@ class SherpaVoiceService {
 
         speaking = false;
         voicedMs = 0;
-        // No se recorta la cola: los sonidos finales suaves (la ん de でん, las vocales que se apagan)
-        // tienen poca energía y el detector los cuenta como silencio; recortarlos los borraba.
-        const audio = utterance;
+        // Recortamos el exceso de silencio final acumulado en utterance:
+        // conservamos unos 200ms de silencio ambiental, que junto a PAD_AFTER_MS (150ms) dan ~350ms limpios,
+        // evitando que el transductor decodifique un segundo de ruido muerto que desvía la pronunciación.
+        const keepTrailingSilence = ms(200);
+        const excessSilence = Math.max(0, ms(silenceMs) - keepTrailingSilence);
+        const audio = excessSilence > 0 && utterance.length > excessSilence + ms(MIN_UTTERANCE_MS)
+          ? utterance.slice(0, utterance.length - excessSilence)
+          : utterance;
         utterance = [];
         if (audio.length >= ms(MIN_UTTERANCE_MS)) transcribe(audio);
       });

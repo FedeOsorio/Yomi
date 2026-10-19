@@ -245,9 +245,12 @@ export function getKanjiEssentialReading(
 } {
   const cleanChar = (kanji || '').trim();
   const entry = JLPT_KANJI_READINGS[cleanChar];
+  // Kanji fuera del catálogo corto: sus 2 lecturas on y 2 kun principales del diccionario de kanji.
+  // Solo para mostrarlas; la lectura "esencial" de esos kanji no cambia (sigue siendo el propio kanji).
+  const fromData = !rawOn && !rawKun && !entry ? mainKanjiReadings(cleanChar) : null;
 
-  const cleanOn = (rawOn || entry?.on || '').replace(/[・]/g, '').trim();
-  const cleanKun = (rawKun || entry?.kun || '').replace(/[・]/g, '').trim();
+  const cleanOn = (rawOn || entry?.on || fromData?.on || '').replace(/[・]/g, '').trim();
+  const cleanKun = (rawKun || entry?.kun || fromData?.kun || '').replace(/[・]/g, '').trim();
 
   let kanjiReadings: string | undefined = undefined;
   if (cleanOn && cleanKun) {
@@ -265,6 +268,16 @@ export function getKanjiEssentialReading(
       kanjiReadings,
       onReading: cleanOn || entry.on,
       kunReading: cleanKun || entry.kun,
+    };
+  }
+
+  // Lecturas tomadas solo para mostrar: no se usan para elegir la lectura esencial
+  if (fromData) {
+    return {
+      essentialReading: cleanChar,
+      kanjiReadings,
+      onReading: fromData.on || undefined,
+      kunReading: fromData.kun || undefined,
     };
   }
 
@@ -305,6 +318,34 @@ export function getKanjiEssentialReading(
     onReading: cleanOn || undefined,
     kunReading: cleanKun || undefined,
   };
+}
+
+/**
+ * Las 2 lecturas on (en katakana) y las 2 kun principales (okurigana con "・": つく・る) de un kanji,
+ * según el diccionario de kanji. Se omiten las kun que solo repiten otra más corta/larga
+ * (つ・け junto a つ・ける). Formato igual al de JLPT_KANJI_READINGS.
+ */
+const U_TO_I: Record<string, string> = { う: 'い', く: 'き', ぐ: 'ぎ', す: 'し', つ: 'ち', ぬ: 'に', ぶ: 'び', む: 'み', る: 'り' };
+
+export function mainKanjiReadings(char: string): { on: string; kun: string } | null {
+  const row = KANJI_DATA[char];
+  if (!row) return null;
+  const toKatakana = (s: string) => s.replace(/[\u3041-\u3096]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 0x60));
+  const on = (row[2] ? row[2].split(' ') : []).slice(0, 2).map(toKatakana);
+  const kun: string[] = [];
+  for (const k of row[3] ? row[3].split(' ') : []) {
+    if (kun.length >= 2) break;
+    if (k.startsWith('-') || k.endsWith('-')) continue;
+    const full = k.replace('.', '');
+    const repeats = kun.some((x) => {
+      const f = x.replace('・', '');
+      // つ・け junto a つ・ける, o el sustantivo つく・り junto al verbo つく・る
+      return f.startsWith(full) || full.startsWith(f) || full === f.slice(0, -1) + (U_TO_I[f.slice(-1)] ?? '');
+    });
+    if (repeats) continue;
+    kun.push(k.replace('.', '・'));
+  }
+  return { on: on.join('、'), kun: kun.join('、') };
 }
 
 /**

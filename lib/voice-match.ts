@@ -192,10 +192,17 @@ function matchJapanese(card: CardLike, transcript: string): VoiceMatchResult {
   // 4. Palabras de UNA sola mora (こ, き, て…): el modelo suele oír sonora la consonante sorda
   //    cuando no se aspira (こ → ご), algo muy común en hispanohablantes. Solo en esa dirección:
   //    una tarjeta "ご" NO acepta "こ".
+  //    También tolera si al pronunciarla aislada se alargó la vocal (こ → こう/こお, じ → じい).
   for (const h of heard) {
     for (const e of expected) {
-      if (isSingleMora(e) && unvoice(e) === e && unvoice(h) === e && h !== e) {
-        return { isMatch: true, matchedReading: e, heard: e };
+      if (isSingleMora(e)) {
+        const uh = unvoice(h);
+        if (unvoice(e) === e && (uh === e || isProlongedMora(uh, e)) && h !== e) {
+          return { isMatch: true, matchedReading: e, heard: e };
+        }
+        if (isProlongedMora(h, e)) {
+          return { isMatch: true, matchedReading: e, heard: e };
+        }
       }
     }
   }
@@ -224,6 +231,29 @@ const VOICED: Record<string, string> = {
 };
 const unvoice = (kana: string) => kana.replace(/./g, (c) => VOICED[c] ?? c);
 const isSingleMora = (kana: string) => /^[\u3041-\u3096][ゃゅょ]?$/.test(kana);
+
+const MORA_VOWEL: Record<string, string> = {
+  あ: 'あ', か: 'あ', さ: 'あ', た: 'あ', な: 'あ', は: 'あ', ま: 'あ', や: 'あ', ら: 'あ', わ: 'あ',
+  が: 'あ', ざ: 'あ', だ: 'あ', ば: 'あ', ぱ: 'あ',
+  い: 'い', き: 'い', し: 'い', ち: 'い', に: 'い', ひ: 'い', み: 'い', り: 'い',
+  ぎ: 'い', じ: 'い', ぢ: 'い', び: 'い', ぴ: 'い',
+  う: 'う', く: 'う', す: 'う', つ: 'う', ぬ: 'う', ふ: 'う', む: 'う', ゆ: 'う', る: 'う',
+  ぐ: 'う', ず: 'う', づ: 'う', ぶ: 'う', ぷ: 'う',
+  え: 'え', け: 'え', せ: 'え', て: 'え', ね: 'え', へ: 'え', め: 'え', れ: 'え',
+  げ: 'え', ぜ: 'え', で: 'え', べ: 'え', ぺ: 'え',
+  お: 'お', こ: 'お', そ: 'お', と: 'お', の: 'お', ほ: 'お', も: 'お', よ: 'お', ろ: 'お',
+  ご: 'お', ぞ: 'お', ど: 'お', ぼ: 'お', ぽ: 'お',
+};
+
+function isProlongedMora(heard: string, expected: string): boolean {
+  if (!isSingleMora(expected)) return false;
+  const baseKana = expected.slice(-1);
+  const v = MORA_VOWEL[baseKana];
+  if (!v) return false;
+  if (v === 'お' && (heard === expected + 'う' || heard === expected + 'お')) return true;
+  if (v === 'え' && (heard === expected + 'い' || heard === expected + 'え')) return true;
+  return heard === expected + v;
+}
 
 // ───────────── chino ─────────────
 

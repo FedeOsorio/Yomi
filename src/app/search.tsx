@@ -160,7 +160,7 @@ export default function SearchScreen() {
       // 2. Japonés: Romaji / Kana / Kanji -> Diccionario estructurado con JLPT
       const userLang = getCurrentUserLanguage();
       // Kanji sueltos (offline, al instante) y luego su significado traducido
-      const kanjiHits = searchKanji(trimmed, 15);
+      const kanjiHits = searchKanji(trimmed, 20);
       setKanjiResults(kanjiHits);
       translateBatchToLanguage(kanjiHits.map((k) => k.meanings[0] || ''), userLang, 'en')
         .then((tr) => {
