@@ -282,6 +282,17 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
           }
           Alert.alert(t('review.micErrorTitle'), err || t('review.micErrorDefault'));
         },
+        onEnd: () => {
+          if (isStale() || isCardEvaluated.current) return;
+          if (attempts.current.count > 0 && attempts.current.count < MAX_VOICE_ATTEMPTS && !store().isChecked) {
+            console.log('[ReviewVoice] Reconocedor finalizó intento, reabriendo micrófono limpio para intento restante');
+            setTimeout(() => {
+              if (!isStale() && !isCardEvaluated.current && !store().isChecked) {
+                startListening(card, lang);
+              }
+            }, 100);
+          }
+        },
       },
       { contextualStrings: getContextualStrings(card) }
     );

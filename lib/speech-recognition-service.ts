@@ -177,7 +177,7 @@ class SpeechRecognitionService {
         lang,
         interimResults: true,
         maxAlternatives: 5,
-        continuous: options.continuous ?? true,
+        continuous: options.continuous ?? false,
         contextualStrings: options.contextualStrings?.slice(0, 100),
       });
       return true;

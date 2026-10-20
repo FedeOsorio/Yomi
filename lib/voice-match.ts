@@ -185,11 +185,30 @@ function matchJapanese(card: CardLike, transcript: string): VoiceMatchResult {
     return { isMatch: true, matchedReading: expected[0] ?? surface, heard: expected[0] ?? surface };
   }
 
+  // 1b. Repetición de la palabra (el usuario dijo la palabra dos veces o el motor la concatenó: ej. かくかく vs かく)
+  if (surface && (clean === surface + surface || clean === surface + surface + surface)) {
+    return { isMatch: true, matchedReading: expected[0] ?? surface, heard: expected[0] ?? surface };
+  }
+  for (const e of expected) {
+    if (e && (clean === e + e || clean === e + e + e)) {
+      return { isMatch: true, matchedReading: e, heard: e };
+    }
+  }
+
   const heard = heardJapaneseReadings(clean);
   // 2. Misma lectura (permitiendo vocales largas escritas distinto)
   for (const h of heard) {
     const hit = expected.find((e) => phonetic(e) === phonetic(h));
     if (hit) return { isMatch: true, matchedReading: hit, heard: hit };
+  }
+
+  // 2-repeat. Misma lectura repetida (ej. 書く書く oído como かくかく vs かく)
+  for (const h of heard) {
+    for (const e of expected) {
+      if (e && (h === e + e || h === e + e + e || phonetic(h) === phonetic(e) + phonetic(e))) {
+        return { isMatch: true, matchedReading: e, heard: e };
+      }
+    }
   }
 
   // 2b. Mismo sonido con tolerancia de duración en vocales largas (ej. とうも vs とも)
