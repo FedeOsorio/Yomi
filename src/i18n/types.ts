@@ -77,6 +77,10 @@ export interface TranslationSchema {
   };
   deckDetail: {
     deck: string;
+    card: string;
+    cards: string;
+    word: string;
+    words: string;
     optionsFor: string;
     reviewDeck: string;
     conjugationPractice: string;

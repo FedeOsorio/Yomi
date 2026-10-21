@@ -48,7 +48,7 @@ export async function importAnkiDeckAsync({
     let mediaFailed = 0;
 
     if (manifest && manifest.byFile.size > 0) {
-      const res = await importAnkiMediaAsync(fileUri, Array.from(manifest.byFile.keys()), manifest.byFile, onProgress);
+      const res = await importAnkiMediaAsync(fileUri, Array.from(manifest.byFile.keys()), manifest, onProgress);
       for (const m of items.flatMap((item) => item.media ?? [])) {
         const path = res.paths.get(m.file);
         if (path) {
@@ -124,7 +124,7 @@ export async function recoverDeckMediaAsync(deckId: string, fileUri: string): Pr
   }
   if (toExtract.size === 0) return { status: 'noMatchingMedia' };
 
-  const res = await importAnkiMediaAsync(fileUri, Array.from(toExtract), mediaManifest.byFile, undefined, preferredPaths);
+  const res = await importAnkiMediaAsync(fileUri, Array.from(toExtract), mediaManifest, undefined, preferredPaths);
 
   for (const w of deckWords) {
     if (!applyMediaPaths(parseAux(w.aux).media, res.paths)) continue;

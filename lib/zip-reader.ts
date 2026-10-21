@@ -9,6 +9,7 @@
 
 import { File, FileMode } from 'expo-file-system';
 import { Inflate, inflateSync } from 'fflate';
+import { Decompress as ZstdDecompress } from 'fzstd';
 
 export interface ZipEntry {
   name: string;
@@ -23,7 +24,7 @@ export interface ZipReader {
   hasEntry(name: string): boolean;
   getEntry(name: string): ZipEntry | undefined;
   readEntry(e: ZipEntry): Uint8Array;
-  extractEntryToFile(e: ZipEntry, dest: File): void;
+  extractEntryToFile(e: ZipEntry, dest: File, options?: { zstd?: boolean }): void;
   close(): void;
 }
 
@@ -137,23 +138,26 @@ export function openZip(fileUri: string): ZipReader {
       /**
        * Extrae una entrada directamente a un archivo en disco mediante streaming por bloques.
        * Mantiene un consumo fijo de RAM (~2 MB) sin importar si el archivo pesa 50 KB o 500 MB.
+       * Con `zstd`, además descomprime el contenido (archivos de media del formato nuevo de Anki).
        */
-      extractEntryToFile: (e, dest) => {
+      extractEntryToFile: (e, dest, options) => {
         assertSupported(e);
         if (!dest.exists) dest.create();
         const destHandle = dest.open(FileMode.Truncate);
 
         try {
+          // Cadena de bloques: zip (deflate o sin comprimir) -> zstd (opcional) -> archivo
           let writeError: unknown = null;
-          const inflater = e.method === 8
-            ? new Inflate((chunk) => {
-                try {
-                  destHandle.writeBytes(chunk);
-                } catch (err) {
-                  writeError = err;
-                }
-              })
-            : null;
+          const write = (chunk: Uint8Array) => {
+            try {
+              destHandle.writeBytes(chunk);
+            } catch (err) {
+              writeError = err;
+            }
+          };
+          const zstd = options?.zstd ? new ZstdDecompress((chunk) => write(chunk)) : null;
+          const afterZip = (chunk: Uint8Array, final: boolean) => (zstd ? zstd.push(chunk, final) : write(chunk));
+          const inflater = e.method === 8 ? new Inflate((chunk, final) => afterZip(chunk, final)) : null;
 
           let offset = getDataOffset(e);
           let bytesLeft = e.compressedSize;
@@ -165,7 +169,7 @@ export function openZip(fileUri: string): ZipReader {
             if (inflater) {
               inflater.push(chunk, bytesLeft === 0);
             } else {
-              destHandle.writeBytes(chunk);
+              afterZip(chunk, bytesLeft === 0);
             }
             if (writeError) throw writeError;
           }

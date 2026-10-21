@@ -59,7 +59,13 @@ export function openZip(uri: string): {
 3. `readEntry`: va a `localHeaderOffset`, lee el header local (30 bytes), saltea `nameLen + extraLen`, lee `compressedSize` bytes y descomprime con `inflateSync` de fflate (ya instalado) si `method === 8`.
 4. **Streaming para archivos grandes (> 8 MB, videos):** `extractEntryToFile(e, destUri)` lee bloques de 1 MB, los pasa a `new Inflate((chunk) => destHandle.writeBytes(chunk))` y escribe secuencialmente al archivo de destino. La memoria se mantiene en ~2 MB constantes.
 5. `close()` siempre en `finally`.
-6. **Detección temprana de Anki 2.1.50+ (`anki21b`):** Si el zip contiene `collection.anki21b` y no `collection.anki21` válida, lanzar un error comprensible: *"Este mazo fue exportado con el nuevo formato comprimido de Anki. Al exportar desde Anki, marcá la opción 'Support older Anki versions' para importarlo en Yomi"*. Esto evita importar silenciosamente la nota de relleno de Anki.
+6. **Formato nuevo de Anki 2.1.50+ (`anki21b`), soportado sin pedirle nada al usuario** (`lib/anki-collection.ts` + `extractAnkiPackageAsync`):
+   - Prioridad de base: `collection.anki21b` → `collection.anki21` → `collection.anki2` (en los formatos nuevos, `anki2` es una nota de relleno).
+   - La base, el índice `media` y cada archivo de media vienen comprimidos con zstd (`fzstd`, JS puro). Los archivos se descomprimen por bloques al extraerlos (`extractEntryToFile(…, { zstd: true })`).
+   - El índice `media` es un protobuf `MediaEntries`; la entrada del zip de cada archivo es su posición ("0", "1"…).
+   - Esquema v18: los nombres de campo están en la tabla `fields` y los mazos en `decks` (los anidados como `Padre\x1fHijo`), no en `col.models` / `col.decks`.
+   - Esas tablas declaran `COLLATE unicase`, que sólo existe dentro de Anki: en la copia que se lee se reemplaza por `nocase` (mismo largo en bytes) antes de abrirla.
+7. **Elección de campos por palabras del nombre**, no por nombre exacto: "VocabDefEsp" → vocab/def/esp → significado en español; "Word Reading" → lectura; "SentAudio" → audio de oración. Entre varios significados se prefiere el del idioma del usuario. Probado con Kaishi 1.5k (formato nuevo) y Core 2.3k Español (clásico).
 
 ---
 
@@ -234,6 +240,8 @@ export async function speakCard(
   - `lib/zip-reader.ts`
   - `lib/media-service.ts` (utilidades de media: tipos, rutas, nombres, reproducción)
   - `lib/anki-import-service.ts` (único flujo de importación .apkg con media, usado por la pantalla y "Abrir con Yomi", y la recuperación de media)
+  - `lib/anki-collection.ts` (análisis puro de la colección: campos, lecturas, media, índice de media y zstd; se puede probar en Node)
+  - `lib/media-types.ts` (utilidades de media sin dependencias nativas)
   - `src/components/media/CardVideo.tsx`
   - `src/components/media/CardImage.tsx`
 - **Modificados:**

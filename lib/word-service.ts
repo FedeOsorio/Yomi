@@ -1185,12 +1185,9 @@ export async function generateConjugationsForDeck(deckId: string): Promise<Gener
       .replace(/\[sound:[^\]]+\]/gi, '')
       .trim();
 
-    if (cleanReading.includes('[') && cleanReading.includes(']')) {
-      const bracketMatch = cleanReading.match(/\[([^\]]+)\]/);
-      if (bracketMatch) {
-        cleanReading = bracketMatch[1].trim();
-      }
-    }
+    // Lectura escrita como furigana ("言[い]う"): quedarse con la kana completa ("いう")
+    const furiganaReading = parseAnkiFuriganaSyntax(cleanReading).reading;
+    if (furiganaReading) cleanReading = furiganaReading;
 
     cleanReading = cleanReading
       .replace(/[\(\[（【][^\)\]）】]*[\)\]）】]/g, '')

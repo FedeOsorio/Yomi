@@ -8,7 +8,11 @@ import {
   getAllCardsForPractice,
   processCardReview,
 } from '../../lib/srs-engine';
-import { initPhoneticDictionary } from '../../lib/phonetic-dictionary';
+import { initPhoneticDictionary, invalidatePhoneticDictionary } from '../../lib/phonetic-dictionary';
+import { onDataChanged } from '../../lib/backup-service';
+
+// Después de importar o restaurar, el índice de lecturas se vuelve a cargar en el próximo repaso
+onDataChanged(invalidatePhoneticDictionary);
 
 export interface CardEvaluation {
   isReadingCorrect: boolean;

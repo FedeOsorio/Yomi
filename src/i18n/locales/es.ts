@@ -77,6 +77,10 @@ export const es: TranslationSchema = {
   },
   deckDetail: {
     deck: 'Mazo',
+    card: 'tarjeta',
+    cards: 'tarjetas',
+    word: 'palabra',
+    words: 'palabras',
     optionsFor: 'Opciones de {{name}}',
     reviewDeck: 'Repasar mazo',
     conjugationPractice: 'Práctica de Conjugaciones',

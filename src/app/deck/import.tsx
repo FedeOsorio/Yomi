@@ -44,7 +44,7 @@ import {
 } from '../../../lib/qa-importer';
 import { saveBatchWords, saveBatchCustomCards } from '../../../lib/word-service';
 import { notifyDataChanged } from '../../../lib/backup-service';
-import { useTranslation } from '../../i18n';
+import { getCurrentUserLanguage, useTranslation } from '../../i18n';
 
 export default function ImportDeckScreen() {
   const { colors } = useTheme();
@@ -200,7 +200,7 @@ export default function ImportDeckScreen() {
         if (ankiFileUri && ankiFileUri !== file.uri) {
           deleteFileQuietly(ankiFileUri);
         }
-        const result = await extractAnkiPackageAsync(file.uri);
+        const result = await extractAnkiPackageAsync(file.uri, getCurrentUserLanguage());
         if (result.items.length === 0) {
           Alert.alert(t('common.notice'), t('importDeck.alertNoApkgNotes'));
           return;

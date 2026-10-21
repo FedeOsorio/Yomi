@@ -8,9 +8,11 @@
 
 import { Directory, File, Paths } from 'expo-file-system';
 import { Platform } from 'react-native';
+import { getExtension, MEDIA_DIR, MediaKind } from './media-types';
 import { WordAux, MediaItem } from './word-aux';
 
-export type MediaKind = MediaItem['kind'];
+export * from './media-types';
+
 type MediaSide = MediaItem['side'];
 
 export interface SpeakOptions {
@@ -20,56 +22,11 @@ export interface SpeakOptions {
   onError?: (err: any) => void;
 }
 
-/** Carpeta (dentro de Paths.document) donde viven todos los archivos importados, como `collection.media` de Anki. */
-export const MEDIA_DIR = 'media';
-
-const EXTENSIONS: Record<MediaKind, Set<string>> = {
-  audio: new Set(['mp3', 'ogg', 'oga', 'opus', 'm4a', 'aac', 'wav', 'flac']),
-  video: new Set(['mp4', 'webm', 'mov', 'mkv', 'm4v']),
-  image: new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg']),
-};
-
 /** Formatos que AVPlayer (iOS) no reproduce: el audio cae a TTS y el video no se muestra. */
 const IOS_UNSUPPORTED = new Set(['ogg', 'oga', 'opus', 'webm', 'mkv']);
 
-/** Texto que se pone a una tarjeta cuyo frente era sólo un archivo, para no descartarla. */
-export const MEDIA_PLACEHOLDERS: Record<MediaKind, string> = {
-  audio: '[Audio]',
-  video: '[Video]',
-  image: '[Imagen]',
-};
-
-export function isMediaPlaceholder(text: string | null | undefined): boolean {
-  return /^\[(Audio|Video|Imagen)\]$/i.test((text || '').trim());
-}
-
-export function getExtension(fileName: string): string {
-  const dot = fileName.lastIndexOf('.');
-  return dot >= 0 ? fileName.slice(dot + 1).toLowerCase() : '';
-}
-
-export function getMediaKind(fileName: string): MediaKind | null {
-  const ext = getExtension(fileName);
-  return (Object.keys(EXTENSIONS) as MediaKind[]).find((kind) => EXTENSIONS[kind].has(ext)) ?? null;
-}
-
 export function isPlayableOnPlatform(fileName: string): boolean {
   return Platform.OS !== 'ios' || !IOS_UNSUPPORTED.has(getExtension(fileName));
-}
-
-/** Nombre de archivo válido en disco (conserva la extensión). */
-export function sanitizeMediaName(fileName: string): string {
-  return fileName.replace(/[/\\:*?"<>|]/g, '_').trim();
-}
-
-/** "media/neko.mp3" -> "neko.mp3" */
-export function mediaFileName(path: string): string {
-  return path.replace(/^media\//, '').trim();
-}
-
-/** "neko.mp3" -> "media/neko.mp3" (lo que se guarda en `MediaItem.path`) */
-export function mediaPath(fileName: string): string {
-  return `${MEDIA_DIR}/${fileName}`;
 }
 
 /** Carpeta `media/`, creada si todavía no existe. */
@@ -79,15 +36,28 @@ export function getMediaDir(): Directory {
   return dir;
 }
 
-/** Nombres de los archivos que hay hoy en `media/` (una sola lectura del directorio). */
+/**
+ * Listado de `media/` en memoria: con miles de archivos, leer el directorio cada vez que se abre
+ * un mazo es caro. Lo invalida todo lo que escribe, mueve o borra archivos ahí.
+ */
+let mediaFilesCache: Set<string> | null = null;
+
+export function invalidateMediaFilesCache(): void {
+  mediaFilesCache = null;
+}
+
+/** Nombres de los archivos que hay hoy en `media/`. */
 export function listMediaFiles(): Set<string> {
+  if (mediaFilesCache) return mediaFilesCache;
   const names = new Set<string>();
   try {
     const dir = new Directory(Paths.document, MEDIA_DIR);
-    if (!dir.exists) return names;
-    for (const entry of dir.list()) {
-      if (entry instanceof File) names.add(entry.name);
+    if (dir.exists) {
+      for (const entry of dir.list()) {
+        if (entry instanceof File) names.add(entry.name);
+      }
     }
+    mediaFilesCache = names;
   } catch (e) {
     console.warn('[MediaService] Error listando media:', e);
   }

@@ -16,27 +16,46 @@ function splitReadings(raw: string): string[] {
     .filter(Boolean);
 }
 
-/** Carga el vocabulario de la base de datos en el índice. */
-export async function initPhoneticDictionary(): Promise<void> {
-  try {
-    const { db } = await import('../db');
-    const { srsItems, words } = await import('../db/schema');
-    if (!db) return;
+async function loadFromDatabase(): Promise<void> {
+  const { db } = await import('../db');
+  const { srsItems, words } = await import('../db/schema');
+  if (!db) return;
 
-    const srsList = await db.select({ text: srsItems.displayText, reading: srsItems.displayReading }).from(srsItems);
-    srsList.forEach((item) => registerWordInDictionary(item.text, item.reading));
+  const srsList = await db.select({ text: srsItems.displayText, reading: srsItems.displayReading }).from(srsItems);
+  srsList.forEach((item) => registerWordInDictionary(item.text, item.reading));
 
-    const wordsList = await db
-      .select({ text: words.simplified, reading: words.pinyinDisplay, aux: words.auxiliaryInfo })
-      .from(words);
-    for (const w of wordsList) {
-      registerWordInDictionary(w.text, w.reading);
-      const aux = parseAux(w.aux);
-      [aux.kanjiReadings, aux.onReading, aux.kunReading].forEach((r) => registerWordInDictionary(w.text, r));
-    }
-  } catch (err) {
-    console.warn('[PhoneticDictionary] No se pudo cargar el vocabulario:', err);
+  const wordsList = await db
+    .select({ text: words.simplified, reading: words.pinyinDisplay, aux: words.auxiliaryInfo })
+    .from(words);
+  for (const w of wordsList) {
+    registerWordInDictionary(w.text, w.reading);
+    // Sólo se parsea el JSON si trae lecturas de kanji (kanjiReadings / onReading / kunReading)
+    if (!w.aux || !w.aux.includes('Reading')) continue;
+    const aux = parseAux(w.aux);
+    [aux.kanjiReadings, aux.onReading, aux.kunReading].forEach((r) => registerWordInDictionary(w.text, r));
   }
+}
+
+let loading: Promise<void> | null = null;
+
+/**
+ * Carga el vocabulario de la base de datos en el índice. Lo hace una sola vez: con miles de palabras,
+ * releer todo cada vez que se abre Repaso es caro. Las palabras nuevas se agregan con
+ * registerWordInDictionary, y después de importar o restaurar se recarga (invalidatePhoneticDictionary).
+ */
+export function initPhoneticDictionary(): Promise<void> {
+  if (!loading) {
+    loading = loadFromDatabase().catch((err) => {
+      loading = null;
+      console.warn('[PhoneticDictionary] No se pudo cargar el vocabulario:', err);
+    });
+  }
+  return loading;
+}
+
+/** La próxima llamada a initPhoneticDictionary vuelve a leer la base (después de importar o restaurar). */
+export function invalidatePhoneticDictionary(): void {
+  loading = null;
 }
 
 /** Registra una palabra y su(s) lectura(s). */

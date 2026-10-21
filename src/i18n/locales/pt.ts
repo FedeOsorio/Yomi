@@ -77,6 +77,10 @@ export const pt: TranslationSchema = {
   },
   deckDetail: {
     deck: 'Baralho',
+    card: 'cartão',
+    cards: 'cartões',
+    word: 'palavra',
+    words: 'palavras',
     optionsFor: 'Opções de {{name}}',
     reviewDeck: 'Revisar baralho',
     conjugationPractice: 'Prática de Conjugação',

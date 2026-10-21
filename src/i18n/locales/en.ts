@@ -77,6 +77,10 @@ export const en: TranslationSchema = {
   },
   deckDetail: {
     deck: 'Deck',
+    card: 'card',
+    cards: 'cards',
+    word: 'word',
+    words: 'words',
     optionsFor: 'Options for {{name}}',
     reviewDeck: 'Review deck',
     conjugationPractice: 'Conjugation Practice',

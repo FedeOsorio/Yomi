@@ -40,6 +40,7 @@
     "expo-video": "~57.0.5",
     "expo-web-browser": "~57.0.3",
     "fflate": "^0.8.3",
+    "fzstd": "^0.1.1",
     "i18next": "^26.4.2",
     "react": "19.2.3",
     "react-dom": "19.2.3",

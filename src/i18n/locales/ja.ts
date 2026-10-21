@@ -77,6 +77,10 @@ export const ja: TranslationSchema = {
   },
   deckDetail: {
     deck: 'デッキ',
+    card: 'カード',
+    cards: 'カード',
+    word: '単語',
+    words: '単語',
     optionsFor: '{{name}} のオプション',
     reviewDeck: 'デッキを復習',
     conjugationPractice: '活用練習',

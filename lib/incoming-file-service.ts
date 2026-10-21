@@ -8,7 +8,7 @@ import { parseBackupFile, restoreBackupPackage, notifyDataChanged } from './back
 import { extractAnkiPackageAsync } from './anki-importer';
 import { importAnkiDeckAsync } from './anki-import-service';
 import { createDeck } from './deck-service';
-import { t } from '../src/i18n';
+import { getCurrentUserLanguage, t } from '../src/i18n';
 import { useImportProgressStore } from '../src/stores/importProgressStore';
 
 let lastHandledUri = '';
@@ -67,7 +67,7 @@ export async function processIncomingBackupFile(uri: string): Promise<boolean> {
 
     if (isZip) {
       // Es un archivo .apkg de Anki
-      const result = await extractAnkiPackageAsync(targetUri);
+      const result = await extractAnkiPackageAsync(targetUri, getCurrentUserLanguage());
 
       if (result.items.length === 0) {
         FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => {});

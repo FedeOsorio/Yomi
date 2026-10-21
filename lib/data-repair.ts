@@ -7,7 +7,7 @@ import { classifyJapaneseWord, containsJapanese } from './japanese-utils';
 import { registerWordInDictionary } from './phonetic-dictionary';
 import { getKanjiLevel } from './kanji-search';
 import { getStorageItem, setStorageItem } from './storage-service';
-import { getMediaDir, MEDIA_DIR, mediaFileName } from './media-service';
+import { getMediaDir, invalidateMediaFilesCache, listMediaFiles, MEDIA_DIR, mediaFileName } from './media-service';
 import { parseAux, stringifyAux } from './word-aux';
 import { resolveJapaneseBaseForm } from './word-service';
 
@@ -147,8 +147,10 @@ export async function backfillMissingReadings(): Promise<void> {
       .where(sql`trim(${srsItems.displayReading}) = ''`);
 
     for (const card of cards) {
-      const isJapanese = (card.lang || '').toLowerCase().startsWith('ja') || containsJapanese(card.text || '');
-      if (!isJapanese || !card.text) continue;
+      // Sólo texto con escritura japonesa: una tarjeta sin kana ni kanji (p. ej. un número) nunca va a tener
+      // lectura, y se reintentaría en cada arranque. Los mazos chinos usan pinyin, no lectura japonesa.
+      const isChineseDeck = (card.lang || '').toLowerCase().startsWith('zh');
+      if (!card.text || isChineseDeck || !containsJapanese(card.text)) continue;
       try {
         const reading = await resolveJapaneseReading(card.text);
         if (!reading) continue;
@@ -205,15 +207,16 @@ export async function cleanOrphanMedia(): Promise<void> {
     const now = Date.now();
 
     let movedToTrash = 0;
-    for (const entry of mediaDir.list()) {
-      if (!(entry instanceof File) || entry.name.startsWith('.') || referenced.has(entry.name)) continue;
+    for (const name of listMediaFiles()) {
+      if (name.startsWith('.') || referenced.has(name)) continue;
       try {
-        entry.moveSync(new File(trashDir, `${now}__${entry.name}`));
+        new File(mediaDir, name).moveSync(new File(trashDir, `${now}__${name}`));
         movedToTrash++;
       } catch (e) {
-        console.warn(`[DataRepair] Error moviendo archivo huérfano a la papelera (${entry.name}):`, e);
+        console.warn(`[DataRepair] Error moviendo archivo huérfano a la papelera (${name}):`, e);
       }
     }
+    if (movedToTrash > 0) invalidateMediaFilesCache();
 
     let purgedFromTrash = 0;
     for (const entry of trashDir.list()) {
@@ -259,6 +262,7 @@ export async function rescueTrashedMedia(): Promise<number> {
         console.warn('[rescueTrashedMedia] Error rescatando archivo de papelera:', entry.name, e);
       }
     }
+    if (rescued > 0) invalidateMediaFilesCache();
     return rescued;
   } catch (err) {
     console.warn('[rescueTrashedMedia] Error general rescatando multimedia:', err);
