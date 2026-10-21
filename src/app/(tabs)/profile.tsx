@@ -29,7 +29,7 @@ import { getStudyStats } from '../../../lib/srs-engine';
 import { InfoModal } from '../../components/InfoModal';
 import { AudioSettingsSection } from '../../components/settings/AudioSettingsSection';
 import { useTheme } from '../../../providers/ThemeProvider';
-import { Shadows, Spacing } from '../../constants/theme';
+import { Shadows, Spacing, Typography } from '../../constants/theme';
 import { useTranslation, useLanguageStore } from '../../i18n';
 function formatBytes(bytes?: number): string {
   if (!bytes) return '';
@@ -868,6 +868,13 @@ export default function ProfileScreen() {
               </>
             )}
           </TouchableOpacity>
+        </View>
+
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginTop: Spacing.sm, backgroundColor: colors.surfaceHighlight, padding: Spacing.sm, borderRadius: 10 }}>
+          <Ionicons name="information-circle-outline" size={16} color={colors.primary} style={{ marginRight: 6, marginTop: 2 }} />
+          <Text style={{ flex: 1, fontSize: 13, color: colors.textMuted, lineHeight: 18 }}>
+            {t('profile.backupMediaNotice')}
+          </Text>
         </View>
       </View>
 

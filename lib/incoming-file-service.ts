@@ -1,15 +1,27 @@
 import { useEffect } from 'react';
 import { Alert, Linking } from 'react-native';
 import { router } from 'expo-router';
+import { File, FileMode } from 'expo-file-system';
+// La API legacy sigue para copiar la URI externa: acepta los content:// de WhatsApp/Descargas
 import * as FileSystem from 'expo-file-system/legacy';
 import { parseBackupFile, restoreBackupPackage, notifyDataChanged } from './backup-service';
 import { extractAnkiPackageAsync } from './anki-importer';
+import { importAnkiDeckAsync } from './anki-import-service';
 import { createDeck } from './deck-service';
-import { saveBatchWords } from './word-service';
 import { t } from '../src/i18n';
+import { useImportProgressStore } from '../src/stores/importProgressStore';
 
 let lastHandledUri = '';
 let lastHandledTimestamp = 0;
+
+/** Nombre del .apkg según la URI recibida (si la trae), para pedírselo al usuario al recuperar la media. */
+function apkgNameFromUri(uri: string, deckName: string): string {
+  try {
+    const lastSegment = decodeURIComponent(uri).split(/[/\\?#]/).pop() || '';
+    if (lastSegment.toLowerCase().endsWith('.apkg')) return lastSegment;
+  } catch {}
+  return `${deckName || 'anki_deck'}.apkg`;
+}
 
 /**
  * Procesa un archivo recibido por intent desde WhatsApp, explorador de archivos o descargas.
@@ -22,9 +34,10 @@ export async function processIncomingBackupFile(uri: string): Promise<boolean> {
   lastHandledUri = uri;
   lastHandledTimestamp = now;
 
+  let tempPath = '';
   try {
     // 1. Siempre copiar primero la URI externa (ContentProvider de WhatsApp/Descargas) a la caché local
-    const tempPath = `${FileSystem.cacheDirectory}incoming_${Date.now()}.bin`;
+    tempPath = `${FileSystem.cacheDirectory}incoming_${Date.now()}.bin`;
     try {
       await FileSystem.copyAsync({ from: uri, to: tempPath });
     } catch (copyErr) {
@@ -34,50 +47,74 @@ export async function processIncomingBackupFile(uri: string): Promise<boolean> {
     const fileInfo = await FileSystem.getInfoAsync(tempPath);
     const targetUri = fileInfo.exists ? tempPath : uri;
 
-    // 2. Leer la cabecera en Base64 para detectar de forma 100% infalible si es ZIP (.apkg) o JSON (.yomi)
+    // 2. Leer los primeros 4 bytes mediante FileHandle sin cargar el archivo completo en memoria RAM
     const lowerUri = uri.toLowerCase();
     const isApkgName = lowerUri.includes('.apkg');
-
     let isZip = isApkgName;
-    let base64Data = '';
     try {
-      base64Data = await FileSystem.readAsStringAsync(targetUri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      // Los archivos ZIP siempre comienzan con los bytes 0x50 0x4B (PK), que en Base64 es 'UEs'
-      if (base64Data.startsWith('UEs') || base64Data.startsWith('PK')) {
-        isZip = true;
+      const testFile = new File(targetUri);
+      if (testFile.exists && testFile.size >= 4) {
+        const handle = testFile.open(FileMode.ReadOnly);
+        const header = handle.readBytes(4);
+        handle.close();
+        if (header[0] === 0x50 && header[1] === 0x4b) {
+          isZip = true;
+        }
       }
     } catch (readErr) {
-      console.warn('[IncomingFile] Error al leer base64:', readErr);
+      console.warn('[IncomingFile] Error al verificar firma zip:', readErr);
     }
 
     if (isZip) {
       // Es un archivo .apkg de Anki
       const result = await extractAnkiPackageAsync(targetUri);
-      FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => {});
 
       if (result.items.length === 0) {
+        FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => {});
         Alert.alert(t('incoming.emptyAnkiTitle'), t('incoming.emptyAnkiMsg'));
         return false;
       }
 
+      const mediaCount = (result.mediaManifest?.audioCount || 0) +
+        (result.mediaManifest?.videoCount || 0) +
+        (result.mediaManifest?.imageCount || 0);
+      const mediaNote = mediaCount > 0 ? t('incoming.mediaCountNote', { count: mediaCount }) : '';
+
       Alert.alert(
         t('incoming.importAnkiTitle'),
-        t('incoming.importAnkiMsg', { name: result.deckName, count: result.totalNotes }),
+        `${t('incoming.importAnkiMsg', { name: result.deckName, count: result.totalNotes })}${mediaNote}`,
         [
-          { text: t('common.cancel'), style: 'cancel' },
+          {
+            text: t('common.cancel'),
+            style: 'cancel',
+            onPress: () => {
+              FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => {});
+            },
+          },
           {
             text: t('incoming.importAnkiBtn'),
             onPress: async () => {
+              const progress = useImportProgressStore.getState();
+              progress.start(result.deckName, result.mediaManifest?.byFile.size ?? 0);
               try {
-                const deckId = await createDeck(result.deckName, result.languageCode, result.deckType);
-                const { inserted, skipped } = await saveBatchWords(deckId, result.items);
+                const { deckId, inserted, skipped, mediaSaved, mediaFailed } = await importAnkiDeckAsync({
+                  fileUri: targetUri,
+                  fileName: apkgNameFromUri(uri, result.deckName),
+                  items: result.items,
+                  manifest: result.mediaManifest,
+                  getDeckId: () => createDeck(result.deckName, result.languageCode, result.deckType),
+                  onProgress: progress.update,
+                });
+                progress.finish();
+
                 notifyDataChanged();
                 const skippedMsg = skipped > 0 ? ` ${t('incoming.importSkippedMsg', { count: skipped })}` : '';
+                const mediaMsg =
+                  (mediaSaved > 0 ? t('importDeck.mediaImportedCount', { count: mediaSaved }) : '') +
+                  (mediaFailed > 0 ? t('importDeck.mediaSkippedCount', { count: mediaFailed }) : '');
                 Alert.alert(
                   t('incoming.importSuccessTitle'),
-                  `${t('incoming.importSuccessMsg', { count: inserted, deck: result.deckName })}${skippedMsg}`,
+                  `${t('incoming.importSuccessMsg', { count: inserted, deck: result.deckName })}${skippedMsg}${mediaMsg}`,
                   [
                     {
                       text: t('incoming.viewDeckBtn'),
@@ -89,6 +126,9 @@ export async function processIncomingBackupFile(uri: string): Promise<boolean> {
                 );
               } catch (err: any) {
                 Alert.alert(t('incoming.importAnkiErrorTitle'), err?.message || t('incoming.importAnkiErrorMsg'));
+              } finally {
+                progress.finish();
+                FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => {});
               }
             },
           },
@@ -174,6 +214,9 @@ export async function processIncomingBackupFile(uri: string): Promise<boolean> {
     );
     return true;
   } catch (err: any) {
+    if (tempPath) {
+      FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => {});
+    }
     // Si no es un archivo válido o está dañado
     Alert.alert(
       t('incoming.unsupportedFileTitle'),

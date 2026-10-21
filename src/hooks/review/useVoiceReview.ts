@@ -2,7 +2,7 @@ import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Easing } from 'react-native';
 import { Rating } from 'ts-fsrs';
-import { speakText, stopSpeech } from '../../../lib/audio-service';
+import { speakCard, stopSpeech } from '../../../lib/audio-service';
 import { getEffectiveCardLanguage } from '../../../lib/japanese-utils';
 import { registerWordInDictionary } from '../../../lib/phonetic-dictionary';
 import { calculateChineseAccuracyScore } from '../../../lib/pinyin-utils';
@@ -153,8 +153,31 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
 
     // Al terminar el giro: leer la palabra (con la lectura que dijo el usuario si acertó) y arrancar la cuenta
     flip.showBack(300, () => {
-      speakText(card.displayText, lang, isSuccess && matchedReading ? matchedReading : card.displayReading);
-      autoAdvance.start(ANSWER_VISIBLE_MS, advance);
+      let advanceTriggered = false;
+      const triggerAdvance = () => {
+        if (advanceTriggered) return;
+        advanceTriggered = true;
+        autoAdvance.start(ANSWER_VISIBLE_MS, advance);
+      };
+
+      // Temporizador de seguridad: si el audio tarda más de 5 s o no emite eventos, avanzar de todos modos
+      const safetyTimeout = setTimeout(triggerAdvance, 5000);
+
+      speakCard(card, lang, {
+        reading: isSuccess && matchedReading ? matchedReading : card.displayReading,
+        onDone: () => {
+          clearTimeout(safetyTimeout);
+          triggerAdvance();
+        },
+        onError: () => {
+          clearTimeout(safetyTimeout);
+          triggerAdvance();
+        },
+        onStopped: () => {
+          clearTimeout(safetyTimeout);
+          triggerAdvance();
+        },
+      });
     });
   };
 

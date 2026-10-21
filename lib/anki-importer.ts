@@ -6,11 +6,22 @@
  * máxima escalabilidad, testabilidad y reutilización en cualquier entorno.
  */
 
+import { File, Paths } from 'expo-file-system';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as SQLite from 'expo-sqlite';
-import { unzipSync } from 'fflate';
 import { getKanjiEssentialReading } from './jlpt-data';
-import { parseAux } from './word-aux';
+import {
+  deleteFileQuietly,
+  getMediaDir,
+  getMediaKind,
+  MEDIA_PLACEHOLDERS,
+  MediaKind,
+  mediaFileName,
+  mediaPath,
+  sanitizeMediaName,
+} from './media-service';
+import { parseAux, MediaItem } from './word-aux';
+import { openZip, ZipEntry } from './zip-reader';
 
 export interface RawImportRow {
   [key: string]: string;
@@ -22,6 +33,7 @@ export interface ParsedVocabularyItem {
   meanings: string[];
   level?: string;
   rawExtras?: Record<string, string>;
+  media?: MediaItem[];
 }
 
 export interface ColumnMapping {
@@ -255,7 +267,8 @@ function enrichVocabularyItem(
   reading: string,
   meanings: string[],
   level?: string,
-  extras?: Record<string, string>
+  extras?: Record<string, string>,
+  media?: MediaItem[]
 ): ParsedVocabularyItem {
   const cleanMain = mainText.trim();
   const isSingleKanji = cleanMain.length === 1 && /[\u4e00-\u9faf]/.test(cleanMain);
@@ -291,6 +304,7 @@ function enrichVocabularyItem(
     meanings,
     level: level || undefined,
     rawExtras: Object.keys(rawExtras).length > 0 ? rawExtras : undefined,
+    media: media && media.length > 0 ? media : undefined,
   };
 }
 
@@ -374,7 +388,7 @@ export function parseVocabularyFile(content: string, customDelimiter?: string): 
   // Convertir las filas a ParsedVocabularyItem
   const items: ParsedVocabularyItem[] = [];
 
-  dataRows.forEach((row, rowIdx) => {
+  dataRows.forEach((row) => {
     const rawText = row[mapping.textColumnIndex] || '';
     const rawReading = mapping.readingColumnIndex !== undefined ? row[mapping.readingColumnIndex] : '';
     const rawMeaning = row[mapping.meaningColumnIndex] || '';
@@ -495,7 +509,8 @@ export function exportDeckToYomiFormat(
         meaningsArray = [c.meanings];
       }
 
-      const auxSelected = parseAux(c.auxiliaryInfo).selectedMeanings;
+      const aux = parseAux(c.auxiliaryInfo);
+      const auxSelected = aux.selectedMeanings;
       const selected: string[] | undefined = Array.isArray(auxSelected) ? auxSelected : undefined;
 
       return {
@@ -504,6 +519,7 @@ export function exportDeckToYomiFormat(
         meanings: meaningsArray,
         level: c.resolvedLevel || undefined,
         selectedMeanings: selected,
+        media: aux.media,
       };
     }),
   };
@@ -524,47 +540,77 @@ export function isYomiPackage(content: string): boolean {
   }
 }
 
-const B64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-const B64_LOOKUP = new Uint8Array(256);
-for (let i = 0; i < B64_CHARS.length; i++) {
-  B64_LOOKUP[B64_CHARS.charCodeAt(i)] = i;
-}
+/**
+ * Extrae referencias a archivos multimedia (audio, video, imagen) desde el contenido crudo
+ * de un campo HTML de Anki antes de remover las etiquetas.
+ */
+export function extractMediaFromField(
+  rawField: string,
+  fieldName: string,
+  isFront: boolean
+): MediaItem[] {
+  if (!rawField) return [];
+  const results: MediaItem[] = [];
+  const seen = new Set<string>();
+  const isSentence = /sentence|example|ejemplo|例文|phrase|oración|oracion/i.test(fieldName);
+  const role: MediaItem['role'] = isSentence ? 'sentence' : isFront ? 'prompt' : 'word';
 
-export function base64ToUint8Array(b64: string): Uint8Array {
-  const clean = b64.replace(/[\s=]/g, '');
-  const len = clean.length;
-  const byteLen = Math.floor((len * 3) / 4);
-  const bytes = new Uint8Array(byteLen);
+  const addMediaFile = (rawName: string) => {
+    if (!rawName) return;
+    let clean = rawName;
+    try {
+      clean = decodeURIComponent(clean);
+    } catch {}
+    clean = clean
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .trim()
+      .normalize('NFC');
 
-  let p = 0;
-  for (let i = 0; i < len; i += 4) {
-    const b0 = B64_LOOKUP[clean.charCodeAt(i)];
-    const b1 = B64_LOOKUP[clean.charCodeAt(i + 1)];
-    const b2 = i + 2 < len ? B64_LOOKUP[clean.charCodeAt(i + 2)] : 64;
-    const b3 = i + 3 < len ? B64_LOOKUP[clean.charCodeAt(i + 3)] : 64;
+    if (!clean || seen.has(clean.toLowerCase())) return;
+    seen.add(clean.toLowerCase());
 
-    bytes[p++] = (b0 << 2) | (b1 >> 4);
-    if (b2 < 64 && p < byteLen) bytes[p++] = ((b1 & 15) << 4) | (b2 >> 2);
-    if (b3 < 64 && p < byteLen) bytes[p++] = ((b2 & 3) << 6) | b3;
+    const kind = getMediaKind(clean);
+    if (!kind) return;
+
+    results.push({
+      file: clean,
+      kind,
+      side: isFront ? 'front' : 'back',
+      role,
+    });
+  };
+
+  // 1. [sound:archivo.mp3]
+  const soundMatches = rawField.matchAll(/\[sound:([^\]]+)\]/gi);
+  for (const m of soundMatches) {
+    addMediaFile(m[1] || '');
   }
 
-  return bytes;
+  // 2. <audio src="..."> o <video src="...">
+  const tagMediaMatches = rawField.matchAll(/<(audio|video)[^>]+src=["']([^"']+)["'][^>]*>/gi);
+  for (const m of tagMediaMatches) {
+    addMediaFile(m[2] || '');
+  }
+
+  // 3. <img src="...">
+  const imgMatches = rawField.matchAll(/<img[^>]+src=["']([^"']+)["'][^>]*>/gi);
+  for (const m of imgMatches) {
+    addMediaFile(m[1] || '');
+  }
+
+  return results;
 }
 
-export function uint8ArrayToBase64(bytes: Uint8Array): string {
-  let result = '';
-  const len = bytes.length;
-  for (let i = 0; i < len; i += 3) {
-    const b0 = bytes[i];
-    const b1 = i + 1 < len ? bytes[i + 1] : 0;
-    const b2 = i + 2 < len ? bytes[i + 2] : 0;
-
-    result += B64_CHARS[b0 >> 2];
-    result += B64_CHARS[((b0 & 3) << 4) | (b1 >> 4)];
-    result += i + 1 < len ? B64_CHARS[((b1 & 15) << 2) | (b2 >> 6)] : '=';
-    result += i + 2 < len ? B64_CHARS[b2 & 63] : '=';
-  }
-  return result;
+export interface AnkiMediaManifest {
+  byFile: Map<string, ZipEntry>;
+  audioCount: number;
+  videoCount: number;
+  imageCount: number;
+  totalBytes: number;
+  missing: string[];
 }
 
 export interface AnkiPackageExtractResult {
@@ -573,47 +619,50 @@ export interface AnkiPackageExtractResult {
   deckType: 'language' | 'custom';
   items: ParsedVocabularyItem[];
   totalNotes: number;
+  mediaManifest?: AnkiMediaManifest;
 }
 
 /**
- * Descomprime un paquete nativo de Anki (.apkg), abre su base de datos SQLite
- * interna (collection.anki2) y extrae todas las notas con sus lecturas y significados.
+ * Descomprime un paquete nativo de Anki (.apkg) por bloques utilizando FileHandle,
+ * abre su base de datos interna y extrae notas junto con su manifiesto de media.
  */
 export async function extractAnkiPackageAsync(fileUri: string): Promise<AnkiPackageExtractResult> {
-  const base64 = await FileSystem.readAsStringAsync(fileUri, {
-    encoding: FileSystem.EncodingType.Base64,
-  });
-
-  const bytes = base64ToUint8Array(base64);
-  const unzipped = unzipSync(bytes);
-
-  const dbBytes = unzipped['collection.anki2'] || unzipped['collection.anki21'];
-  if (!dbBytes) {
-    throw new Error('El archivo .apkg no contiene una base de datos válida de Anki (collection.anki2).');
-  }
-
+  const reader = openZip(fileUri);
   let ankiDb: SQLite.SQLiteDatabase | null = null;
   const tempDbName = `temp_anki_${Date.now()}`;
   let tempDbCreated = false;
 
   try {
-    ankiDb = await SQLite.deserializeDatabaseAsync(dbBytes);
-  } catch {
-    // Fallback: guardar en carpeta de bases de datos de SQLite y abrir tradicionalmente
-    tempDbCreated = true;
-    const targetDir = SQLite.defaultDatabaseDirectory || `${FileSystem.documentDirectory}SQLite/`;
-    const dirInfo = await FileSystem.getInfoAsync(targetDir);
-    if (!dirInfo.exists) {
-      await FileSystem.makeDirectoryAsync(targetDir, { intermediates: true });
+    // Exportaciones zstd de Anki 2.1.50+: el collection.anki2 que traen es sólo una nota de relleno
+    if (reader.hasEntry('collection.anki21b') && !reader.hasEntry('collection.anki21')) {
+      throw new Error(
+        'Este mazo fue exportado con el nuevo formato comprimido de Anki (anki21b/zstd). ' +
+        'Para importarlo en Yomi, al exportar desde Anki marcá la casilla "Support older Anki versions" (compatibilidad con versiones anteriores).'
+      );
     }
-    const tempDbPath = `${targetDir}${tempDbName}.db`;
-    await FileSystem.writeAsStringAsync(tempDbPath, uint8ArrayToBase64(dbBytes), {
-      encoding: FileSystem.EncodingType.Base64,
-    });
-    ankiDb = await SQLite.openDatabaseAsync(`${tempDbName}.db`);
-  }
 
-  try {
+    const dbEntry = reader.getEntry('collection.anki21') || reader.getEntry('collection.anki2');
+    if (!dbEntry) {
+      throw new Error('El archivo .apkg no contiene una base de datos válida de Anki (collection.anki2).');
+    }
+
+    const dbBytes = reader.readEntry(dbEntry);
+
+    try {
+      ankiDb = await SQLite.deserializeDatabaseAsync(dbBytes);
+    } catch {
+      tempDbCreated = true;
+      const targetDir = SQLite.defaultDatabaseDirectory || `${FileSystem.documentDirectory}SQLite/`;
+      const dirInfo = await FileSystem.getInfoAsync(targetDir);
+      if (!dirInfo.exists) {
+        await FileSystem.makeDirectoryAsync(targetDir, { intermediates: true });
+      }
+      const tempFile = new File(`${targetDir}${tempDbName}.db`);
+      if (tempFile.exists) tempFile.delete();
+      tempFile.write(dbBytes);
+      ankiDb = await SQLite.openDatabaseAsync(`${tempDbName}.db`);
+    }
+
     const colRows = await ankiDb.getAllAsync<{ decks: string; models: string }>(
       'SELECT decks, models FROM col LIMIT 1'
     );
@@ -632,7 +681,27 @@ export async function extractAnkiPackageAsync(fileUri: string): Promise<AnkiPack
       'SELECT id, mid, flds, tags FROM notes'
     );
 
+    // Mapeo de media Anki: {"0": "neko.mp3", "1": "clip.mp4"} -> Map<nombreReal, entradaZip>
+    const mediaNameToZipKey = new Map<string, string>();
+    if (reader.hasEntry('media')) {
+      try {
+        const mediaEntry = reader.getEntry('media')!;
+        const mediaJsonStr = new TextDecoder('utf-8').decode(reader.readEntry(mediaEntry));
+        const mediaMap = JSON.parse(mediaJsonStr);
+        for (const [zipKey, realName] of Object.entries(mediaMap)) {
+          if (typeof realName === 'string') {
+            const clean = realName.trim().normalize('NFC');
+            mediaNameToZipKey.set(clean, zipKey);
+            mediaNameToZipKey.set(clean.toLowerCase(), zipKey);
+          }
+        }
+      } catch (e) {
+        console.warn('[AnkiImporter] Error al parsear media map:', e);
+      }
+    }
+
     const items: ParsedVocabularyItem[] = [];
+    const referencedMediaFiles = new Map<string, MediaKind>();
     let hasJapaneseChars = false;
     let hasChineseChars = false;
 
@@ -641,21 +710,37 @@ export async function extractAnkiPackageAsync(fileUri: string): Promise<AnkiPack
       const fieldNames: string[] = model && Array.isArray(model.flds)
         ? model.flds.map((f: any) => String(f.name || '').toLowerCase().trim())
         : [];
-      const fieldValues = (note.flds || '').split('\x1f').map(cleanHtmlAndAnkiTags);
+      const rawFieldValues = (note.flds || '').split('\x1f');
+      const cleanFieldValues = rawFieldValues.map(cleanHtmlAndAnkiTags);
 
-      let text = '';
-      let reading = '';
-      let meaning = '';
-
-      const kanjiIdx = fieldNames.findIndex((n) => /^(kanji|word|vocab|front|término|termino|palabra|expression|expr|hanzi)$/i.test(n));
+      const kanjiIdx = fieldNames.findIndex((n) => /^(kanji|word|vocab|front|término|termino|palabra|expression|expr|hanzi|question|pregunta)$/i.test(n));
       const onIdx = fieldNames.findIndex((n) => /^(ja_on|onyomi|on-yomi|on)$/i.test(n));
       const kunIdx = fieldNames.findIndex((n) => /^(ja_kun|kunyomi|kun-yomi|kun)$/i.test(n));
       const readingIdx = fieldNames.findIndex((n) => /^(furigana|reading|lectura|pinyin|kana|pronunciation|pronunciación)$/i.test(n));
-      const meaningIdx = fieldNames.findIndex((n) => /^(meaning|meanings|definition|translation|significado|significados|back|glossary)$/i.test(n));
+      const meaningIdx = fieldNames.findIndex((n) => /^(meaning|meanings|definition|translation|significado|significados|back|glossary|answer|respuesta)$/i.test(n));
       const levelIdx = fieldNames.findIndex((n) => /^(level|jlpt|hsk|nivel)$/i.test(n));
 
-      text = kanjiIdx >= 0 && fieldValues[kanjiIdx] ? fieldValues[kanjiIdx] : (fieldValues[0] || '');
-      text = text.replace(/\[sound:[^\]]+\]/gi, '').trim();
+      // Extraer media de todos los campos antes de que los tags se pierdan
+      const noteMedia = rawFieldValues.flatMap((rawFld, fIdx) =>
+        extractMediaFromField(
+          rawFld,
+          fieldNames[fIdx] || `field_${fIdx}`,
+          fIdx === kanjiIdx || (kanjiIdx < 0 && fIdx === 0)
+        )
+      );
+      for (const m of noteMedia) referencedMediaFiles.set(m.file, m.kind);
+
+      // (los campos limpios ya no traen [sound:...]: cleanHtmlAndAnkiTags los quita)
+      let text = kanjiIdx >= 0 && cleanFieldValues[kanjiIdx] ? cleanFieldValues[kanjiIdx] : (cleanFieldValues[0] || '');
+
+      // Si el frente sólo contenía media (sin texto), usar placeholder descriptivo para no descartar la tarjeta
+      const firstFrontMedia = noteMedia.find((m) => m.side === 'front');
+      if (text.length === 0 && firstFrontMedia) {
+        text = MEDIA_PLACEHOLDERS[firstFrontMedia.kind];
+      }
+
+      let reading = '';
+      let meaning = '';
 
       const furiganaParsed = parseAnkiFuriganaSyntax(text);
       if (furiganaParsed.reading) {
@@ -663,8 +748,8 @@ export async function extractAnkiPackageAsync(fileUri: string): Promise<AnkiPack
         reading = furiganaParsed.reading;
       }
 
-      const rawOn = onIdx >= 0 ? fieldValues[onIdx] : '';
-      const rawKun = kunIdx >= 0 ? fieldValues[kunIdx] : '';
+      const rawOn = onIdx >= 0 ? cleanFieldValues[onIdx] : '';
+      const rawKun = kunIdx >= 0 ? cleanFieldValues[kunIdx] : '';
 
       if (!reading) {
         if (onIdx >= 0 || kunIdx >= 0) {
@@ -678,20 +763,19 @@ export async function extractAnkiPackageAsync(fileUri: string): Promise<AnkiPack
             reading = `Kun: ${cleanKun}`;
           }
         } else if (readingIdx >= 0) {
-          reading = fieldValues[readingIdx].replace(/[・]/g, '').trim();
+          reading = cleanFieldValues[readingIdx].replace(/[・]/g, '').trim();
         }
       }
-      reading = reading.replace(/\[sound:[^\]]+\]/gi, '').replace(/[・]/g, '').trim();
+      reading = reading.replace(/[・]/g, '').trim();
 
-      if (meaningIdx >= 0 && fieldValues[meaningIdx]) {
-        meaning = fieldValues[meaningIdx];
-      } else if (fieldValues.length > 1) {
-        const fallbackIdx = fieldValues.findIndex(
+      if (meaningIdx >= 0 && cleanFieldValues[meaningIdx]) {
+        meaning = cleanFieldValues[meaningIdx];
+      } else if (cleanFieldValues.length > 1) {
+        const fallbackIdx = cleanFieldValues.findIndex(
           (val, idx) => idx !== kanjiIdx && idx !== onIdx && idx !== kunIdx && idx !== readingIdx && val.trim().length > 0
         );
-        meaning = fallbackIdx >= 0 ? fieldValues[fallbackIdx] : '';
+        meaning = fallbackIdx >= 0 ? cleanFieldValues[fallbackIdx] : '';
       }
-      meaning = meaning.replace(/\[sound:[^\]]+\]/gi, '').trim();
 
       const splitMeanings = meaning
         .split(/[;\n\r\/]+/)
@@ -706,7 +790,7 @@ export async function extractAnkiPackageAsync(fileUri: string): Promise<AnkiPack
         }
       }
 
-      const levelVal = levelIdx >= 0 ? fieldValues[levelIdx] : undefined;
+      const levelVal = levelIdx >= 0 ? cleanFieldValues[levelIdx] : undefined;
 
       if (text.length > 0) {
         items.push(
@@ -718,7 +802,8 @@ export async function extractAnkiPackageAsync(fileUri: string): Promise<AnkiPack
             {
               ...(rawOn ? { onReading: rawOn.replace(/[・]/g, '').trim() } : {}),
               ...(rawKun ? { kunReading: rawKun.replace(/[・]/g, '').trim() } : {}),
-            }
+            },
+            noteMedia
           )
         );
       }
@@ -734,13 +819,10 @@ export async function extractAnkiPackageAsync(fileUri: string): Promise<AnkiPack
       languageCode = 'zh-CN';
       deckType = 'language';
     } else {
-      // Mazo genérico o personalizado (Preguntas y Respuestas, Medicina, Historia, etc.)
       languageCode = 'es-ES';
       deckType = 'custom';
     }
 
-    // Si es un mazo personalizado (no ideográfico), asegurar que cada tarjeta conserve
-    // la respuesta completa en el dorso (sin fragmentar por delimitadores de vocabulario)
     if (deckType === 'custom') {
       for (let i = 0; i < items.length; i++) {
         items[i].reading = undefined;
@@ -750,14 +832,43 @@ export async function extractAnkiPackageAsync(fileUri: string): Promise<AnkiPack
       }
     }
 
+    // Construir manifiesto de media
+    const byFile = new Map<string, ZipEntry>();
+    const missing: string[] = [];
+    const counts: Record<MediaKind, number> = { audio: 0, video: 0, image: 0 };
+    let totalBytes = 0;
+
+    for (const [fileName, kind] of referencedMediaFiles) {
+      const zipKey = mediaNameToZipKey.get(fileName) || mediaNameToZipKey.get(fileName.toLowerCase()) || fileName;
+      const entry = reader.getEntry(zipKey);
+      if (entry) {
+        byFile.set(fileName, entry);
+        counts[kind]++;
+        totalBytes += entry.size;
+      } else {
+        missing.push(fileName);
+      }
+    }
+
+    const mediaManifest: AnkiMediaManifest = {
+      byFile,
+      audioCount: counts.audio,
+      videoCount: counts.video,
+      imageCount: counts.image,
+      totalBytes,
+      missing,
+    };
+
     return {
       deckName,
       languageCode,
       deckType,
       items,
       totalNotes: items.length,
+      mediaManifest,
     };
   } finally {
+    reader.close();
     if (ankiDb) {
       await ankiDb.closeAsync().catch(() => {});
     }
@@ -769,3 +880,92 @@ export async function extractAnkiPackageAsync(fileUri: string): Promise<AnkiPack
   }
 }
 
+/** Espacio libre mínimo para empezar a extraer media. */
+const MIN_FREE_BYTES = 50 * 1024 * 1024;
+
+/** "neko.mp3" + "a1b2c3d4…" -> "neko-a1b2c3d4.mp3" */
+function withHashSuffix(fileName: string, md5: string | null): string {
+  const hash8 = (md5 || String(Date.now())).slice(0, 8);
+  const dot = fileName.lastIndexOf('.');
+  return dot > 0 ? `${fileName.slice(0, dot)}-${hash8}${fileName.slice(dot)}` : `${fileName}-${hash8}`;
+}
+
+/**
+ * Extrae archivos multimedia de un paquete .apkg hacia el almacenamiento local (Paths.document/media),
+ * deduplicando por contenido (MD5) y reportando el progreso periódicamente.
+ *
+ * Cada archivo se extrae primero a la caché y después:
+ * - si el destino no existe, se mueve ahí;
+ * - si existe con el mismo contenido, se reutiliza;
+ * - si existe con otro contenido, se guarda como `nombre-<md5>.ext` (siempre el mismo nombre para el mismo archivo).
+ *
+ * `preferredPaths` (al recuperar) indica la ruta que ya tiene guardada cada palabra, para escribir exactamente ahí.
+ */
+export async function importAnkiMediaAsync(
+  fileUri: string,
+  filesToExtract: string[],
+  manifest: Map<string, ZipEntry>,
+  onProgress?: (done: number, total: number) => void,
+  preferredPaths?: Map<string, string>
+): Promise<{ paths: Map<string, string>; written: number; reused: number; failed: string[] }> {
+  let freeBytes = 0;
+  try {
+    freeBytes = Paths.availableDiskSpace;
+  } catch {}
+  if (freeBytes > 0 && freeBytes < MIN_FREE_BYTES) {
+    throw new Error('Espacio de almacenamiento insuficiente en el dispositivo.');
+  }
+
+  const mediaDir = getMediaDir();
+  const paths = new Map<string, string>();
+  const failed: string[] = [];
+  let written = 0;
+  let reused = 0;
+
+  const reader = openZip(fileUri);
+  try {
+    const total = filesToExtract.length;
+    for (let i = 0; i < total; i++) {
+      const fileName = filesToExtract[i];
+      const entry = manifest.get(fileName);
+      const preferredPath = preferredPaths?.get(fileName);
+      const targetName = preferredPath ? mediaFileName(preferredPath) : sanitizeMediaName(fileName);
+      const temp = new File(Paths.cache, `media_import_${Date.now()}_${i}`);
+      const tempUri = temp.uri; // moveSync actualiza temp.uri al destino
+
+      try {
+        if (!entry) throw new Error('No está en el paquete');
+        reader.extractEntryToFile(entry, temp);
+
+        const dest = new File(mediaDir, targetName);
+        if (!dest.exists) {
+          temp.moveSync(dest);
+          paths.set(fileName, mediaPath(targetName));
+          written++;
+        } else if (dest.md5 && temp.md5 && dest.md5.toLowerCase() === temp.md5.toLowerCase()) {
+          temp.delete();
+          paths.set(fileName, mediaPath(targetName));
+          reused++;
+        } else {
+          const uniqueName = withHashSuffix(targetName, temp.md5);
+          temp.moveSync(new File(mediaDir, uniqueName), { overwrite: true });
+          paths.set(fileName, mediaPath(uniqueName));
+          written++;
+        }
+      } catch (err) {
+        console.warn(`[AnkiImporter] Error al extraer media ${fileName}:`, err);
+        deleteFileQuietly(tempUri);
+        failed.push(fileName);
+      }
+
+      if ((i + 1) % 20 === 0 || i === total - 1) {
+        onProgress?.(i + 1, total);
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      }
+    }
+  } finally {
+    reader.close();
+  }
+
+  return { paths, written, reused, failed };
+}

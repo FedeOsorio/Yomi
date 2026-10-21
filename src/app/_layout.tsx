@@ -7,6 +7,7 @@ import { ThemeProvider, useTheme } from '../../providers/ThemeProvider';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { enableFreeze } from 'react-native-screens';
 import { OTAUpdateOverlay } from '../components/OTAUpdateOverlay';
+import { ImportProgressOverlay } from '../components/ImportProgressOverlay';
 import { useIncomingFileHandler } from '../../lib/incoming-file-service';
 import { useInAppUpdates } from '../hooks/useInAppUpdates';
 import { useGoogleDriveStore } from '../stores/googleDriveStore';
@@ -66,6 +67,7 @@ export default function RootLayout() {
       <ThemeProvider>
         <DatabaseProvider>
           <RootStack />
+          <ImportProgressOverlay />
           <OTAUpdateOverlay />
         </DatabaseProvider>
       </ThemeProvider>

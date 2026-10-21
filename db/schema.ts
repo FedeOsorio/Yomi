@@ -25,6 +25,7 @@ export const decks = sqliteTable('decks', {
   name: text('name').notNull(),
   type: text('type', { enum: ['language', 'custom'] }).notNull().default('language'),
   folderId: text('folder_id').references(() => folders.id, { onDelete: 'set null' }),
+  mediaSource: text('media_source'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
 

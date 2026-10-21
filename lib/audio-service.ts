@@ -1,6 +1,17 @@
 import * as Speech from 'expo-speech';
 import { getKanjiEssentialReading } from './jlpt-data';
+import {
+  getCardAudio,
+  getCardSentenceAudio,
+  isMediaPlaceholder,
+  playMediaAudio,
+  SpeakOptions,
+  stopMediaAudio,
+} from './media-service';
 import { getStorageItem, setStorageItem } from './storage-service';
+import { parseAux } from './word-aux';
+
+export type { SpeakOptions };
 
 /**
  * Mapeo de códigos de idioma a códigos ISO estándar para Expo Speech.
@@ -78,13 +89,6 @@ export async function getBestVoiceForLanguage(langCode: string): Promise<string 
   return chosen?.identifier;
 }
 
-export interface SpeakOptions {
-  onStart?: () => void;
-  onDone?: () => void;
-  onStopped?: () => void;
-  onError?: (err: any) => void;
-}
-
 /**
  * Precarga el motor de voz nativo (TTS) y resuelve la mejor voz para el idioma especificado.
  * Esto elimina el retardo (cold start) cuando el usuario pulsa el botón del parlante.
@@ -99,15 +103,6 @@ export async function preloadAudioService(languageCode: string = 'zh-CN'): Promi
 }
 
 /**
- * Libera los recursos del motor de voz deteniendo cualquier reproducción activa.
- */
-export async function releaseAudioService(): Promise<void> {
-  try {
-    await Speech.stop();
-  } catch (e) {}
-}
-
-/**
  * Reproduce la pronunciación en audio de un texto en el idioma nativo especificado.
  * Para japonés, si se proporciona una lectura (reading/furigana) o es un kanji N5/N4,
  * se extrae la lectura esencial en kana para que TTS pronuncie la palabra natural
@@ -119,7 +114,11 @@ export async function speakText(
   reading?: string,
   options?: SpeakOptions
 ): Promise<void> {
-  if (!text || !text.trim()) return;
+  // Las tarjetas "[Audio]" / "[Video]" sin su archivo no se leen en voz alta
+  if (!text || !text.trim() || isMediaPlaceholder(text)) {
+    options?.onDone?.();
+    return;
+  }
 
   const targetLang = LANGUAGE_LOCALE_MAP[languageCode] || languageCode.split('-')[0] || 'zh';
   let cleanText = text.trim();
@@ -210,10 +209,37 @@ export async function speakText(
 }
 
 /**
- * Detiene cualquier audio en reproducción.
+ * Detiene cualquier audio en reproducción (tanto TTS como archivos multimedia nativos).
  */
 export async function stopSpeech(): Promise<void> {
+  stopMediaAudio();
   try {
     await Speech.stop();
   } catch (e) {}
+}
+
+/**
+ * Punto de entrada unificado para reproducir el audio de una tarjeta.
+ * Si la tarjeta contiene un archivo de audio grabado importado de Anki, lo reproduce nativamente
+ * con expo-audio. Si el archivo no existe o falla, recurre a TTS nativo (expo-speech) como fallback transparente.
+ */
+export async function speakCard(
+  card: {
+    displayText?: string;
+    simplified?: string;
+    displayReading?: string;
+    pinyinDisplay?: string;
+    auxiliaryInfo?: string | null;
+  },
+  languageCode: string = 'zh-CN',
+  opts?: SpeakOptions & { side?: 'front' | 'back'; reading?: string; role?: 'word' | 'sentence' }
+): Promise<void> {
+  await stopSpeech();
+
+  const aux = parseAux(card.auxiliaryInfo);
+  const audioUri = opts?.role === 'sentence' ? getCardSentenceAudio(aux) : getCardAudio(aux, opts?.side);
+  if (audioUri && (await playMediaAudio(audioUri, opts))) return;
+
+  const text = card.displayText || card.simplified || '';
+  await speakText(text, languageCode, opts?.reading || card.displayReading || card.pinyinDisplay, opts);
 }

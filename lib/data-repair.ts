@@ -1,4 +1,5 @@
 import { eq, like, sql } from 'drizzle-orm';
+import { Directory, File, Paths } from 'expo-file-system';
 import { db } from '../db';
 import { decks, srsItems, words } from '../db/schema';
 import { resolveJapaneseReading } from './japanese-search';
@@ -6,6 +7,7 @@ import { classifyJapaneseWord, containsJapanese } from './japanese-utils';
 import { registerWordInDictionary } from './phonetic-dictionary';
 import { getKanjiLevel } from './kanji-search';
 import { getStorageItem, setStorageItem } from './storage-service';
+import { getMediaDir, MEDIA_DIR, mediaFileName } from './media-service';
 import { parseAux, stringifyAux } from './word-aux';
 import { resolveJapaneseBaseForm } from './word-service';
 
@@ -160,5 +162,106 @@ export async function backfillMissingReadings(): Promise<void> {
     console.warn('[DataRepair] Error completando lecturas:', err);
   } finally {
     backfillRunning = false;
+  }
+}
+
+const TRASH_DIR = '.trash';
+const TRASH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** En la papelera cada archivo se llama `<momento en que se desechó>__<nombre original>`. */
+function parseTrashName(name: string): { trashedAt: number; fileName: string } | null {
+  const match = name.match(/^(\d+)__(.+)$/);
+  return match ? { trashedAt: Number(match[1]), fileName: match[2] } : null;
+}
+
+/** Nombres de archivo de `media/` que usa alguna palabra. */
+async function getReferencedMediaFiles(): Promise<Set<string>> {
+  const rows = await db
+    .select({ aux: words.auxiliaryInfo })
+    .from(words)
+    .where(sql`${words.auxiliaryInfo} LIKE '%media/%'`);
+
+  const referenced = new Set<string>();
+  for (const row of rows) {
+    for (const m of parseAux(row.aux).media ?? []) {
+      if (m.path) referenced.add(mediaFileName(m.path));
+    }
+  }
+  return referenced;
+}
+
+/**
+ * Mueve a `media/.trash/` los archivos de `media/` que ya no usa ninguna tarjeta
+ * y purga de la papelera los que llevan más de 30 días ahí (como "Check Media" de Anki).
+ */
+export async function cleanOrphanMedia(): Promise<void> {
+  try {
+    const mediaDir = new Directory(Paths.document, MEDIA_DIR);
+    if (!mediaDir.exists) return;
+
+    const referenced = await getReferencedMediaFiles();
+    const trashDir = new Directory(mediaDir, TRASH_DIR);
+    trashDir.create({ idempotent: true });
+    const now = Date.now();
+
+    let movedToTrash = 0;
+    for (const entry of mediaDir.list()) {
+      if (!(entry instanceof File) || entry.name.startsWith('.') || referenced.has(entry.name)) continue;
+      try {
+        entry.moveSync(new File(trashDir, `${now}__${entry.name}`));
+        movedToTrash++;
+      } catch (e) {
+        console.warn(`[DataRepair] Error moviendo archivo huérfano a la papelera (${entry.name}):`, e);
+      }
+    }
+
+    let purgedFromTrash = 0;
+    for (const entry of trashDir.list()) {
+      const trashedAt = parseTrashName(entry.name)?.trashedAt ?? 0;
+      if (trashedAt > 0 && now - trashedAt > TRASH_TTL_MS) {
+        try {
+          entry.delete();
+          purgedFromTrash++;
+        } catch {}
+      }
+    }
+
+    if (movedToTrash > 0 || purgedFromTrash > 0) {
+      console.log(`[DataRepair] Limpieza multimedia: ${movedToTrash} movidos a papelera, ${purgedFromTrash} eliminados definitivamente`);
+    }
+  } catch (err) {
+    console.warn('[DataRepair] Error en cleanOrphanMedia:', err);
+  }
+}
+
+/**
+ * Después de restaurar un backup: devuelve a `media/` los archivos de la papelera
+ * que alguna palabra vuelve a usar.
+ */
+export async function rescueTrashedMedia(): Promise<number> {
+  try {
+    const trashDir = new Directory(Paths.document, MEDIA_DIR, TRASH_DIR);
+    if (!trashDir.exists) return 0;
+
+    const referenced = await getReferencedMediaFiles();
+    if (referenced.size === 0) return 0;
+    const mediaDir = getMediaDir();
+
+    let rescued = 0;
+    for (const entry of trashDir.list()) {
+      const fileName = parseTrashName(entry.name)?.fileName ?? entry.name;
+      const dest = new File(mediaDir, fileName);
+      if (!(entry instanceof File) || !referenced.has(fileName) || dest.exists) continue;
+      try {
+        entry.moveSync(dest);
+        rescued++;
+      } catch (e) {
+        console.warn('[rescueTrashedMedia] Error rescatando archivo de papelera:', entry.name, e);
+      }
+    }
+    return rescued;
+  } catch (err) {
+    console.warn('[rescueTrashedMedia] Error general rescatando multimedia:', err);
+    return 0;
   }
 }

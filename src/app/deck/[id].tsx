@@ -2,13 +2,16 @@ import { Ionicons } from '@expo/vector-icons';
 import { eq } from 'drizzle-orm';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { memo, useCallback, useDeferredValue, useMemo, useState } from 'react';
-import { Alert, Modal, Platform, Pressable, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, ActivityIndicator, Modal, Platform, Pressable, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { db } from '../../../db';
 import { decks, srsItems, words } from '../../../db/schema';
 import { exportDeckToYomiFormat } from '../../../lib/anki-importer';
-import { speakText } from '../../../lib/audio-service';
+import { recoverDeckMediaAsync } from '../../../lib/anki-import-service';
+import { deleteFileQuietly, listMediaFiles, mediaFileName } from '../../../lib/media-service';
+import * as DocumentPicker from 'expo-document-picker';
+import { speakCard } from '../../../lib/audio-service';
 import { ALL_LANGUAGES, deleteDeck } from '../../../lib/deck-service';
 import { getQuickHskLevel } from '../../../lib/hsk-data';
 import { cleanAndFormatMeanings } from '../../../lib/japanese-search';
@@ -31,7 +34,7 @@ interface DeckWordCardProps {
   item: any;
   colors: any;
   onPress: (id: string) => void;
-  onSpeak: (text: string, reading?: string) => void;
+  onSpeak: (text: string, reading?: string, auxiliaryInfo?: string | null) => void;
   onDelete: (id: string, text: string) => void;
   onEdit?: (item: any) => void;
   onToggleReview?: (id: string, shouldAdd: boolean) => void;
@@ -88,7 +91,7 @@ const DeckWordCard = memo(function DeckWordCard({
               style={styles.iconActionBtn}
               onPress={(e) => {
                 e.stopPropagation();
-                onSpeak(item.simplified, item.displayReading);
+                onSpeak(item.simplified, item.displayReading, item.auxiliaryInfo);
               }}
             >
               <Ionicons name="volume-medium-outline" size={20} color={colors.primary} />
@@ -161,6 +164,8 @@ export default function DeckDetailScreen() {
   const [customCardModalVisible, setCustomCardModalVisible] = useState(false);
   const [editingCard, setEditingCard] = useState<CustomCardData | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [missingMediaCount, setMissingMediaCount] = useState<number>(0);
+  const [isRecoveringMedia, setIsRecoveringMedia] = useState<boolean>(false);
   const deferredQuery = useDeferredValue(searchQuery);
   const setBrowseList = useDeckBrowseStore((s) => s.setBrowseList);
 
@@ -311,6 +316,18 @@ export default function DeckDetailScreen() {
       });
 
       setDeckWords(processed);
+
+      // Archivos únicos que faltan en disco y se pueden recuperar (los `missing` nunca vinieron en el .apkg)
+      const onDisk = listMediaFiles();
+      const missingFiles = new Set<string>();
+      for (const w of result) {
+        for (const m of parseAux(w.auxiliaryInfo).media ?? []) {
+          if (m.missing || !m.path) continue;
+          const fileName = mediaFileName(m.path);
+          if (fileName && !onDisk.has(fileName)) missingFiles.add(fileName);
+        }
+      }
+      setMissingMediaCount(missingFiles.size);
     }
   }, [id]);
 
@@ -362,6 +379,47 @@ export default function DeckDetailScreen() {
       Alert.alert(t('common.error'), t('deckDetail.updateReviewError'));
     }
   }, [fetchWords, t]);
+
+  const handleRecoverMedia = async () => {
+    let pickedUri: string | null = null;
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ['*/*'],
+        copyToCacheDirectory: true,
+      });
+      if (res.canceled || !res.assets || res.assets.length === 0) return;
+
+      const file = res.assets[0];
+      pickedUri = file.uri;
+      if (!file.name.toLowerCase().endsWith('.apkg')) {
+        Alert.alert(t('common.error'), t('importDeck.alertInvalidApkgFormat'));
+        return;
+      }
+
+      setIsRecoveringMedia(true);
+      const result = await recoverDeckMediaAsync(id, file.uri);
+      if (result.status === 'noMediaInPackage') {
+        Alert.alert(t('common.notice'), t('deckDetail.noMediaInPackage'));
+        return;
+      }
+      if (result.status === 'noMatchingMedia') {
+        Alert.alert(t('common.notice'), t('deckDetail.noMatchingMedia'));
+        return;
+      }
+
+      Alert.alert(
+        t('importDeck.alertSuccessTitle'),
+        t('deckDetail.mediaRecoveredSuccess', { count: result.recovered }) +
+          (result.failed > 0 ? t('importDeck.mediaSkippedCount', { count: result.failed }) : '')
+      );
+      fetchWords();
+    } catch (err) {
+      Alert.alert(t('common.error'), t('deckDetail.mediaRecoverError'));
+    } finally {
+      setIsRecoveringMedia(false);
+      deleteFileQuietly(pickedUri);
+    }
+  };
 
   const [menuVisible, setMenuVisible] = useState(false);
 
@@ -450,10 +508,10 @@ export default function DeckDetailScreen() {
     );
   };
 
-  const handleSpeak = useCallback((text: string, reading?: string) => {
+  const handleSpeak = useCallback((text: string, reading?: string, auxiliaryInfo?: string | null) => {
     // Mazo personalizado: cada texto puede estar en cualquier idioma, se detecta por su escritura
     const lang = isCustomDeck ? detectTextLanguage(text) : (deckInfo?.languageCode || 'zh-CN');
-    speakText(text, lang, reading);
+    speakCard({ displayText: text, displayReading: reading, auxiliaryInfo }, lang, { reading });
   }, [isCustomDeck, deckInfo?.languageCode]);
 
   const handlePressWord = useCallback((wordId: string) => {
@@ -642,6 +700,33 @@ export default function DeckDetailScreen() {
         </View>
       ) : (
         <>
+          {missingMediaCount > 0 && (
+            <View style={[styles.missingMediaBanner, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <View style={styles.missingMediaTextCol}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name="cloud-download-outline" size={18} color="#F59E0B" style={{ marginRight: 6 }} />
+                  <Text style={[styles.missingMediaTitle, { color: colors.text }]}>
+                    {missingMediaCount} {t('deckDetail.missingMediaFiles')}
+                  </Text>
+                </View>
+                <Text style={[styles.missingMediaSubtitle, { color: colors.textMuted }]}>
+                  {t('deckDetail.recoverMediaHint')}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={[styles.recoverMediaBtn, { backgroundColor: colors.primary }]}
+                disabled={isRecoveringMedia}
+                onPress={handleRecoverMedia}
+              >
+                {isRecoveringMedia ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <Text style={styles.recoverMediaBtnText}>{t('deckDetail.recoverMedia')}</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
+
           <View style={[styles.searchBar, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <Ionicons name="search" size={18} color={colors.textMuted} />
             <TextInput
@@ -1051,5 +1136,39 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontWeight: 'bold',
     fontSize: 15,
+  },
+  missingMediaBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: Spacing.sm + 4,
+    borderRadius: 14,
+    borderWidth: 1,
+    marginHorizontal: Spacing.md,
+    marginBottom: Spacing.sm,
+    gap: 10,
+  },
+  missingMediaTextCol: {
+    flex: 1,
+  },
+  missingMediaTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  missingMediaSubtitle: {
+    fontSize: 11,
+    marginTop: 2,
+  },
+  recoverMediaBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recoverMediaBtnText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: '700',
   },
 });

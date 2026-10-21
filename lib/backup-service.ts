@@ -6,7 +6,7 @@ import * as Sharing from 'expo-sharing';
 import { Share, Platform } from 'react-native';
 import { getStorageItem, setStorageItem } from './storage-service';
 import { createNewSrsItem } from './srs-engine';
-import { backfillMissingReadings, runDataRepair } from './data-repair';
+import { backfillMissingReadings, rescueTrashedMedia, runDataRepair } from './data-repair';
 
 export const BACKUP_STORAGE_KEY = 'yomi_last_backup_timestamp';
 
@@ -46,6 +46,7 @@ export interface YomiDeckBackupItem {
   name: string;
   type?: 'language' | 'custom';
   folderId?: string | null;
+  mediaSource?: string | null;
   createdAt: string;
 }
 
@@ -147,6 +148,7 @@ export async function createFullBackupPackage(): Promise<YomiFullBackupPackage> 
     name: d.name,
     type: (d.type as 'language' | 'custom') || 'language',
     folderId: d.folderId || null,
+    mediaSource: d.mediaSource || null,
     createdAt: d.createdAt instanceof Date ? d.createdAt.toISOString() : new Date(d.createdAt).toISOString(),
   }));
 
@@ -488,17 +490,22 @@ export async function restoreBackupPackage(
     }
   }
 
-  // 2. Restaurar Decks (con folderId)
+  // 2. Restaurar Decks (con folderId y mediaSource)
   for (const d of pkg.data.decks) {
     const deckType: 'language' | 'custom' = d.type || (d.languageCode === 'es-ES' ? 'custom' : 'language');
     const folderId = d.folderId || null;
+    const mediaSource = d.mediaSource || null;
     if (mode === 'merge') {
       const existing = await db.select().from(decks).where(eq(decks.id, d.id)).limit(1);
       if (existing.length > 0) {
-        // Asegurar que el tipo y carpeta queden configurados correctamente
+        // Asegurar que el tipo, carpeta y mediaSource queden configurados correctamente
         await db
           .update(decks)
-          .set({ type: deckType, ...(folderId !== undefined ? { folderId } : {}) })
+          .set({
+            type: deckType,
+            ...(folderId !== undefined ? { folderId } : {}),
+            ...(d.mediaSource ? { mediaSource: d.mediaSource } : {}),
+          })
           .where(eq(decks.id, d.id));
         continue;
       }
@@ -510,6 +517,7 @@ export async function restoreBackupPackage(
         name: d.name,
         type: deckType,
         folderId,
+        mediaSource,
         createdAt: new Date(d.createdAt),
       });
     } catch {
@@ -520,6 +528,7 @@ export async function restoreBackupPackage(
         name: d.name,
         type: deckType,
         folderId: null,
+        mediaSource,
         createdAt: new Date(d.createdAt),
       });
     }
@@ -631,6 +640,9 @@ export async function restoreBackupPackage(
   }
 
   const totalSrs = await db.select({ id: srsItems.id }).from(srsItems);
+
+  // Rescatar de la papelera (media/.trash/) cualquier archivo multimedia que vuelva a necesitarse
+  await rescueTrashedMedia();
 
   // Una copia vieja puede traer datos que ya habíamos reparado: volver a repararlos
   await runDataRepair(true);

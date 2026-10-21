@@ -11,7 +11,16 @@ import { createNewSrsItem } from './srs-engine';
 import { registerWordInDictionary } from './phonetic-dictionary';
 
 import * as crypto from 'expo-crypto';
-import { parseAux, stringifyAux, WordAux } from './word-aux';
+import { isMediaPlaceholder } from './media-service';
+import { parseAux, stringifyAux, WordAux, MediaItem } from './word-aux';
+
+/**
+ * Clave para detectar tarjetas repetidas al importar. Las tarjetas cuyo frente era sólo un archivo
+ * ("[Audio]", "[Video]"…) tienen todas el mismo texto: se distinguen por su archivo y su respuesta.
+ */
+function duplicateKey(text: string, base: string, meaningsJson: string, firstMediaFile: () => string): string {
+  return isMediaPlaceholder(text) ? `${base}__${firstMediaFile()}__${meaningsJson}` : base;
+}
 
 function generateUUID(): string {
   if (typeof crypto.randomUUID === 'function') {
@@ -133,12 +142,12 @@ export async function getCompoundWordsForChar(
  * Lee, modifica y guarda los datos extra de una palabra.
  * `change` recibe el objeto actual y lo modifica en el lugar. Devuelve el resultado, o null si la palabra no existe.
  */
-async function updateWordAux(wordId: string, change: (aux: WordAux) => void): Promise<WordAux | null> {
+export async function updateWordAux(wordId: string, change: (aux: WordAux) => void): Promise<WordAux | null> {
   const rows = await db.select({ aux: words.auxiliaryInfo }).from(words).where(eq(words.id, wordId)).limit(1);
   if (rows.length === 0) return null;
   const aux = parseAux(rows[0].aux);
   change(aux);
-  await db.update(words).set({ auxiliaryInfo: JSON.stringify(aux) }).where(eq(words.id, wordId));
+  await db.update(words).set({ auxiliaryInfo: stringifyAux(aux) }).where(eq(words.id, wordId));
   return aux;
 }
 
@@ -441,7 +450,7 @@ export async function updateCustomCard(
  */
 export async function saveBatchCustomCards(
   deckId: string,
-  cards: Array<{ question: string; answer: string; reading?: string }>
+  cards: Array<{ question: string; answer: string; reading?: string; media?: MediaItem[] }>
 ): Promise<{ inserted: number; skipped: number }> {
   let inserted = 0;
   let skipped = 0;
@@ -458,12 +467,15 @@ export async function saveBatchCustomCards(
 
   // Obtener preguntas existentes en el mazo para evitar duplicados exactos
   const existingRows = await db
-    .select({ simplified: words.simplified })
+    .select({ simplified: words.simplified, meanings: words.meanings, aux: words.auxiliaryInfo })
     .from(words)
     .where(eq(words.deckId, deckId));
 
   const existingSet = new Set(
-    existingRows.map((r) => r.simplified.trim().toLowerCase())
+    existingRows.map((r) => {
+      const question = r.simplified.trim();
+      return duplicateKey(question, question.toLowerCase(), r.meanings || '', () => parseAux(r.aux).media?.[0]?.file ?? '');
+    })
   );
 
   for (const card of cards) {
@@ -471,7 +483,9 @@ export async function saveBatchCustomCards(
     const cleanA = card.answer.trim();
     if (!cleanQ || !cleanA) continue;
 
-    const key = cleanQ.toLowerCase();
+    const meaningsJson = JSON.stringify([cleanA]);
+    const key = duplicateKey(cleanQ, cleanQ.toLowerCase(), meaningsJson, () => card.media?.[0]?.file ?? '');
+
     if (existingSet.has(key)) {
       skipped++;
       continue;
@@ -483,7 +497,7 @@ export async function saveBatchCustomCards(
     }
 
     const wordId = generateUUID();
-    const meaningsJson = JSON.stringify([cleanA]);
+    const auxInfo = card.media && card.media.length > 0 ? stringifyAux({ media: card.media }) : null;
 
     await db.insert(words).values({
       id: wordId,
@@ -493,7 +507,7 @@ export async function saveBatchCustomCards(
       pinyinDisplay: finalReading,
       pinyinNumeric: finalReading.toLowerCase(),
       meanings: meaningsJson,
-      auxiliaryInfo: null,
+      auxiliaryInfo: auxInfo,
       createdAt: new Date(),
     });
 
@@ -741,6 +755,7 @@ export async function saveBatchWords(
     meanings: string[];
     level?: string;
     rawExtras?: Record<string, string>;
+    media?: MediaItem[];
   }>
 ): Promise<{ inserted: number; skipped: number }> {
   let inserted = 0;
@@ -748,12 +763,16 @@ export async function saveBatchWords(
 
   // Obtener palabras existentes en el mazo para deduplicación en memoria
   const existingRows = await db
-    .select({ simplified: words.simplified, reading: words.pinyinDisplay })
+    .select({ simplified: words.simplified, reading: words.pinyinDisplay, meanings: words.meanings, aux: words.auxiliaryInfo })
     .from(words)
     .where(eq(words.deckId, deckId));
 
   const existingSet = new Set(
-    existingRows.map((r) => `${r.simplified.trim()}__${(r.reading || '').trim().toLowerCase()}`)
+    existingRows.map((r) => {
+      const text = r.simplified.trim();
+      const base = `${text}__${(r.reading || '').trim().toLowerCase()}`;
+      return duplicateKey(text, base, r.meanings || '', () => parseAux(r.aux).media?.[0]?.file ?? '');
+    })
   );
 
   for (const item of items) {
@@ -761,15 +780,20 @@ export async function saveBatchWords(
     const cleanReading = (item.reading || '').trim();
     if (!cleanText) continue;
 
-    const key = `${cleanText}__${cleanReading.toLowerCase()}`;
+    const meaningsJson = JSON.stringify(item.meanings.length > 0 ? item.meanings : [cleanText]);
+    const key = duplicateKey(cleanText, `${cleanText}__${cleanReading.toLowerCase()}`, meaningsJson, () => item.media?.[0]?.file ?? '');
+
     if (existingSet.has(key)) {
       skipped++;
       continue;
     }
 
     const wordId = generateUUID();
-    const meaningsJson = JSON.stringify(item.meanings.length > 0 ? item.meanings : [cleanText]);
-    const auxInfo = stringifyAux({ ...(item.level && { level: item.level.trim() }), ...item.rawExtras });
+    const auxInfo = stringifyAux({
+      ...(item.level && { level: item.level.trim() }),
+      ...item.rawExtras,
+      ...(item.media && item.media.length > 0 && { media: item.media }),
+    });
 
     await db.insert(words).values({
       id: wordId,

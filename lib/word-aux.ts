@@ -23,8 +23,20 @@ export interface WordAux {
   conjugationStreaks?: Record<string, number>;
   dictionaryForm?: { kanji: string; reading: string };
 
+  /** Archivos multimedia asociados a la tarjeta (audio, video, imagen). */
+  media?: MediaItem[];
+
   /** Campos extra que trae un mazo importado de Anki: se conservan tal cual. */
   [extra: string]: unknown;
+}
+
+export interface MediaItem {
+  file: string;                     // Nombre real: "neko.mp3", "clip.mp4", "diagrama.png"
+  path?: string;                    // Ruta relativa en disco: "media/neko.mp3" (asignada tras extraer)
+  kind: 'audio' | 'video' | 'image';
+  side: 'front' | 'back';
+  role?: 'prompt' | 'word' | 'sentence';
+  missing?: boolean;                // Marcado si nunca vino en el .apkg original
 }
 
 /** Lee el JSON de una palabra. Nunca lanza: si está vacío o roto devuelve {}. */

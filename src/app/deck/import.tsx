@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -17,7 +17,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../../providers/ThemeProvider';
-import { Spacing, Typography, Shadows } from '../../constants/theme';
+import { Spacing, Shadows } from '../../constants/theme';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import {
@@ -29,11 +29,13 @@ import {
 } from '../../../lib/deck-service';
 import {
   parseVocabularyFile,
-  applyMappingToRows,
   extractAnkiPackageAsync,
+  AnkiMediaManifest,
   ParseResult,
-  ColumnMapping,
 } from '../../../lib/anki-importer';
+import { importAnkiDeckAsync } from '../../../lib/anki-import-service';
+import { deleteFileQuietly } from '../../../lib/media-service';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import {
   parseCustomQaText,
   isLikelyQaFormat,
@@ -64,10 +66,6 @@ export default function ImportDeckScreen() {
   // Entrada de datos
   const [rawText, setRawText] = useState('');
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
-  const [customMapping, setCustomMapping] = useState<ColumnMapping>({
-    textColumnIndex: 0,
-    meaningColumnIndex: 1,
-  });
 
   // Estados específicos para Importación Custom (IA)
   const [qaItems, setQaItems] = useState<CustomCardImportItem[]>([]);
@@ -79,6 +77,25 @@ export default function ImportDeckScreen() {
   // Estado de procesamiento
   const [isProcessing, setIsProcessing] = useState(false);
   const [step, setStep] = useState<'input' | 'preview'>('input');
+  const [ankiFileUri, setAnkiFileUri] = useState<string | null>(null);
+  const [ankiFileName, setAnkiFileName] = useState<string>('');
+  const [ankiMediaManifest, setAnkiMediaManifest] = useState<AnkiMediaManifest | null>(null);
+  const [importProgress, setImportProgress] = useState<{ done: number; total: number; text: string } | null>(null);
+
+  const cachedAnkiUriRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    cachedAnkiUriRef.current = ankiFileUri;
+  }, [ankiFileUri]);
+
+  // Al desmontar la pantalla, si el usuario no completó la importación, limpiar la copia en caché
+  useEffect(() => {
+    return () => {
+      if (cachedAnkiUriRef.current) {
+        deleteFileQuietly(cachedAnkiUriRef.current);
+      }
+    };
+  }, []);
 
   const selectedDeck = decks.find((d) => d.id === selectedDeckId);
   const isCustomMode =
@@ -158,7 +175,6 @@ export default function ImportDeckScreen() {
     }
 
     setParseResult(result);
-    setCustomMapping(result.suggestedMapping);
     setQaItems([]);
     setStep('preview');
   };
@@ -181,6 +197,9 @@ export default function ImportDeckScreen() {
       setIsProcessing(true);
 
       if (ext === 'apkg') {
+        if (ankiFileUri && ankiFileUri !== file.uri) {
+          deleteFileQuietly(ankiFileUri);
+        }
         const result = await extractAnkiPackageAsync(file.uri);
         if (result.items.length === 0) {
           Alert.alert(t('common.notice'), t('importDeck.alertNoApkgNotes'));
@@ -196,6 +215,10 @@ export default function ImportDeckScreen() {
         if (result.deckType) {
           setImportedDeckType(result.deckType);
         }
+
+        setAnkiFileUri(file.uri);
+        setAnkiFileName(filename);
+        setAnkiMediaManifest(result.mediaManifest || null);
 
         setParseResult({
           delimiter: 'Anki (.apkg)',
@@ -214,16 +237,17 @@ export default function ImportDeckScreen() {
           totalParsed: result.items.length,
           warnings: [],
         });
-        setCustomMapping({
-          textColumnIndex: 0,
-          readingColumnIndex: 1,
-          meaningColumnIndex: 2,
-          levelColumnIndex: 3,
-        });
         setQaItems([]);
         setStep('preview');
       } else {
+        if (ankiFileUri) {
+          deleteFileQuietly(ankiFileUri);
+        }
+        setAnkiFileUri(null);
+        setAnkiMediaManifest(null);
         const content = await FileSystem.readAsStringAsync(file.uri);
+        // Limpiar archivo no-apkg de caché tras leerlo
+        deleteFileQuietly(file.uri);
         if (!content.trim()) {
           Alert.alert(t('common.notice'), t('importDeck.alertEmptyFile'));
           return;
@@ -268,7 +292,6 @@ export default function ImportDeckScreen() {
         }
 
         setParseResult(result);
-        setCustomMapping(result.suggestedMapping);
         setQaItems([]);
         setStep('preview');
       }
@@ -315,38 +338,46 @@ export default function ImportDeckScreen() {
   };
 
   const handleExecuteImport = async () => {
-    let targetDeckId = selectedDeckId;
-
     if (targetMode === 'new') {
       if (!newDeckName.trim()) {
         Alert.alert(t('common.attention'), t('importDeck.alertEnterDeckName'));
         return;
       }
-      setIsProcessing(true);
-      try {
-        targetDeckId = await createDeck(
-          newDeckName.trim(),
-          isCustomMode ? 'es-ES' : selectedLang,
-          importedDeckType
-        );
-      } catch (e) {
-        setIsProcessing(false);
-        Alert.alert(t('common.error'), t('importDeck.alertCreateDeckError'));
-        return;
-      }
     } else {
-      if (!targetDeckId) {
+      if (!selectedDeckId) {
         Alert.alert(t('common.attention'), t('importDeck.alertSelectDeck'));
         return;
       }
     }
 
     setIsProcessing(true);
+
+    const ensureTargetDeckId = async (): Promise<string> => {
+      if (targetMode === 'existing' && selectedDeckId) {
+        return selectedDeckId;
+      }
+      const newId = await createDeck(
+        newDeckName.trim(),
+        isCustomMode ? 'es-ES' : selectedLang,
+        importedDeckType
+      );
+      setSelectedDeckId(newId);
+      setTargetMode('existing');
+      return newId;
+    };
+
     try {
       // Caso 1: Importación de Preguntas y Respuestas (IA)
       if (qaItems.length > 0) {
+        const targetDeckId = await ensureTargetDeckId();
         const { inserted, skipped } = await saveBatchCustomCards(targetDeckId, qaItems);
         notifyDataChanged();
+
+        if (ankiFileUri) {
+          deleteFileQuietly(ankiFileUri);
+          cachedAnkiUriRef.current = null;
+          setAnkiFileUri(null);
+        }
 
         Alert.alert(
           t('importDeck.alertSuccessTitle'),
@@ -367,20 +398,47 @@ export default function ImportDeckScreen() {
 
       // Caso 2: Importación de Vocabulario CSV / TSV / Anki
       if (parseResult) {
-        const itemsToSave = parseResult.items;
-        const { inserted, skipped } = await saveBatchWords(targetDeckId, itemsToSave);
+        const showProgress = (done: number, total: number) =>
+          setImportProgress({ done, total, text: t('importDeck.extractingMediaProgress', { done, total }) });
+
+        let result: { deckId: string; inserted: number; skipped: number; mediaSaved: number; mediaFailed: number };
+        if (ankiFileUri) {
+          if (ankiMediaManifest && ankiMediaManifest.byFile.size > 0) showProgress(0, ankiMediaManifest.byFile.size);
+          result = await importAnkiDeckAsync({
+            fileUri: ankiFileUri,
+            fileName: ankiFileName || 'anki_deck.apkg',
+            items: parseResult.items,
+            manifest: ankiMediaManifest,
+            getDeckId: ensureTargetDeckId,
+            onProgress: showProgress,
+          });
+        } else {
+          const deckId = await ensureTargetDeckId();
+          const saved = await saveBatchWords(deckId, parseResult.items);
+          result = { deckId, ...saved, mediaSaved: 0, mediaFailed: 0 };
+        }
         notifyDataChanged();
+
+        if (ankiFileUri) {
+          deleteFileQuietly(ankiFileUri);
+          cachedAnkiUriRef.current = null;
+          setAnkiFileUri(null);
+        }
+
+        const mediaStatsMsg =
+          (result.mediaSaved > 0 ? t('importDeck.mediaImportedCount', { count: result.mediaSaved }) : '') +
+          (result.mediaFailed > 0 ? t('importDeck.mediaSkippedCount', { count: result.mediaFailed }) : '');
 
         Alert.alert(
           t('importDeck.alertSuccessTitle'),
-          `${t('importDeck.alertSuccessMsgWords', { count: inserted })}${
-            skipped > 0 ? t('importDeck.alertSuccessSkipped', { count: skipped }) : ''
-          }`,
+          `${t('importDeck.alertSuccessMsgWords', { count: result.inserted })}${
+            result.skipped > 0 ? t('importDeck.alertSuccessSkipped', { count: result.skipped }) : ''
+          }${mediaStatsMsg}`,
           [
             {
               text: t('importDeck.alertViewDeck'),
               onPress: () => {
-                router.replace(`/deck/${targetDeckId}`);
+                router.replace(`/deck/${result.deckId}`);
               },
             },
           ]
@@ -390,6 +448,7 @@ export default function ImportDeckScreen() {
       Alert.alert(t('common.error'), t('importDeck.alertSaveDbError'));
     } finally {
       setIsProcessing(false);
+      setImportProgress(null);
     }
   };
 
@@ -911,6 +970,29 @@ export default function ImportDeckScreen() {
                   </Text>
                 </View>
 
+                {/* Resumen de multimedia detectada en Anki */}
+                {ankiMediaManifest && (
+                  <View style={[styles.mediaSummaryBox, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}>
+                    <Ionicons name="folder-open-outline" size={20} color={colors.primary} style={{ marginRight: 10, marginTop: 2 }} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.mediaSummaryTitle, { color: colors.text }]}>{t('importDeck.mediaSummaryTitle')}</Text>
+                      <Text style={[styles.mediaSummarySubtitle, { color: colors.textMuted }]}>
+                        {[
+                          ankiMediaManifest.audioCount > 0 ? `🔊 ${t('importDeck.mediaAudioCount', { count: ankiMediaManifest.audioCount })}` : null,
+                          ankiMediaManifest.videoCount > 0 ? `🎬 ${t('importDeck.mediaVideoCount', { count: ankiMediaManifest.videoCount })}` : null,
+                          ankiMediaManifest.imageCount > 0 ? `🖼️ ${t('importDeck.mediaImageCount', { count: ankiMediaManifest.imageCount })}` : null,
+                          `📦 ${(ankiMediaManifest.totalBytes / (1024 * 1024)).toFixed(1)} MB`,
+                        ].filter(Boolean).join('  •  ')}
+                      </Text>
+                      {ankiMediaManifest.missing.length > 0 && (
+                        <Text style={[styles.mediaMissingWarning, { color: colors.danger }]}>
+                          ⚠️ {t('importDeck.mediaMissingInPackage', { count: ankiMediaManifest.missing.length })}
+                        </Text>
+                      )}
+                    </View>
+                  </View>
+                )}
+
                 {/* Muestra de las primeras tarjetas */}
                 <Text style={[styles.previewSampleTitle, { color: colors.text }]}>{t('importDeck.firstWordsLabel')}</Text>
                 {parseResult.items.slice(0, 5).map((item, idx) => (
@@ -931,6 +1013,24 @@ export default function ImportDeckScreen() {
                     </Text>
                   </View>
                 ))}
+
+                {/* Barra de progreso de extracción multimedia */}
+                {importProgress && (
+                  <Animated.View entering={FadeIn} exiting={FadeOut} style={styles.progressContainer}>
+                    <Text style={[styles.progressText, { color: colors.textMuted }]}>{importProgress.text}</Text>
+                    <View style={[styles.progressBarTrack, { backgroundColor: colors.border }]}>
+                      <View
+                        style={[
+                          styles.progressBarFill,
+                          {
+                            backgroundColor: colors.primary,
+                            width: `${Math.round((importProgress.done / Math.max(1, importProgress.total)) * 100)}%`,
+                          },
+                        ]}
+                      />
+                    </View>
+                  </Animated.View>
+                )}
 
                 <TouchableOpacity
                   style={[styles.primaryActionBtn, { backgroundColor: colors.primary, marginTop: Spacing.lg }]}
@@ -1498,5 +1598,47 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 14,
     fontWeight: 'bold',
+  },
+  mediaSummaryBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    padding: Spacing.sm,
+    borderRadius: 14,
+    borderWidth: 1,
+    marginTop: Spacing.xs,
+    marginBottom: Spacing.sm,
+  },
+  mediaSummaryTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  mediaSummarySubtitle: {
+    fontSize: 12,
+  },
+  mediaMissingWarning: {
+    fontSize: 11,
+    marginTop: 4,
+    fontWeight: '500',
+  },
+  progressContainer: {
+    marginTop: Spacing.md,
+    marginBottom: Spacing.xs,
+  },
+  progressText: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  progressBarTrack: {
+    height: 8,
+    borderRadius: 4,
+    overflow: 'hidden',
+    width: '100%',
+  },
+  progressBarFill: {
+    height: '100%',
+    borderRadius: 4,
   },
 });

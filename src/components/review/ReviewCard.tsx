@@ -1,6 +1,10 @@
+import { useMemo } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { Animated, ScrollView, StyleProp, StyleSheet, Text, TextStyle, TouchableOpacity, View } from 'react-native';
-import { speakText } from '../../../lib/audio-service';
+import { speakCard } from '../../../lib/audio-service';
+import { getCardMediaUris, getCardSentenceAudio, isMediaPlaceholder } from '../../../lib/media-service';
+import { CardVideo } from '../media/CardVideo';
+import { CardImage } from '../media/CardImage';
 import { detectTextLanguage, formatJapaneseReading, toNormalizedHiragana } from '../../../lib/japanese-utils';
 import { DueCardWithContext } from '../../../lib/srs-engine';
 import { parseAux } from '../../../lib/word-aux';
@@ -95,7 +99,20 @@ export function ReviewCard({
   const isIdeographic = lang.startsWith('zh') || lang.startsWith('ja');
   const isJapanese = lang.startsWith('ja');
 
-  const { kanjiReadings } = parseAux(currentCard.auxiliaryInfo);
+  const aux = useMemo(() => parseAux(currentCard.auxiliaryInfo), [currentCard.auxiliaryInfo]);
+  const kanjiReadings = aux.kanjiReadings;
+  const frontVideos = useMemo(() => getCardMediaUris(aux, 'video', 'front'), [aux]);
+  const backVideos = useMemo(() => getCardMediaUris(aux, 'video', 'back'), [aux]);
+  const frontImages = useMemo(() => getCardMediaUris(aux, 'image', 'front'), [aux]);
+  const backImages = useMemo(() => getCardMediaUris(aux, 'image', 'back'), [aux]);
+  const sentenceAudio = useMemo(() => getCardSentenceAudio(aux), [aux]);
+
+  const isFrontPlaceholderOnly = useMemo(
+    () =>
+      (frontVideos.length > 0 || frontImages.length > 0) &&
+      isMediaPlaceholder(currentCard.displayText),
+    [frontVideos.length, frontImages.length, currentCard.displayText]
+  );
 
   return (
     <View style={styles.flipContainer}>
@@ -119,34 +136,46 @@ export function ReviewCard({
               <TouchableOpacity
                 style={styles.customCleanSpeakerBtn}
                 activeOpacity={0.7}
-                onPress={() => speakText(currentCard.displayText, detectTextLanguage(currentCard.displayText))}
+                onPress={() => speakCard(currentCard, detectTextLanguage(currentCard.displayText), { side: 'front' })}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
                 <Ionicons name="volume-medium-outline" size={22} color={colors.primary} />
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={styles.customQuestionScroll} contentContainerStyle={styles.customQuestionScrollContent}>
-              <Text style={[styles.customQuestionText, { color: colors.text }]}>
-                {currentCard.displayText}
-              </Text>
-            </ScrollView>
+            {/* Video o Imagen de consigna frontal */}
+            {frontVideos.length > 0 && <CardVideo uri={frontVideos[0]} autoPlay={false} />}
+            {frontImages.length > 0 && <CardImage uri={frontImages[0]} />}
+
+            {!isFrontPlaceholderOnly && (
+              <ScrollView style={styles.customQuestionScroll} contentContainerStyle={styles.customQuestionScrollContent}>
+                <Text style={[styles.customQuestionText, { color: colors.text }]}>
+                  {currentCard.displayText}
+                </Text>
+              </ScrollView>
+            )}
           </View>
         ) : (
           <>
-            <Text
-              style={[
-                isIdeographic ? styles.charIdeographic : styles.charAlphabetic,
-                {
-                  color: colors.text,
-                  fontSize: 38,
-                },
-              ]}
-              numberOfLines={1}
-              adjustsFontSizeToFit={true}
-            >
-              {currentCard.displayText}
-            </Text>
+            {/* Consigna frontal en tarjeta de idioma (ej. listening video/imagen) */}
+            {frontVideos.length > 0 && <CardVideo uri={frontVideos[0]} autoPlay={false} />}
+            {frontImages.length > 0 && <CardImage uri={frontImages[0]} />}
+
+            {!isFrontPlaceholderOnly && (
+              <Text
+                style={[
+                  isIdeographic ? styles.charIdeographic : styles.charAlphabetic,
+                  {
+                    color: colors.text,
+                    fontSize: 38,
+                  },
+                ]}
+                numberOfLines={1}
+                adjustsFontSizeToFit={true}
+              >
+                {currentCard.displayText}
+              </Text>
+            )}
 
             {/* Formulario de Respuestas Modo Clásico (Teclado) aislado para latencia cero */}
             {studyMethod === 'text' && !isChecked && (
@@ -186,7 +215,7 @@ export function ReviewCard({
                 activeOpacity={0.7}
                 onPress={() => {
                   const answer = meaningsList[0] || currentCard.displayMeaning;
-                  speakText(answer, detectTextLanguage(answer));
+                  speakCard(currentCard, detectTextLanguage(answer), { side: 'back' });
                 }}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
@@ -197,6 +226,8 @@ export function ReviewCard({
                 <Text style={[styles.customAnswerText, { color: colors.text }]}>
                   {meaningsList.length > 0 ? meaningsList.join('\n') : currentCard.displayMeaning}
                 </Text>
+                {backImages.length > 0 && <CardImage uri={backImages[0]} />}
+                {isChecked && backVideos.length > 0 && <CardVideo uri={backVideos[0]} />}
               </ScrollView>
             </View>
           </View>
@@ -281,6 +312,24 @@ export function ReviewCard({
               <Text style={[styles.flipBackMeaningText, { color: colors.text }]} numberOfLines={2}>
                 {meaningsList.join(', ')}
               </Text>
+
+              {/* Botón de audio de la oración si existe */}
+              {sentenceAudio && (
+                <TouchableOpacity
+                  style={[styles.sentenceAudioBtn, { backgroundColor: colors.surface }]}
+                  activeOpacity={0.7}
+                  onPress={() => speakCard(currentCard, lang, { role: 'sentence' })}
+                >
+                  <Ionicons name="volume-medium" size={15} color={colors.primary} />
+                  <Text style={[styles.sentenceAudioBtnText, { color: colors.primary }]}>
+                    Audio de ejemplo
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Media complementaria en dorso de tarjeta de idioma */}
+              {backImages.length > 0 && <CardImage uri={backImages[0]} />}
+              {isChecked && backVideos.length > 0 && <CardVideo uri={backVideos[0]} />}
             </View>
           </>
         )}
@@ -493,5 +542,20 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textAlign: 'center',
     lineHeight: 28,
+  },
+  sentenceAudioBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    alignSelf: 'center',
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  sentenceAudioBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginLeft: 4,
   },
 });

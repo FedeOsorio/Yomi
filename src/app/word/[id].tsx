@@ -20,7 +20,10 @@ import { scheduleOnRN } from 'react-native-worklets';
 import { State } from 'ts-fsrs';
 import { db } from '../../../db';
 import { words } from '../../../db/schema';
-import { preloadAudioService, releaseAudioService, speakText, stopSpeech } from '../../../lib/audio-service';
+import { preloadAudioService, speakCard, speakText, stopSpeech } from '../../../lib/audio-service';
+import { getCardMediaUris, getCardSentenceAudio } from '../../../lib/media-service';
+import { CardImage } from '../../components/media/CardImage';
+import { CardVideo } from '../../components/media/CardVideo';
 import { getQuickHskLevel } from '../../../lib/hsk-data';
 import { cleanAndFormatMeanings, extractKanjis, parseFurigana } from '../../../lib/japanese-search';
 import { classifyJapaneseWord, formatJapaneseReading, toNormalizedHiragana } from '../../../lib/japanese-utils';
@@ -419,7 +422,6 @@ export default function WordDetailScreen() {
     return () => {
       isMounted = false;
       stopSpeech();
-      releaseAudioService();
     };
   }, [data?.deck?.languageCode]);
 
@@ -431,7 +433,8 @@ export default function WordDetailScreen() {
       ? rawReading.replace(/\s*\([^)]*\)/g, '').trim()
       : rawReading;
     setIsPlayingAudio(true);
-    speakText(data.word.simplified, lang, cleanReading, {
+    speakCard(data.word, lang, {
+      reading: cleanReading,
       onStart: () => setIsPlayingAudio(true),
       onDone: () => setIsPlayingAudio(false),
       onStopped: () => setIsPlayingAudio(false),
@@ -478,7 +481,7 @@ export default function WordDetailScreen() {
     );
   }
 
-  const { word, deck, srsItem, meaningsList, compoundWords, level, category } = data;
+  const { word, deck, srsItem, level, category } = data;
   const isCustomDeck = deck?.type === 'custom';
   const displayMeaningsList = isCustomDeck
     ? (() => {
@@ -514,6 +517,14 @@ export default function WordDetailScreen() {
     : rawReading;
 
   const parsedAux = parseAux(word.auxiliaryInfo);
+  const frontVideos = useMemo(() => getCardMediaUris(parsedAux, 'video', 'front'), [parsedAux]);
+  const frontImages = useMemo(() => getCardMediaUris(parsedAux, 'image', 'front'), [parsedAux]);
+  const backVideos = useMemo(() => getCardMediaUris(parsedAux, 'video', 'back'), [parsedAux]);
+  const backImages = useMemo(() => getCardMediaUris(parsedAux, 'image', 'back'), [parsedAux]);
+  const sentenceAudio = useMemo(() => getCardSentenceAudio(parsedAux), [parsedAux]);
+  const isFrontPlaceholderOnly =
+    (frontVideos.length > 0 || frontImages.length > 0) &&
+    /^\[(Video|Imagen|Audio)\]$/i.test((word.simplified || '').trim());
 
   const cleanWord = (word.simplified || '').trim();
   const endsWithKanji = /[\u4e00-\u9faf]$/.test(cleanWord);
@@ -679,68 +690,100 @@ export default function WordDetailScreen() {
           <View style={styles.wordSectionContainer}>
             {isCustomDeck ? (
               <View style={styles.customQuestionBox}>
-                <Text style={[styles.customQuestionLabel, { color: colors.textMuted }]}>{t('customCard.questionFront')}:</Text>
-                <Text style={[styles.customQuestionTitle, { color: colors.text }]}>
-                  {word.simplified}
-                </Text>
+                <View style={styles.customQuestionHeaderRow}>
+                  <Text style={[styles.customQuestionLabel, { color: colors.textMuted }]}>{t('customCard.questionFront')}:</Text>
+                  <TouchableOpacity
+                    style={styles.smallAudioBtn}
+                    activeOpacity={0.6}
+                    onPress={handlePlayAudio}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    accessibilityLabel={t('wordDetail.reading')}
+                  >
+                    {!isAudioReady ? (
+                      <ActivityIndicator size="small" color={colors.primary} />
+                    ) : (
+                      <Ionicons
+                        name={isPlayingAudio ? 'volume-high' : 'volume-medium'}
+                        size={18}
+                        color={colors.primary}
+                      />
+                    )}
+                  </TouchableOpacity>
+                </View>
+
+                {frontVideos.length > 0 && <CardVideo uri={frontVideos[0]} autoPlay={false} />}
+                {frontImages.length > 0 && <CardImage uri={frontImages[0]} />}
+
+                {!/^\[(Video|Imagen|Audio)\]$/i.test(word.simplified.trim()) && (
+                  <Text style={[styles.customQuestionTitle, { color: colors.text }]}>
+                    {word.simplified}
+                  </Text>
+                )}
               </View>
             ) : (
               <>
-                <View style={styles.rubyContainer}>
-                  {furiganaPairs.map((pair, idx) => {
-                    const textLen = word.simplified.length;
-                    const fontSize = textLen > 12 ? 20 : textLen > 8 ? 24 : textLen > 5 ? 28 : 32;
-                    return (
-                      <View key={idx} style={styles.rubyPair}>
-                        {pair.furigana ? (
-                          <Text style={[styles.rubyRt, { color: colors.textMuted }]} numberOfLines={1}>
-                            {pair.furigana}
-                          </Text>
-                        ) : (
-                          <View style={{ height: 13 }} />
-                        )}
-                        <Text
-                          style={[
-                            isIdeographic ? styles.mainCharIdeographic : styles.mainCharAlphabetic,
-                            { color: colors.text, fontSize }
-                          ]}
-                        >
-                          {pair.char}
+                {frontVideos.length > 0 && <CardVideo uri={frontVideos[0]} autoPlay={false} />}
+                {frontImages.length > 0 && <CardImage uri={frontImages[0]} />}
+
+                {!isFrontPlaceholderOnly && (
+                  <>
+                    <View style={styles.rubyContainer}>
+                      {furiganaPairs.map((pair, idx) => {
+                        const textLen = word.simplified.length;
+                        const fontSize = textLen > 12 ? 20 : textLen > 8 ? 24 : textLen > 5 ? 28 : 32;
+                        return (
+                          <View key={idx} style={styles.rubyPair}>
+                            {pair.furigana ? (
+                              <Text style={[styles.rubyRt, { color: colors.textMuted }]} numberOfLines={1}>
+                                {pair.furigana}
+                              </Text>
+                            ) : (
+                              <View style={{ height: 13 }} />
+                            )}
+                            <Text
+                              style={[
+                                isIdeographic ? styles.mainCharIdeographic : styles.mainCharAlphabetic,
+                                { color: colors.text, fontSize }
+                              ]}
+                            >
+                              {pair.char}
+                            </Text>
+                          </View>
+                        );
+                      })}
+                    </View>
+
+                    <View style={styles.readingRowContainer}>
+                      {cleanReading && cleanReading !== word.simplified ? (
+                        <Text style={[styles.readingTextBelow, { color: colors.primaryHover }]}>
+                          {cleanReading}
                         </Text>
-                      </View>
-                    );
-                  })}
-                </View>
-
-                <View style={styles.readingRowContainer}>
-                  {cleanReading && cleanReading !== word.simplified ? (
-                    <Text style={[styles.readingTextBelow, { color: colors.primaryHover }]}>
-                      {cleanReading}
-                    </Text>
-                  ) : (
-                    <View style={{ flex: 1 }} />
-                  )}
-
-                  {!isCustomDeck && (
-                    <TouchableOpacity
-                      style={styles.smallAudioBtn}
-                      activeOpacity={0.6}
-                      onPress={handlePlayAudio}
-                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                      accessibilityLabel={t('wordDetail.reading')}
-                    >
-                      {!isAudioReady ? (
-                        <ActivityIndicator size="small" color={colors.primary} />
                       ) : (
-                        <Ionicons
-                          name={isPlayingAudio ? 'volume-high' : 'volume-medium'}
-                          size={18}
-                          color={colors.primary}
-                        />
+                        <View style={{ flex: 1 }} />
                       )}
-                    </TouchableOpacity>
-                  )}
-                </View>
+
+                      {!isCustomDeck && (
+                        <TouchableOpacity
+                          style={styles.smallAudioBtn}
+                          activeOpacity={0.6}
+                          onPress={handlePlayAudio}
+                          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                          accessibilityLabel={t('wordDetail.reading')}
+                        >
+                          {!isAudioReady ? (
+                            <ActivityIndicator size="small" color={colors.primary} />
+                          ) : (
+                            <Ionicons
+                              name={isPlayingAudio ? 'volume-high' : 'volume-medium'}
+                              size={18}
+                              color={colors.primary}
+                            />
+                          )}
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </>
+                )}
 
                 {/* Subtítulos ordenados: Nivel, Categoría, Forma Base */}
                 {(() => {
@@ -986,6 +1029,36 @@ export default function WordDetailScreen() {
                 );
               })}
             </View>
+
+            {/* Media complementaria (dorso) */}
+            {backImages.length > 0 && (
+              <View style={{ marginTop: 12 }}>
+                {backImages.map((uri, idx) => (
+                  <CardImage key={`bimg-${idx}`} uri={uri} />
+                ))}
+              </View>
+            )}
+            {backVideos.length > 0 && (
+              <View style={{ marginTop: 12 }}>
+                {backVideos.map((uri, idx) => (
+                  <CardVideo key={`bvid-${idx}`} uri={uri} />
+                ))}
+              </View>
+            )}
+
+            {/* Botón de audio de la oración / ejemplo si existe */}
+            {sentenceAudio && (
+              <TouchableOpacity
+                style={[styles.sentenceAudioBtn, { backgroundColor: colors.surfaceHighlight }]}
+                activeOpacity={0.7}
+                onPress={() => speakCard(word, lang, { role: 'sentence' })}
+              >
+                <Ionicons name="volume-medium" size={16} color={colors.primary} />
+                <Text style={[styles.sentenceAudioBtnText, { color: colors.primary }]}>
+                  Audio de ejemplo
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
@@ -1481,6 +1554,27 @@ const styles = StyleSheet.create({
   },
   customQuestionBox: {
     paddingVertical: Spacing.xs,
+  },
+  customQuestionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  sentenceAudioBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    alignSelf: 'center',
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  sentenceAudioBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    marginLeft: 6,
   },
   customQuestionLabel: {
     fontSize: 12,

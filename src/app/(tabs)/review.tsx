@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Rating } from 'ts-fsrs';
-import { speakText, stopSpeech } from '../../../lib/audio-service';
+import { speakCard, stopSpeech } from '../../../lib/audio-service';
 import { detectTextLanguage, getEffectiveCardLanguage } from '../../../lib/japanese-utils';
 import { calculateChineseAccuracyScore } from '../../../lib/pinyin-utils';
 import { JLPT_KANJI_READINGS } from '../../../lib/jlpt-data';
@@ -169,7 +169,7 @@ export default function ReviewScreen() {
     if (!currentCard || isChecked || sessionCompleted) return;
     const isCustom = currentCard.deckType === 'custom' || currentCard.languageCode === 'custom' || currentCard.languageCode === 'es-ES';
     if (!isCustom) return;
-    const timer = setTimeout(() => speakText(currentCard.displayText, detectTextLanguage(currentCard.displayText)), 300);
+    const timer = setTimeout(() => speakCard(currentCard, detectTextLanguage(currentCard.displayText), { side: 'front' }), 300);
     return () => clearTimeout(timer);
   }, [currentCard?.id, isChecked, sessionCompleted]);
 
@@ -177,7 +177,7 @@ export default function ReviewScreen() {
 
   const speakCurrentCard = () => {
     if (!currentCard) return;
-    speakText(currentCard.displayText, getEffectiveCardLanguage(currentCard), currentCard.displayReading);
+    speakCard(currentCard, getEffectiveCardLanguage(currentCard), { reading: currentCard.displayReading, side: 'back' });
   };
 
   /** Muestra el dorso con la evaluación y lee la palabra al terminar el giro. */

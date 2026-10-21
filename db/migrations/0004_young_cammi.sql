@@ -1,0 +1,1 @@
+ALTER TABLE `decks` ADD `media_source` text;

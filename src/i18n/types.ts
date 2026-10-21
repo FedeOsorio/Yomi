@@ -107,6 +107,13 @@ export interface TranslationSchema {
     noConjugationsFound: string;
     practiceNow: string;
     generateConjugationsError: string;
+    missingMediaFiles: string;
+    recoverMediaHint: string;
+    recoverMedia: string;
+    noMediaInPackage: string;
+    noMatchingMedia: string;
+    mediaRecoveredSuccess: string;
+    mediaRecoverError: string;
   };
   folders: {
     title: string;
@@ -391,6 +398,7 @@ export interface TranslationSchema {
     localBackup: string;
     localBackupDesc: string;
     lastLocalExport: string;
+    backupMediaNotice: string;
     exportFile: string;
     restoreFile: string;
     aboutYomi: string;
@@ -534,6 +542,16 @@ export interface TranslationSchema {
     alertSuccessSkipped: string;
     alertViewDeck: string;
     alertSaveDbError: string;
+    extractingMediaProgress: string;
+    savingCards: string;
+    mediaImportedCount: string;
+    mediaSkippedCount: string;
+    alertInvalidApkgFormat: string;
+    mediaSummaryTitle: string;
+    mediaAudioCount: string;
+    mediaVideoCount: string;
+    mediaImageCount: string;
+    mediaMissingInPackage: string;
   };
   conjugation: {
     title: string;
@@ -606,5 +624,6 @@ export interface TranslationSchema {
     replaceErrorMsg: string;
     unsupportedFileTitle: string;
     unsupportedFileMsg: string;
+    mediaCountNote: string;
   };
 }

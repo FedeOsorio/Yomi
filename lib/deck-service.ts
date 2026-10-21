@@ -3,6 +3,7 @@ import { decks, words, srsItems, folders } from '../db/schema';
 import * as crypto from 'expo-crypto';
 import { eq, and, sql, asc, isNull } from 'drizzle-orm';
 import { canMoveFolder } from './folder-tree';
+import { cleanOrphanMedia } from './data-repair';
 
 export interface Folder {
   id: string;
@@ -63,6 +64,17 @@ export async function createDeck(
     createdAt: new Date(),
   });
   return id;
+}
+
+/** De qué `.apkg` vino la media de un mazo (para pedirle al usuario ese archivo al recuperarla). */
+export interface DeckMediaSource {
+  file: string;
+  mediaCount: number;
+  importedAt: string;
+}
+
+export async function setDeckMediaSource(deckId: string, source: DeckMediaSource): Promise<void> {
+  await db.update(decks).set({ mediaSource: JSON.stringify(source) }).where(eq(decks.id, deckId));
 }
 
 /** Todas las carpetas, ordenadas entre hermanas. Una carpeta cuyo padre ya no existe se muestra en Inicio. */
@@ -170,6 +182,11 @@ export async function deleteDeck(deckId: string): Promise<void> {
   await db.delete(words).where(eq(words.deckId, deckId));
   // Borrar mazo
   await db.delete(decks).where(eq(decks.id, deckId));
+
+  // Limpiar archivos multimedia huérfanos que pertenecían a las palabras eliminadas
+  cleanOrphanMedia().catch((err) => {
+    console.warn('[deckService.deleteDeck] Error limpiando media huérfana:', err);
+  });
 }
 
 export async function getDefaultDeckId(): Promise<string> {
