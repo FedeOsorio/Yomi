@@ -503,7 +503,17 @@ function yomiShowAnswer(html) {
       : (typedValue ? '<span class="typeBad">' + yomiEscape(typedValue) + '</span><br>' : '') +
         '<span class="typeMissed">' + yomiEscape(want) + '</span>';
   }
-  window.scrollTo(0, 0);
+  // Como Anki: el dorso suele repetir el frente ({{FrontSide}}) y después <hr id=answer>. Se salta hasta ahí
+  // para que se vea la respuesta y no otra vez la imagen o el gif del frente (queda arriba, a un scroll)
+  // Si la tarjeta no entra en la pantalla, se agrega lugar debajo para que la respuesta pueda quedar arriba
+  var answer = document.getElementById('answer');
+  document.body.style.minHeight = '';
+  if (answer && document.documentElement.scrollHeight > window.innerHeight) {
+    document.body.style.minHeight = (answer.getBoundingClientRect().top + window.scrollY + window.innerHeight) + 'px';
+    answer.scrollIntoView({ block: 'start' });
+  } else {
+    window.scrollTo(0, 0);
+  }
   yomiReportHeight();
 }
 /* Alto del contenido, para que la app ajuste el visor (se mide la tarjeta, no el documento:

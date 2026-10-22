@@ -5,6 +5,7 @@ import { db } from '../db';
 import { decks, srsItems, words } from '../db/schema';
 import { getEffectiveCardLanguage, JA_NUMBERS, toNormalizedHiragana, ZH_NUMBERS } from './japanese-utils';
 import { toSearchKey } from './pinyin-utils';
+import { parseAux } from './word-aux';
 
 export { JA_NUMBERS, ZH_NUMBERS };
 export { checkVoiceMatch } from './voice-match';
@@ -39,10 +40,11 @@ export interface DueCardWithContext extends SrsItem {
  * Los mazos viejos sin tipo se guardaban con idioma 'es-ES'.
  */
 /**
- * Palabra japonesa escrita solo con kana (これ, ちょっと, テレビ): leerla en voz alta no evalúa nada, así que
- * la consigna es la traducción y el usuario responde la palabra en japonés. Hace falta un significado que mostrar.
+ * Palabra japonesa escrita solo con kana (これ, ちょっと, テレビ): leerla en voz alta no evalúa nada (la lectura
+ * está a la vista), así que se pregunta qué significa. Se mantiene el sentido del mazo: ver japonés y entenderlo.
+ * Hace falta un significado contra el cual comparar.
  */
-export function asksForJapaneseWord(
+export function asksForMeaning(
   card: Pick<DueCardWithContext, 'deckType' | 'languageCode' | 'displayText' | 'displayMeaning'>
 ): boolean {
   if (isCustomReviewCard(card) || !getEffectiveCardLanguage(card).startsWith('ja')) return false;
@@ -50,6 +52,12 @@ export function asksForJapaneseWord(
   const hasKana = /[\u3040-\u30ff]/.test(text);
   const hasKanji = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff々〆]/.test(text);
   return hasKana && !hasKanji && (card.displayMeaning || '').replace(/[\[\]"\s,]/g, '') !== '';
+}
+
+/** Significados que se aceptan como respuesta (los elegidos en la tarjeta, si los hay). */
+export function getCardMeaningTargets(card: Pick<DueCardWithContext, 'displayMeaning' | 'auxiliaryInfo'>): string {
+  const selected = parseAux(card.auxiliaryInfo).selectedMeanings;
+  return Array.isArray(selected) && selected.length > 0 ? JSON.stringify(selected) : card.displayMeaning;
 }
 
 export function isCustomReviewCard(card: Pick<DueCardWithContext, 'deckType' | 'languageCode'>): boolean {

@@ -30,8 +30,8 @@ interface ReviewCardProps {
   studyMethod: StudyMethod;
   isChecked: boolean;
   isCustomCard: boolean;
-  /** Consigna = traducción; el usuario responde la palabra en japonés (palabras solo en kana) */
-  asksForWord: boolean;
+  /** Se pregunta solo el significado (palabras solo en kana) */
+  asksForMeaning: boolean;
   evaluation: CardEvaluation | null;
   meaningsList: string[];
   colors: Colors;
@@ -90,7 +90,7 @@ export function ReviewCard({
   studyMethod,
   isChecked,
   isCustomCard,
-  asksForWord,
+  asksForMeaning,
   evaluation,
   meaningsList,
   colors,
@@ -121,7 +121,7 @@ export function ReviewCard({
   return (
     <View style={styles.flipContainer}>
       {/* Texto sutil de guía sobre la tarjeta sin badge ni ícono, sin alterar la posición vertical de la tarjeta */}
-      {studyMethod === 'text' && !isChecked && isIdeographic && !asksForWord && (
+      {studyMethod === 'text' && !isChecked && isIdeographic && !asksForMeaning && (
         <Text style={[styles.optionsGuidanceText, { color: colors.textMuted }]}>
           {t('review.answerAnyOption')}
         </Text>
@@ -165,14 +165,7 @@ export function ReviewCard({
             {frontVideos.length > 0 && <CardVideo uri={frontVideos[0]} autoPlay={false} />}
             {frontImages.length > 0 && <CardImage uri={frontImages[0]} />}
 
-            {asksForWord ? (
-              <>
-                <Text style={[styles.promptMeaningText, { color: colors.text }]} numberOfLines={3} adjustsFontSizeToFit>
-                  {meaningsList.length > 0 ? meaningsList.join(', ') : currentCard.displayMeaning}
-                </Text>
-                <Text style={[styles.promptHintText, { color: colors.textMuted }]}>{t('review.answerInJapanese')}</Text>
-              </>
-            ) : !isFrontPlaceholderOnly && (
+            {!isFrontPlaceholderOnly && (
               <Text
                 style={[
                   isIdeographic ? styles.charIdeographic : styles.charAlphabetic,
@@ -188,12 +181,16 @@ export function ReviewCard({
               </Text>
             )}
 
+            {asksForMeaning && studyMethod !== 'text' && !isChecked && (
+              <Text style={[styles.promptHintText, { color: colors.textMuted }]}>{t('review.whatWordMeans')}</Text>
+            )}
+
             {/* Formulario de Respuestas Modo Clásico (Teclado) aislado para latencia cero */}
             {studyMethod === 'text' && !isChecked && (
               <ReviewTextInputSection
                 isIdeographic={isIdeographic}
                 languageCode={lang}
-                readingOnly={asksForWord}
+                meaningOnly={asksForMeaning}
                 onSubmit={onSubmitText}
                 colors={colors}
               />
@@ -350,11 +347,6 @@ export function ReviewCard({
 }
 
 const styles = StyleSheet.create({
-  promptMeaningText: {
-    fontSize: 26,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
   promptHintText: {
     ...Typography.bodySmall,
     marginTop: Spacing.xs,

@@ -88,6 +88,13 @@ export function getCurrentUserLanguage(): SupportedLanguage {
   return useLanguageStore.getState().currentLanguage || getDeviceLanguage();
 }
 
+const SPEECH_LOCALES: Record<string, string> = { es: 'es-ES', en: 'en-US', ja: 'ja-JP', pt: 'pt-BR' };
+
+/** Idioma en que habla el usuario (el de la app), para dictar respuestas en su idioma. */
+export function getUserSpeechLocale(): string {
+  return SPEECH_LOCALES[getCurrentUserLanguage()] ?? 'es-ES';
+}
+
 export { useReactI18next as useTranslation };
 export const t = i18n.t.bind(i18n);
 export default i18n;

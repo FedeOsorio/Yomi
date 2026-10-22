@@ -9,10 +9,17 @@ import { calculateChineseAccuracyScore } from '../../../lib/pinyin-utils';
 import { MODEL_NOT_DOWNLOADED, sherpaVoiceService } from '../../../lib/sherpa-service';
 import { expectedVoiceWords } from '../../../lib/voice-match';
 import { getSpeechEnginePreference, speechService, usesOfflineModel } from '../../../lib/speech-recognition-service';
-import { checkVoiceMatch, DueCardWithContext, isCustomReviewCard } from '../../../lib/srs-engine';
+import {
+  asksForMeaning,
+  checkMeaningMatch,
+  checkVoiceMatch,
+  DueCardWithContext,
+  getCardMeaningTargets,
+  isCustomReviewCard,
+} from '../../../lib/srs-engine';
 import { hasAnkiCardRef } from '../../../lib/word-aux';
 import { CardEvaluation, useReviewStore } from '../../stores/reviewStore';
-import { useTranslation } from '../../i18n';
+import { getUserSpeechLocale, useTranslation } from '../../i18n';
 import type { useAutoAdvance } from './useAutoAdvance';
 import type { useCardFlip } from './useCardFlip';
 
@@ -27,6 +34,15 @@ const DECK_AUDIO_MAX_MS = 20000;
 
 /** Palabras esperadas de la tarjeta: sesgan el reconocedor (pistas del modelo japonés). */
 const getContextualStrings = (card: DueCardWithContext): string[] => expectedVoiceWords(card, getEffectiveCardLanguage(card));
+
+/** Significados como lista (vienen como JSON o separados por comas), para dárselos de pista al reconocedor. */
+const parseMeaningList = (meanings: string): string[] => {
+  try {
+    const parsed = JSON.parse(meanings);
+    if (Array.isArray(parsed)) return parsed.map(String);
+  } catch {}
+  return meanings.split(/[,;、]/).map((m) => m.trim()).filter(Boolean);
+};
 
 /**
  * Repaso manos libres: micrófono, intentos, límite de tiempo, evaluación y paso automático
@@ -262,8 +278,13 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
     }
     let reportedError: string | null = null;
 
+    // Palabra en kana: se responde qué significa, en el idioma del usuario (no se lee en japonés)
+    const meaningMode = asksForMeaning(card);
+    const listenLang = meaningMode ? getUserSpeechLocale() : lang;
+    const meaningTargets = meaningMode ? getCardMeaningTargets(card) : '';
+
     const started = await speechService.start(
-      lang,
+      listenLang,
       {
         onStart: () => {
           if (isStale()) return;
@@ -275,7 +296,7 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
           if (isStale()) return;
 
           // Si el motor transcribe "はい" como alucinación y la tarjeta no lo espera, se ignora para no quemar intentos
-          if (lang.startsWith('ja') && /^(はい|はいはい|はーい)$/.test(transcript.replace(/[\s。、，．！？!?,.:;・~～\-_'"「」『』（）()[\]【】]/g, ''))) {
+          if (!meaningMode && lang.startsWith('ja') && /^(はい|はいはい|はーい)$/.test(transcript.replace(/[\s。、，．！？!?,.:;・~～\-_'"「」『』（）()[\]【】]/g, ''))) {
             const expectsHai = getContextualStrings(card).some((w) => {
               const c = w.replace(/[\s。、，．！？!?,.:;・~～\-_'"「」『』（）()[\]【】]/g, '');
               return c === 'はい' || c === 'はいはい' || c === '灰' || c === '杯' || c === '拝' || c === '配';
@@ -289,7 +310,11 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
           // Probar la transcripción principal y todas las alternativas que entregó el reconocedor
           const candidates = Array.from(new Set([transcript, ...alternatives].filter(Boolean)));
           let matchResult: ReturnType<typeof checkVoiceMatch> | null = null;
-          for (const cand of candidates) {
+          if (meaningMode) {
+            if (candidates.some((cand) => checkMeaningMatch(meaningTargets, cand))) {
+              matchResult = { isMatch: true, heard: transcript } as ReturnType<typeof checkVoiceMatch>;
+            }
+          } else for (const cand of candidates) {
             const res = checkVoiceMatch(card, cand, lang);
             if (res.isMatch) {
               matchResult = res;
@@ -297,8 +322,8 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
             }
           }
 
-          const primaryRes = matchResult || checkVoiceMatch(card, transcript, lang);
-          setSpeechTranscript(primaryRes.heard || transcript);
+          const primaryRes = matchResult || (meaningMode ? null : checkVoiceMatch(card, transcript, lang));
+          setSpeechTranscript(primaryRes?.heard || transcript);
 
           // Si coincide, ¡acierto inmediato! No esperamos a que el reconocedor cierre la elocución
           if (matchResult?.isMatch) {
@@ -330,7 +355,7 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
           setSpeechStatus('idle');
           progressAnim.stopAnimation();
           if (err === MODEL_NOT_DOWNLOADED) {
-            setModelRequiredLang(lang);
+            setModelRequiredLang(listenLang);
             return;
           }
           Alert.alert(t('review.micErrorTitle'), err || t('review.micErrorDefault'));
@@ -347,7 +372,7 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
           }
         },
       },
-      { contextualStrings: getContextualStrings(card) }
+      { contextualStrings: meaningMode ? parseMeaningList(meaningTargets) : getContextualStrings(card) }
     );
 
     if (!started && !isStale()) {

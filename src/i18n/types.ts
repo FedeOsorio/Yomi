@@ -176,8 +176,6 @@ export interface TranslationSchema {
     nextCard: string;
     nextCardNow: string;
     answerAnyOption: string;
-    howSaidInJapanese: string;
-    answerInJapanese: string;
     howPronounced: string;
     whatMeans: string;
     whatWordMeans: string;

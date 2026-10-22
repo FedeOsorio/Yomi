@@ -176,8 +176,6 @@ export const en: TranslationSchema = {
     nextCard: 'Next card',
     nextCardNow: 'Next card now',
     answerAnyOption: 'Answer any of the options',
-    howSaidInJapanese: 'How do you say it in Japanese?',
-    answerInJapanese: 'Answer in Japanese',
     howPronounced: '1. How is it pronounced?',
     whatMeans: '2. What does it mean?',
     whatWordMeans: 'What does this word mean?',

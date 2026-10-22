@@ -30,10 +30,7 @@ import { speechService } from '../../lib/speech-recognition-service';
 import { saveCustomCard, updateCustomCard } from '../../lib/word-service';
 import { useTheme } from '../../providers/ThemeProvider';
 import { Shadows, Spacing, Typography } from '../constants/theme';
-import { getCurrentUserLanguage, useTranslation } from '../i18n';
-
-/** Idioma de la app → idioma del dictado. */
-const DICTATION_LOCALES: Record<string, string> = { es: 'es-ES', en: 'en-US', ja: 'ja-JP', pt: 'pt-BR' };
+import { getUserSpeechLocale, useTranslation } from '../i18n';
 
 const TEXT_AREA_HEIGHT = 132;
 const SWAP_DURATION = 700;
@@ -269,7 +266,7 @@ export function CustomCardModal({
 
     // El dictado sigue el idioma de la app y usa siempre el reconocedor nativo
     // (el modelo offline es solo para evaluar el repaso).
-    await speechService.start(DICTATION_LOCALES[getCurrentUserLanguage()] ?? 'es-ES', {
+    await speechService.start(getUserSpeechLocale(), {
       onResult: (transcript, isFinal) => {
         const trimmed = transcript.trim();
         if (!trimmed) return;

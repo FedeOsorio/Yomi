@@ -21,8 +21,9 @@ import { hasAnkiCardRef, parseAux } from '../../../lib/word-aux';
 import {
   calculateReviewRating,
   checkMeaningMatch,
-  asksForJapaneseWord,
+  asksForMeaning,
   checkReadingMatch,
+  getCardMeaningTargets,
   isCustomReviewCard,
   nextLearnedInterval,
   removeCardFromReview,
@@ -219,9 +220,9 @@ export default function ReviewScreen() {
     }
 
     const { inputReading, inputMeaning } = useReviewStore.getState();
-    // Consigna = traducción: el significado ya se mostró, se evalúa solo la palabra en japonés
-    if (asksForJapaneseWord(currentCard)) {
-      const isCorrect = checkReadingMatch(currentCard.displayReading || currentCard.displayText, inputReading);
+    // Palabra en kana: la lectura está a la vista, se evalúa solo el significado
+    if (asksForMeaning(currentCard)) {
+      const isCorrect = checkMeaningMatch(getCardMeaningTargets(currentCard), inputMeaning);
       revealAnswer({ isReadingCorrect: isCorrect, isMeaningCorrect: isCorrect, computedRating: isCorrect ? Rating.Good : Rating.Again });
       return;
     }
@@ -408,7 +409,7 @@ export default function ReviewScreen() {
         studyMethod={studyMethod}
         isChecked={isChecked}
         isCustomCard={isCustomCard}
-        asksForWord={asksForJapaneseWord(currentCard)}
+        asksForMeaning={asksForMeaning(currentCard)}
         evaluation={evaluation}
         meaningsList={meaningsList}
         colors={colors}
