@@ -19,6 +19,8 @@ interface ReviewBottomBarProps {
   onCustomAction: (action: CustomCardAction) => void;
   /** Días hasta el próximo repaso si se marca "Aprendida" (se muestra debajo del botón). */
   learnedDays: number;
+  /** Horas que va a esperar la tarjeta con "Más tarde" (1 a 12) */
+  laterHours: number;
   // Modo voz
   onVoiceGiveUp: () => void;
   onMarkIncorrect: () => void;
@@ -41,6 +43,7 @@ export function ReviewBottomBar({
   onShowCustomAnswer,
   onCustomAction,
   learnedDays,
+  laterHours,
   onVoiceGiveUp,
   onMarkIncorrect,
   onVoiceNext,
@@ -98,7 +101,7 @@ export function ReviewBottomBar({
                 onPress={() => onCustomAction('later')}
               >
                 <Text style={styles.customChoiceTitle} numberOfLines={1} adjustsFontSizeToFit>{t('review.later')}</Text>
-                <Text style={styles.customChoiceSub}>{t('review.laterSub')}</Text>
+                <Text style={styles.customChoiceSub}>{t('review.laterSub', { count: laterHours })}</Text>
               </TouchableOpacity>
 
               {/* 3. Otro día (Verde Esmeralda) */}

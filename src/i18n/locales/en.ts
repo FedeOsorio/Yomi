@@ -213,7 +213,7 @@ export const en: TranslationSchema = {
     soon: 'Soon',
     soonSub: 'In between',
     later: 'Later',
-    laterSub: 'At the end',
+    laterSub: 'In {{count}}h',
     nextDay: 'Next day',
     nextDaySub: '+1 day',
     learned: 'Learned',

@@ -213,7 +213,7 @@ export const ja: TranslationSchema = {
     soon: 'すぐ',
     soonSub: '途中で再出題',
     later: '後で',
-    laterSub: '最後に出題',
+    laterSub: '{{count}}時間後',
     nextDay: '明日',
     nextDaySub: '+1日後',
     learned: '覚えた',

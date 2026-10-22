@@ -95,8 +95,9 @@ export interface ReviewState {
   saveCardReview: (cardId: string, rating: Rating, wasFailedInSession: boolean) => Promise<void>;
   resetCurrentCardForm: () => void;
   advanceCard: (incrementCount?: boolean) => boolean;
-  reinsertCurrentCardAhead: (offsetMin?: number, offsetMax?: number) => void;
-  reinsertCurrentCardAtEnd: () => void;
+  reinsertCurrentCardAhead: (offsetMin?: number, offsetMax?: number, repeatIfLast?: boolean) => void;
+  /** Actualiza los datos de una tarjeta de la sesión (p. ej. el contador de "Más tarde"). */
+  updateCardAux: (cardId: string, auxiliaryInfo: string | null) => void;
 }
 
 export const useReviewStore = create<ReviewState>((set, get) => ({
@@ -294,31 +295,27 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
     }
   },
 
-  reinsertCurrentCardAhead: (offsetMin = 5, offsetMax = 10) => {
+  reinsertCurrentCardAhead: (offsetMin = 5, offsetMax = 10, repeatIfLast = true) => {
     const { dueCards, currentIndex } = get();
     const currentCard = dueCards[currentIndex];
     if (!currentCard) return;
 
-    const updated = [...dueCards];
-    const remainingCount = updated.length - (currentIndex + 1);
+    const remainingCount = dueCards.length - (currentIndex + 1);
+    // Última tarjeta: sin repeatIfLast no se repite enseguida (sigue vencida y aparece en la próxima sesión)
+    if (remainingCount <= 0 && !repeatIfLast) return;
 
-    if (remainingCount <= 0 || remainingCount <= 5) {
+    const updated = [...dueCards];
+    if (remainingCount < offsetMin) {
       updated.push(currentCard);
     } else {
-      const minOffset = Math.min(offsetMin, remainingCount);
       const maxOffset = Math.min(offsetMax, remainingCount);
-      const offset = Math.floor(Math.random() * (maxOffset - minOffset + 1)) + minOffset;
-      const targetPos = currentIndex + 1 + offset;
-      updated.splice(targetPos, 0, currentCard);
+      const offset = Math.floor(Math.random() * (maxOffset - offsetMin + 1)) + offsetMin;
+      updated.splice(currentIndex + 1 + offset, 0, currentCard);
     }
-
     set({ dueCards: updated });
   },
 
-  reinsertCurrentCardAtEnd: () => {
-    const { dueCards, currentIndex } = get();
-    const currentCard = dueCards[currentIndex];
-    if (!currentCard) return;
-    set({ dueCards: [...dueCards, currentCard] });
+  updateCardAux: (cardId, auxiliaryInfo) => {
+    set({ dueCards: get().dueCards.map((c) => (c.id === cardId ? { ...c, auxiliaryInfo } : c)) });
   },
 }));

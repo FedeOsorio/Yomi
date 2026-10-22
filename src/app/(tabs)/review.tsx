@@ -27,7 +27,10 @@ import {
   isCustomReviewCard,
   nextLearnedInterval,
   removeCardFromReview,
+  rescheduleCardLater,
   rescheduleCardLearned,
+  resetCardLaterHours,
+  nextLaterHours,
   rescheduleCardNextDay,
 } from '../../../lib/srs-engine';
 import { useTheme } from '../../../providers/ThemeProvider';
@@ -94,7 +97,7 @@ export default function ReviewScreen() {
     answerCurrentCard,
     saveCardReview,
     reinsertCurrentCardAhead,
-    reinsertCurrentCardAtEnd,
+    updateCardAux,
   } = useReviewStore.getState();
 
   const flip = useCardFlip();
@@ -284,11 +287,15 @@ export default function ReviewScreen() {
     setTimeout(async () => {
       try {
         if (action === 'soon') {
-          reinsertCurrentCardAhead(10, 20); // entre 10 y 20 tarjetas más adelante, al azar
+          // Reinicia el contador de "Más tarde" y vuelve entre 10 y 25 tarjetas más adelante, al azar
+          const auxiliaryInfo = await resetCardLaterHours(currentCard);
+          if (auxiliaryInfo !== undefined) updateCardAux(cardId, auxiliaryInfo);
+          reinsertCurrentCardAhead(10, 25, false);
           advanceCard(false);
         } else if (action === 'later') {
-          reinsertCurrentCardAtEnd();
-          advanceCard(false);
+          // Sale de la sesión y vuelve en 1, 2… 12 horas (cada "Más tarde" seguido suma una)
+          await rescheduleCardLater(currentCard);
+          advanceCard(true);
         } else if (action === 'next_day') {
           await rescheduleCardNextDay(cardId);
           advanceCard(true);
@@ -525,6 +532,7 @@ export default function ReviewScreen() {
         onShowCustomAnswer={handleShowCustomAnswer}
         onCustomAction={handleCustomCardAction}
         learnedDays={nextLearnedInterval(currentCard.scheduledDays)}
+        laterHours={nextLaterHours(currentCard.auxiliaryInfo)}
         onVoiceGiveUp={() => voice.evaluate(currentCard, false)}
         onMarkIncorrect={voice.markIncorrect}
         onVoiceNext={voice.advance}

@@ -5,7 +5,7 @@ import { db } from '../db';
 import { decks, srsItems, words } from '../db/schema';
 import { getEffectiveCardLanguage, JA_NUMBERS, toNormalizedHiragana, ZH_NUMBERS } from './japanese-utils';
 import { toSearchKey } from './pinyin-utils';
-import { parseAux } from './word-aux';
+import { parseAux, stringifyAux } from './word-aux';
 
 export { JA_NUMBERS, ZH_NUMBERS };
 export { checkVoiceMatch } from './voice-match';
@@ -372,6 +372,42 @@ export async function rescheduleCardLearned(cardId: string): Promise<number> {
     .set({ due, scheduledDays: days, lastReview: new Date() })
     .where(eq(srsItems.id, cardId));
   return days;
+}
+
+/** Tope de "Más tarde": nunca más de 12 horas. */
+export const MAX_LATER_HOURS = 12;
+
+/** Horas de la próxima "Más tarde" de la tarjeta: 1, 2, 3… hasta 12 (cada toque suma una). */
+export function nextLaterHours(auxiliaryInfo: string | null | undefined): number {
+  return Math.min(MAX_LATER_HOURS, (parseAux(auxiliaryInfo).laterHours || 0) + 1);
+}
+
+type LaterCard = Pick<DueCardWithContext, 'id' | 'itemId' | 'auxiliaryInfo'>;
+
+/** Guarda el contador de "Más tarde" en la tarjeta (0 = reiniciado). Devuelve los datos nuevos de la tarjeta. */
+async function saveLaterHours(card: LaterCard, hours: number): Promise<string | null> {
+  const aux = parseAux(card.auxiliaryInfo);
+  if (hours > 0) aux.laterHours = hours;
+  else delete aux.laterHours;
+  const auxiliaryInfo = stringifyAux(aux);
+  await db.update(words).set({ auxiliaryInfo }).where(eq(words.id, card.itemId));
+  return auxiliaryInfo;
+}
+
+/** Opción "Más tarde" para mazos personalizados: la tarjeta sale de la sesión y vuelve en 1, 2… 12 horas. */
+export async function rescheduleCardLater(card: LaterCard): Promise<void> {
+  const hours = nextLaterHours(card.auxiliaryInfo);
+  await db
+    .update(srsItems)
+    .set({ due: new Date(Date.now() + hours * 60 * 60 * 1000), lastReview: new Date() })
+    .where(eq(srsItems.id, card.id));
+  await saveLaterHours(card, hours);
+}
+
+/** "Pronto" reinicia el contador de "Más tarde" de la tarjeta. Devuelve los datos nuevos (undefined si no cambió). */
+export async function resetCardLaterHours(card: LaterCard): Promise<string | null | undefined> {
+  if (!parseAux(card.auxiliaryInfo).laterHours) return undefined;
+  return saveLaterHours(card, 0);
 }
 
 /**

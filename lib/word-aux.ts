@@ -26,6 +26,9 @@ export interface WordAux {
   /** Archivos multimedia asociados a la tarjeta (audio, video, imagen). */
   media?: MediaItem[];
 
+  /** Horas de la última "Más tarde" en un mazo personalizado (1 a 12). Solo "Pronto" lo reinicia. */
+  laterHours?: number;
+
   /** Tarjeta importada de Anki: con esto el visor la dibuja con el diseño del mazo (ver anki-template). */
   anki?: AnkiCardRef;
 
