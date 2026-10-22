@@ -1,4 +1,4 @@
-import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -53,6 +53,7 @@ import { useCardMeanings } from '../../hooks/review/useCardMeanings';
 import { useSessionLifecycle } from '../../hooks/review/useSessionLifecycle';
 import { useVoiceReview } from '../../hooks/review/useVoiceReview';
 import { CardEvaluation, StudyMethod, useReviewStore } from '../../stores/reviewStore';
+import { useSingleNavigation } from '../../hooks/useSingleNavigation';
 
 /**
  * Pestaña Repaso. Muestra el selector de mazos, el resumen al terminar o la sesión activa.
@@ -63,7 +64,8 @@ export default function ReviewScreen() {
   const { t } = useTranslation();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const router = useRouter();
+  // Un solo movimiento por vez: varios toques rápidos no abren pantallas repetidas ni vuelven atrás de más
+  const router = useSingleNavigation();
   const { deckId: paramDeckId } = useLocalSearchParams<{ deckId?: string }>();
 
   const decksList = useReviewStore((s) => s.decksList);

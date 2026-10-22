@@ -49,6 +49,7 @@ import { KanjiStrokeViewer, preloadStrokeSvg } from '../../components/kanji/Kanj
 import { Shadows, Spacing, Typography } from '../../constants/theme';
 import { useTranslation } from '../../i18n';
 import { useDeckBrowseStore } from '../../stores/deckBrowseStore';
+import { useSingleNavigation } from '../../hooks/useSingleNavigation';
 
 // Distancia (px) o velocidad (px/s) horizontal a partir de la cual el deslizamiento cambia de palabra
 const SWIPE_DISTANCE = 80;
@@ -60,6 +61,8 @@ export default function WordDetailScreen() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams();
   const router = useRouter();
+  // Un solo movimiento por vez: varios toques rápidos no abren pantallas repetidas ni vuelven atrás de más
+  const nav = useSingleNavigation();
   const [data, setData] = useState<WordDetailWithRelations | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedKanji, setSelectedKanji] = useState<string | null>(null);
@@ -455,7 +458,7 @@ export default function WordDetailScreen() {
           style: 'destructive',
           onPress: async () => {
             await deleteWord(data.word.id);
-            router.back();
+            nav.back();
           },
         },
       ]
@@ -475,7 +478,7 @@ export default function WordDetailScreen() {
       <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
         <Ionicons name="alert-circle-outline" size={48} color={colors.danger} />
         <Text style={[styles.errorText, { color: colors.danger }]}>No se encontró la palabra.</Text>
-        <TouchableOpacity style={[styles.backButton, { backgroundColor: colors.primary }]} onPress={() => router.back()}>
+        <TouchableOpacity style={[styles.backButton, { backgroundColor: colors.primary }]} onPress={() => nav.back()}>
           <Text style={styles.backButtonText}>Volver</Text>
         </TouchableOpacity>
       </View>
@@ -660,7 +663,7 @@ export default function WordDetailScreen() {
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top + 4 }]}>
       {/* Header superior dinámico Yomi alineado a la izquierda */}
       <View style={[styles.topBar, { borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
+        <TouchableOpacity onPress={() => nav.back()} style={styles.iconBtn}>
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
 

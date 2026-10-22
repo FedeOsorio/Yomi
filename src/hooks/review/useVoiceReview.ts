@@ -1,4 +1,3 @@
-import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Easing } from 'react-native';
 import { Rating } from 'ts-fsrs';
@@ -23,6 +22,7 @@ import { CardEvaluation, useReviewStore } from '../../stores/reviewStore';
 import { getUserSpeechLocale, useTranslation } from '../../i18n';
 import type { useAutoAdvance } from './useAutoAdvance';
 import type { useCardFlip } from './useCardFlip';
+import { useSingleNavigation } from '../useSingleNavigation';
 
 /** Segundos que tiene el usuario para pronunciar cada tarjeta. */
 const VOICE_TIMEOUT_SECONDS = 15;
@@ -51,7 +51,8 @@ const parseMeaningList = (meanings: string): string[] => {
  */
 export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance: ReturnType<typeof useAutoAdvance>) {
   const { t } = useTranslation();
-  const router = useRouter();
+  // Un solo movimiento por vez: varios toques rápidos no abren pantallas repetidas ni vuelven atrás de más
+  const router = useSingleNavigation();
   const isListening = useReviewStore((s) => s.isListening);
   const store = useReviewStore.getState;
   const { setIsListening, setSpeechStatus, setSpeechTranscript, setIsChecked, setEvaluation } = useReviewStore.getState();

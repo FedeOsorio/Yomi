@@ -46,6 +46,7 @@ import {
 import { saveBatchWords, saveBatchCustomCards } from '../../../lib/word-service';
 import { notifyDataChanged } from '../../../lib/backup-service';
 import { getCurrentUserLanguage, useTranslation } from '../../i18n';
+import { useSingleNavigation } from '../../hooks/useSingleNavigation';
 
 /**
  * Un .apkg sólo se agrega a un mazo del mismo tipo: vocabulario (corregido por Yomi) a un mazo de idiomas del
@@ -65,6 +66,8 @@ export default function ImportDeckScreen() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ deckId?: string; type?: string }>();
   const router = useRouter();
+  // Un solo movimiento por vez: varios toques rápidos no abren pantallas repetidas ni vuelven atrás de más
+  const nav = useSingleNavigation();
 
   // Estados de mazos
   const [decks, setDecks] = useState<DeckWithWordCount[]>([]);
@@ -489,7 +492,7 @@ export default function ImportDeckScreen() {
     >
       {/* Header Superior */}
       <View style={[styles.headerRow, { borderBottomColor: colors.border, paddingTop: insets.top + 6 }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+        <TouchableOpacity onPress={() => nav.back()} style={styles.backBtn}>
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <View style={styles.brandTitleContainer}>

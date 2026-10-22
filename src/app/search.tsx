@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -25,13 +25,15 @@ import { saveCustomWord, saveGenericWord, saveWords } from '../../lib/word-servi
 import { useTheme } from '../../providers/ThemeProvider';
 import { Shadows, Spacing, Typography } from '../constants/theme';
 import { getCurrentUserLanguage, useTranslation } from '../i18n';
+import { useSingleNavigation } from '../hooks/useSingleNavigation';
 
 export default function SearchScreen() {
   const { colors } = useTheme();
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ deckId?: string }>();
-  const router = useRouter();
+  // Un solo movimiento por vez: varios toques rápidos no abren pantallas repetidas ni vuelven atrás de más
+  const router = useSingleNavigation();
 
   const [decks, setDecks] = useState<DeckWithWordCount[]>([]);
   const [selectedDeckId, setSelectedDeckId] = useState<string>(params.deckId || '');

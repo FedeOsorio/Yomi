@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
@@ -11,6 +10,7 @@ import { useTheme } from '../../providers/ThemeProvider';
 import { useFolderManager } from '../hooks/useFolderManager';
 import { Shadows, Spacing } from '../constants/theme';
 import { useTranslation } from '../i18n';
+import { useSingleNavigation } from '../hooks/useSingleNavigation';
 
 const INDENT = 18;
 
@@ -18,7 +18,8 @@ export default function FoldersScreen() {
   const { colors } = useTheme();
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
-  const router = useRouter();
+  // Un solo movimiento por vez: varios toques rápidos no abren pantallas repetidas ni vuelven atrás de más
+  const router = useSingleNavigation();
 
   const [folders, setFolders] = useState<Folder[]>([]);
   const [decks, setDecks] = useState<DeckWithWordCount[]>([]);

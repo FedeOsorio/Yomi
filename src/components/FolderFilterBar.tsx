@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation, useRouter } from 'expo-router';
+import { useNavigation } from 'expo-router';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { Dimensions, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Animated, { Easing, FadeIn, FadeOut, LinearTransition, ZoomIn, ZoomOut } from 'react-native-reanimated';
@@ -8,6 +8,7 @@ import { useTheme } from '../../providers/ThemeProvider';
 import { Shadows, Spacing } from '../constants/theme';
 import { useTranslation } from '../i18n';
 import { FolderCard } from './FolderCard';
+import { useSingleNavigation } from '../hooks/useSingleNavigation';
 
 interface FolderFilterBarProps {
   /** Carpetas a mostrar: las hijas de la carpeta abierta (o las de Inicio). */
@@ -34,7 +35,8 @@ export function FolderFilterBar({
   const { t } = useTranslation();
   const { colors } = useTheme();
   const navigation = useNavigation();
-  const router = useRouter();
+  // Un solo movimiento por vez: varios toques rápidos no abren pantallas repetidas ni vuelven atrás de más
+  const router = useSingleNavigation();
 
   const [dropdownVisible, setDropdownVisible] = useState(false);
   const [dropdownCoords, setDropdownCoords] = useState<{ top: number; right: number }>({ top: 60, right: 16 });

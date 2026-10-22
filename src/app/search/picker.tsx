@@ -1,17 +1,19 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { Colors, Spacing, Typography, Shadows } from '../../constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 import { DictionaryEntry } from '../../../lib/search-engine';
 import { getDefaultDeckId } from '../../../lib/deck-service';
 import { saveWords } from '../../../lib/word-service';
 import { useTranslation } from '../../i18n';
+import { useSingleNavigation } from '../../hooks/useSingleNavigation';
 
 export default function PickerScreen() {
   const { t } = useTranslation();
   const { candidates } = useLocalSearchParams();
-  const router = useRouter();
+  // Un solo movimiento por vez: varios toques rápidos no abren pantallas repetidas ni vuelven atrás de más
+  const router = useSingleNavigation();
   const entries: DictionaryEntry[] = candidates ? JSON.parse(candidates as string) : [];
   
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());

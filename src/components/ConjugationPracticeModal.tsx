@@ -26,7 +26,6 @@ import {
 } from '../../lib/japanese-utils';
 import { MODEL_NOT_DOWNLOADED } from '../../lib/sherpa-service';
 import { speechService } from '../../lib/speech-recognition-service';
-import { useRouter } from 'expo-router';
 import { VoiceModelRequiredModal } from './review/VoiceModelRequiredModal';
 import {
   ConjugableWord,
@@ -39,6 +38,7 @@ import {
 import { useTheme } from '../../providers/ThemeProvider';
 import { Shadows, Spacing } from '../constants/theme';
 import { useTranslation } from '../i18n';
+import { useSingleNavigation } from '../hooks/useSingleNavigation';
 
 interface ConjugationPracticeModalProps {
   visible: boolean;
@@ -272,7 +272,8 @@ export function ConjugationPracticeModal({
 }: ConjugationPracticeModalProps) {
   const { colors } = useTheme();
   const { t } = useTranslation();
-  const router = useRouter();
+  // Un solo movimiento por vez: varios toques rápidos no abren pantallas repetidas ni vuelven atrás de más
+  const router = useSingleNavigation();
   const [showModelRequired, setShowModelRequired] = useState(false);
   const insets = useSafeAreaInsets();
 

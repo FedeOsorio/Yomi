@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect } from 'expo-router';
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
   BackHandler,
@@ -44,6 +44,7 @@ import { Shadows, Spacing, Typography } from '../../constants/theme';
 import { FolderFilterBar } from '../../components/FolderFilterBar';
 import { FolderBreadcrumb } from '../../components/folders/FolderBreadcrumb';
 import { useFolderManager } from '../../hooks/useFolderManager';
+import { useSingleNavigation } from '../../hooks/useSingleNavigation';
 import { countDecksRecursive, getChildFolders, getFolderPath } from '../../../lib/folder-tree';
 import { useTranslation } from '../../i18n';
 import { useImportProgressStore } from '../../stores/importProgressStore';
@@ -100,7 +101,8 @@ export default function HomeScreen() {
     );
   };
 
-  const router = useRouter();
+  // Un toque rápido doble sobre un mazo abría dos pantallas iguales
+  const { push: navigate } = useSingleNavigation();
 
   // Cálculo dinámico para garantizar exactamente 16px de separación por encima de la barra en cualquier dispositivo
   const tabBottomMargin = Platform.OS === 'android' ? Math.max(insets.bottom + 4, 8) : Math.max(insets.bottom, 6);
@@ -168,7 +170,7 @@ export default function HomeScreen() {
 
   const handleOpenSearch = () => {
     setMenuVisible(false);
-    router.push('/search');
+    navigate('/search');
   };
 
   const handleOpenCreateModal = () => {
@@ -200,7 +202,7 @@ export default function HomeScreen() {
       setNewDeckName('');
       closeCreateModal();
       await fetchDecks();
-      router.push(`/deck/${newId}`);
+      navigate(`/deck/${newId}`);
     } catch (e) {
       Alert.alert(t('common.error'), t('decks.alertCreateError'));
     } finally {
@@ -312,7 +314,7 @@ export default function HomeScreen() {
                   <TouchableOpacity
                     style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
                     activeOpacity={0.7}
-                    onPress={() => router.push(`/deck/${item.id}`)}
+                    onPress={() => navigate(`/deck/${item.id}`)}
                     onLongPress={() => handleDeckLongPress(item)}
                   >
                     <View style={styles.cardContent}>
@@ -442,7 +444,7 @@ export default function HomeScreen() {
               style={[styles.menuOption, { borderBottomWidth: 0 }]}
               onPress={() => {
                 setMenuVisible(false);
-                router.push('/deck/import');
+                navigate('/deck/import');
               }}
             >
               <View style={[styles.menuIconBox, { backgroundColor: '#8B5CF6' }]}>

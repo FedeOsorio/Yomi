@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { eq } from 'drizzle-orm';
-import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { memo, useCallback, useDeferredValue, useMemo, useState } from 'react';
 import { Alert, ActivityIndicator, Modal, Platform, Pressable, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
@@ -26,6 +26,7 @@ import { Shadows, Spacing, Typography } from '../../constants/theme';
 import { useTranslation } from '../../i18n';
 import { useImportProgressStore } from '../../stores/importProgressStore';
 import { useDeckBrowseStore } from '../../stores/deckBrowseStore';
+import { useSingleNavigation } from '../../hooks/useSingleNavigation';
 
 // Minúsculas y sin tildes latinas (á, ü, tonos del pinyin). Se recompone con NFC para no perder el dakuten (が ≠ か).
 const normalizeForSearch = (text: string) =>
@@ -159,7 +160,8 @@ export default function DeckDetailScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const router = useRouter();
+  // Un solo movimiento por vez: varios toques rápidos no abren pantallas repetidas ni vuelven atrás de más
+  const router = useSingleNavigation();
   const [deckWords, setDeckWords] = useState<any[]>([]);
   const [deckInfo, setDeckInfo] = useState<any>(null);
   const [conjugationModalVisible, setConjugationModalVisible] = useState(false);
