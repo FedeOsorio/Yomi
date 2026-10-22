@@ -452,6 +452,9 @@ ${options.colors ? `html, body { background: ${options.colors.background} !impor
 body { margin: 0; padding: 12px; }
 .replay-button { display: inline-block; vertical-align: middle; color: inherit; text-decoration: none; }
 .yomi-video { display: block; max-width: 100%; margin: 8px auto; }
+/* Imágenes al ancho de la pantalla (como en Anki): las del mazo suelen ser más grandes y había que achicarlas
+   a mano. !important porque el CSS del mazo, que va después, suele fijarles un ancho en píxeles */
+img { max-width: 100% !important; height: auto !important; }
 .typeGood { color: #10b981; } .typeBad { color: #ef4444; text-decoration: line-through; } .typeMissed { color: #10b981; }
 .typeans { font-size: 1.1em; width: 90%; }
 </style>

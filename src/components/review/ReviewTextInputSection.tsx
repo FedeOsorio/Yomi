@@ -7,6 +7,8 @@ import { useTranslation } from '../../i18n';
 export interface ReviewTextInputSectionProps {
   isIdeographic: boolean;
   languageCode?: string;
+  /** La consigna es la traducción: solo se escribe la palabra en japonés (sin campo de significado) */
+  readingOnly?: boolean;
   onSubmit?: () => void;
   colors: {
     text: string;
@@ -25,6 +27,7 @@ export interface ReviewTextInputSectionProps {
 export const ReviewTextInputSection = memo(function ReviewTextInputSection({
   isIdeographic,
   languageCode,
+  readingOnly = false,
   onSubmit,
   colors,
 }: ReviewTextInputSectionProps) {
@@ -52,7 +55,7 @@ export const ReviewTextInputSection = memo(function ReviewTextInputSection({
         <View style={styles.inputGroup}>
           <View style={styles.labelRow}>
             <Text style={[styles.inputLabel, { color: colors.text }]}>
-              {t('review.howPronounced')}
+              {readingOnly ? t('review.howSaidInJapanese') : t('review.howPronounced')}
             </Text>
           </View>
           <TextInput
@@ -72,13 +75,14 @@ export const ReviewTextInputSection = memo(function ReviewTextInputSection({
             onBlur={() => setFocusedField(null)}
             autoCapitalize="none"
             autoCorrect={false}
-            returnKeyType="next"
-            onSubmitEditing={() => meaningInputRef.current?.focus()}
+            returnKeyType={readingOnly ? 'done' : 'next'}
+            onSubmitEditing={readingOnly ? onSubmit : () => meaningInputRef.current?.focus()}
             blurOnSubmit={false}
           />
         </View>
       )}
 
+      {!readingOnly && (
       <View style={styles.inputGroup}>
         <View style={styles.labelRow}>
           <Text style={[styles.inputLabel, { color: colors.text }]}>
@@ -106,6 +110,7 @@ export const ReviewTextInputSection = memo(function ReviewTextInputSection({
           onSubmitEditing={onSubmit}
         />
       </View>
+      )}
     </View>
   );
 });

@@ -1,5 +1,5 @@
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -21,7 +21,9 @@ import { hasAnkiCardRef, parseAux } from '../../../lib/word-aux';
 import {
   calculateReviewRating,
   checkMeaningMatch,
+  asksForJapaneseWord,
   checkReadingMatch,
+  isCustomReviewCard,
   nextLearnedInterval,
   removeCardFromReview,
   rescheduleCardLearned,
@@ -103,6 +105,9 @@ export default function ReviewScreen() {
 
   // Práctica de conjugaciones (se abre desde el modal de opciones)
   const [conjugationDeck, setConjugationDeck] = useState<{ id: string; name: string } | null>(null);
+  // Desplazamiento hasta el dorso del mazo de Anki cuando aparece (queda debajo de la tarjeta de Yomi)
+  const cardScrollRef = useRef<ScrollView>(null);
+  const cardScrollHeight = useRef(0);
 
   // ───────────── Sesión ─────────────
 
@@ -170,8 +175,7 @@ export default function ReviewScreen() {
   // Tarjetas personalizadas: leer la pregunta en voz alta al mostrarla
   useEffect(() => {
     if (!currentCard || isChecked || sessionCompleted) return;
-    const isCustom = currentCard.deckType === 'custom' || currentCard.languageCode === 'custom' || currentCard.languageCode === 'es-ES';
-    if (!isCustom || hasAnkiCardRef(currentCard.auxiliaryInfo)) return;
+    if (!isCustomReviewCard(currentCard) || hasAnkiCardRef(currentCard.auxiliaryInfo)) return;
     const timer = setTimeout(() => speakCard(currentCard, detectTextLanguage(currentCard.displayText), { side: 'front' }), 300);
     return () => clearTimeout(timer);
   }, [currentCard?.id, isChecked, sessionCompleted]);
@@ -215,6 +219,12 @@ export default function ReviewScreen() {
     }
 
     const { inputReading, inputMeaning } = useReviewStore.getState();
+    // Consigna = traducción: el significado ya se mostró, se evalúa solo la palabra en japonés
+    if (asksForJapaneseWord(currentCard)) {
+      const isCorrect = checkReadingMatch(currentCard.displayReading || currentCard.displayText, inputReading);
+      revealAnswer({ isReadingCorrect: isCorrect, isMeaningCorrect: isCorrect, computedRating: isCorrect ? Rating.Good : Rating.Again });
+      return;
+    }
     const isReadingCorrect = isIdeographic
       ? checkReadingMatch(currentCard.displayReading, inputReading) ||
       (altKanjiReadings ? checkReadingMatch(altKanjiReadings, inputReading) : false)
@@ -377,16 +387,19 @@ export default function ReviewScreen() {
   }
 
   // Sesión activa
-  const isCustomCard =
-    currentCard.deckType === 'custom' ||
-    currentCard.languageCode === 'custom' ||
-    (currentCard.deckType !== 'language' && currentCard.languageCode === 'es-ES');
+  const isCustomCard = isCustomReviewCard(currentCard);
   const lang = getEffectiveCardLanguage(currentCard);
   const accent = isCustomCard ? '#10B981' : colors.primary;
   const isVoice = studyMethod === 'voice';
 
   const yomiCard = (
-    <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+    <ScrollView
+      ref={cardScrollRef}
+      contentContainerStyle={styles.scrollContainer}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+      onLayout={(e) => (cardScrollHeight.current = e.nativeEvent.layout.height)}
+    >
       {isVoice && <VoiceTranscriptArea card={currentCard} isChecked={isChecked} feedback={voice.feedback} colors={colors} />}
 
       <ReviewCard
@@ -395,6 +408,7 @@ export default function ReviewScreen() {
         studyMethod={studyMethod}
         isChecked={isChecked}
         isCustomCard={isCustomCard}
+        asksForWord={asksForJapaneseWord(currentCard)}
         evaluation={evaluation}
         meaningsList={meaningsList}
         colors={colors}
@@ -426,7 +440,13 @@ export default function ReviewScreen() {
 
       {/* Dorso del mazo de Anki (oración, imagen, audios…) como contexto, se acierte o no */}
       {isChecked && !isCustomCard && hasAnkiCardRef(currentCard.auxiliaryInfo) && (
-        <View style={styles.deckContext}>
+        <View
+          style={styles.deckContext}
+          // Al aparecer, subirlo hasta la mitad de la pantalla: se ve que hay más sin perder la respuesta de vista
+          onLayout={(e) =>
+            cardScrollRef.current?.scrollTo({ y: Math.max(0, e.nativeEvent.layout.y - cardScrollHeight.current / 2), animated: true })
+          }
+        >
           <AnkiCardView
             key={`context-${currentCard.id}`}
             deckId={currentCard.deckId}

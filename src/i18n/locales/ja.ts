@@ -176,6 +176,8 @@ export const ja: TranslationSchema = {
     nextCard: '次のカード',
     nextCardNow: '今すぐ次のカード',
     answerAnyOption: 'いずれかの項目に回答してください',
+    howSaidInJapanese: '日本語で何と言いますか？',
+    answerInJapanese: '日本語で答えてください',
     howPronounced: '1. 読み方は？',
     whatMeans: '2. 意味は？',
     whatWordMeans: 'この単語の意味は？',

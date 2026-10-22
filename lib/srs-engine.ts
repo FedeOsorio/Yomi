@@ -3,7 +3,7 @@ import * as crypto from 'expo-crypto';
 import { Card, createEmptyCard, fsrs, generatorParameters, Rating, State } from 'ts-fsrs';
 import { db } from '../db';
 import { decks, srsItems, words } from '../db/schema';
-import { JA_NUMBERS, toNormalizedHiragana, ZH_NUMBERS } from './japanese-utils';
+import { getEffectiveCardLanguage, JA_NUMBERS, toNormalizedHiragana, ZH_NUMBERS } from './japanese-utils';
 import { toSearchKey } from './pinyin-utils';
 
 export { JA_NUMBERS, ZH_NUMBERS };
@@ -32,6 +32,28 @@ export interface DueCardWithContext extends SrsItem {
   deckType?: 'language' | 'custom' | null;
   auxiliaryInfo?: string | null;
   wordMeanings?: string | null;
+}
+
+/**
+ * Tarjeta de un mazo personalizado: se repasa con autoevaluación (botones), nunca por voz ni escritura.
+ * Los mazos viejos sin tipo se guardaban con idioma 'es-ES'.
+ */
+/**
+ * Palabra japonesa escrita solo con kana (これ, ちょっと, テレビ): leerla en voz alta no evalúa nada, así que
+ * la consigna es la traducción y el usuario responde la palabra en japonés. Hace falta un significado que mostrar.
+ */
+export function asksForJapaneseWord(
+  card: Pick<DueCardWithContext, 'deckType' | 'languageCode' | 'displayText' | 'displayMeaning'>
+): boolean {
+  if (isCustomReviewCard(card) || !getEffectiveCardLanguage(card).startsWith('ja')) return false;
+  const text = (card.displayText || '').trim();
+  const hasKana = /[\u3040-\u30ff]/.test(text);
+  const hasKanji = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff々〆]/.test(text);
+  return hasKana && !hasKanji && (card.displayMeaning || '').replace(/[\[\]"\s,]/g, '') !== '';
+}
+
+export function isCustomReviewCard(card: Pick<DueCardWithContext, 'deckType' | 'languageCode'>): boolean {
+  return card.deckType === 'custom' || card.languageCode === 'custom' || (card.deckType !== 'language' && card.languageCode === 'es-ES');
 }
 
 /**

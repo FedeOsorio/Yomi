@@ -30,6 +30,8 @@ interface ReviewCardProps {
   studyMethod: StudyMethod;
   isChecked: boolean;
   isCustomCard: boolean;
+  /** Consigna = traducción; el usuario responde la palabra en japonés (palabras solo en kana) */
+  asksForWord: boolean;
   evaluation: CardEvaluation | null;
   meaningsList: string[];
   colors: Colors;
@@ -88,6 +90,7 @@ export function ReviewCard({
   studyMethod,
   isChecked,
   isCustomCard,
+  asksForWord,
   evaluation,
   meaningsList,
   colors,
@@ -118,7 +121,7 @@ export function ReviewCard({
   return (
     <View style={styles.flipContainer}>
       {/* Texto sutil de guía sobre la tarjeta sin badge ni ícono, sin alterar la posición vertical de la tarjeta */}
-      {studyMethod === 'text' && !isChecked && isIdeographic && (
+      {studyMethod === 'text' && !isChecked && isIdeographic && !asksForWord && (
         <Text style={[styles.optionsGuidanceText, { color: colors.textMuted }]}>
           {t('review.answerAnyOption')}
         </Text>
@@ -162,7 +165,14 @@ export function ReviewCard({
             {frontVideos.length > 0 && <CardVideo uri={frontVideos[0]} autoPlay={false} />}
             {frontImages.length > 0 && <CardImage uri={frontImages[0]} />}
 
-            {!isFrontPlaceholderOnly && (
+            {asksForWord ? (
+              <>
+                <Text style={[styles.promptMeaningText, { color: colors.text }]} numberOfLines={3} adjustsFontSizeToFit>
+                  {meaningsList.length > 0 ? meaningsList.join(', ') : currentCard.displayMeaning}
+                </Text>
+                <Text style={[styles.promptHintText, { color: colors.textMuted }]}>{t('review.answerInJapanese')}</Text>
+              </>
+            ) : !isFrontPlaceholderOnly && (
               <Text
                 style={[
                   isIdeographic ? styles.charIdeographic : styles.charAlphabetic,
@@ -183,6 +193,7 @@ export function ReviewCard({
               <ReviewTextInputSection
                 isIdeographic={isIdeographic}
                 languageCode={lang}
+                readingOnly={asksForWord}
                 onSubmit={onSubmitText}
                 colors={colors}
               />
@@ -339,6 +350,16 @@ export function ReviewCard({
 }
 
 const styles = StyleSheet.create({
+  promptMeaningText: {
+    fontSize: 26,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  promptHintText: {
+    ...Typography.bodySmall,
+    marginTop: Spacing.xs,
+    textAlign: 'center',
+  },
   flipContainer: {
     width: '100%',
     position: 'relative',

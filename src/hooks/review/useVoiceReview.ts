@@ -9,7 +9,7 @@ import { calculateChineseAccuracyScore } from '../../../lib/pinyin-utils';
 import { MODEL_NOT_DOWNLOADED, sherpaVoiceService } from '../../../lib/sherpa-service';
 import { expectedVoiceWords } from '../../../lib/voice-match';
 import { getSpeechEnginePreference, speechService, usesOfflineModel } from '../../../lib/speech-recognition-service';
-import { checkVoiceMatch, DueCardWithContext } from '../../../lib/srs-engine';
+import { checkVoiceMatch, DueCardWithContext, isCustomReviewCard } from '../../../lib/srs-engine';
 import { hasAnkiCardRef } from '../../../lib/word-aux';
 import { CardEvaluation, useReviewStore } from '../../stores/reviewStore';
 import { useTranslation } from '../../i18n';
@@ -395,7 +395,9 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
       const state = store();
       // advanceCard() no mueve el índice en la última tarjeta: no volver a abrir el micrófono
       const next = state.sessionCompleted ? null : state.getCurrentCard();
-      if (next) {
+      // Las tarjetas personalizadas se responden con los botones: abrir el micrófono ahí hacía que el
+      // audio del propio mazo (que dice la palabra) se diera por respuesta y pasara tarjetas solo
+      if (next && !isCustomReviewCard(next)) {
         // Pausa breve de 120ms para purgar cualquier eco de altavoz o sintetizador antes de abrir el micrófono
         setTimeout(() => {
           startListening(next, getEffectiveCardLanguage(next));

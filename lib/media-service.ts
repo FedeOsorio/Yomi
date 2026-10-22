@@ -148,6 +148,8 @@ let activePlayer: any = null;
 let activeSubscription: any = null;
 let activeOptions: SpeakOptions | null = null;
 let isAudioModeConfigured = false;
+/** Sube con cada stopMediaAudio: una reproducción que todavía estaba preparándose ya no debe sonar. */
+let playGeneration = 0;
 
 /**
  * expo-audio es un módulo nativo nuevo: se carga recién al reproducir, así un binario
@@ -180,8 +182,14 @@ async function ensureAudioModeAsync(): Promise<void> {
  */
 export async function playMediaAudio(uri: string, opts?: SpeakOptions): Promise<boolean> {
   stopMediaAudio();
+  const generation = playGeneration;
   try {
     await ensureAudioModeAsync();
+    // Se detuvo (se pasó de tarjeta, sonó otra cosa) mientras se preparaba: no suena tarde sobre otra tarjeta
+    if (generation !== playGeneration) {
+      opts?.onStopped?.();
+      return true;
+    }
     const player = loadExpoAudio().createAudioPlayer({ uri });
     activePlayer = player;
     activeOptions = opts ?? null;
@@ -235,6 +243,7 @@ export function playMediaSequence(uris: string[], onComplete?: () => void): void
  * Detiene inmediatamente cualquier reproducción de audio multimedia activa y libera el reproductor.
  */
 export function stopMediaAudio(): void {
+  playGeneration++;
   const prevOpts = activeOptions;
   activeOptions = null;
 

@@ -567,18 +567,25 @@ export async function extractAnkiPackageAsync(
     const cardOrdsByNote = new Map<number, number[]>();
     for (const c of cards) cardOrdsByNote.set(c.noteId, [...(cardOrdsByNote.get(c.noteId) ?? []), c.ord]);
 
-    const fieldNamesByModel = new Map([...noteTypes].map(([id, t]) => [id, t.fieldNames]));
-    const parsed = parseAnkiNotes(notes, fieldNamesByModel, deckName, preferredLanguage, cardOrdsByNote);
-    const mode: AnkiPackageExtractResult['mode'] = parsed.vocabularyDetected ? 'vocabulary' : 'anki';
-    const { items, referencedMedia } =
-      mode === 'vocabulary' ? parsed : buildAnkiCardItems(cards, notes, noteTypes, deckName);
-
     // Tipos de nota que se usan, y los archivos que pide su diseño (fuentes, CSS importado…)
     const usedTypes: Record<string, AnkiNoteType> = {};
     for (const note of notes) {
       const type = noteTypes.get(note.mid);
       if (type) usedTypes[String(note.mid)] = type;
     }
+
+    // Un diseño con JavaScript propio arma su propia dinámica de estudio: va a un mazo personalizado
+    // con su diseño, aunque tenga palabra, lectura y significado (la tarjeta de Yomi y la del mazo a la vez
+    // no se entienden)
+    const hasOwnLogic = Object.values(usedTypes).some((type) =>
+      type.templates.some((template) => /<script\b/i.test(template.qfmt + template.afmt))
+    );
+    const fieldNamesByModel = new Map([...noteTypes].map(([id, t]) => [id, t.fieldNames]));
+    const parsed = parseAnkiNotes(notes, fieldNamesByModel, deckName, preferredLanguage, cardOrdsByNote);
+    const mode: AnkiPackageExtractResult['mode'] = parsed.vocabularyDetected && !hasOwnLogic ? 'vocabulary' : 'anki';
+    const { items, referencedMedia } =
+      mode === 'vocabulary' ? parsed : buildAnkiCardItems(cards, notes, noteTypes, deckName);
+
     const designFiles = new Set(Object.values(usedTypes).flatMap(noteTypeMediaFiles));
 
     // Índice de media: nombre real -> entrada del zip
