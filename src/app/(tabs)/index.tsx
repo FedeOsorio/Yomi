@@ -287,7 +287,8 @@ export default function HomeScreen() {
               paddingTop: visibleFolders.length > 0 ? 0 : Spacing.md,
               paddingBottom: Math.max(tabBottomMargin + 64, 80),
             }}
-            style={{ flex: 1, overflow: 'visible' }}
+            // Sin overflow visible: los mazos se cortan en el borde de la fila de carpetas (que es translúcida)
+            style={{ flex: 1 }}
           >
             {displayedDecks.map((item) => {
               const isCustom = item.type === 'custom';
@@ -300,7 +301,6 @@ export default function HomeScreen() {
                   key={item.id}
                   layout={LinearTransition.duration(220)}
                   exiting={FadeOut.duration(160)}
-                  style={{ overflow: 'visible' }}
                 >
                   <TouchableOpacity
                     style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
