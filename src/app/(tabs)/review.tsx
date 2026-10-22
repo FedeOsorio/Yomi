@@ -461,6 +461,7 @@ export default function ReviewScreen() {
             auxiliaryInfo={currentCard.auxiliaryInfo}
             side="answer"
             autoHeight
+            languageContext
             onAutoplayDone={isVoice ? voice.deckAudioDone : undefined}
           />
         </View>

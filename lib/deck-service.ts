@@ -77,6 +77,18 @@ export interface DeckMediaSource {
   importedAt: string;
 }
 
+/** Mazos de idioma: qué se responde en el repaso. null = la lectura (lo de siempre). */
+export type DeckAnswerMode = 'reading' | 'meaning';
+
+export async function getDeckAnswerMode(deckId: string): Promise<DeckAnswerMode> {
+  const rows = await db.select({ mode: decks.answerMode }).from(decks).where(eq(decks.id, deckId)).limit(1);
+  return rows[0]?.mode === 'meaning' ? 'meaning' : 'reading';
+}
+
+export async function setDeckAnswerMode(deckId: string, mode: DeckAnswerMode): Promise<void> {
+  await db.update(decks).set({ answerMode: mode }).where(eq(decks.id, deckId));
+}
+
 export async function setDeckMediaSource(deckId: string, source: DeckMediaSource): Promise<void> {
   await db.update(decks).set({ mediaSource: JSON.stringify(source) }).where(eq(decks.id, deckId));
 }

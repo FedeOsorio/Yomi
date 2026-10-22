@@ -28,6 +28,10 @@ export const decks = sqliteTable('decks', {
   mediaSource: text('media_source'),
   // Tipos de nota de un mazo importado de Anki (plantillas, CSS, campos), JSON: { [mid]: AnkiNoteType }
   ankiNoteTypes: text('anki_note_types'),
+  // Mazos de idioma: qué se responde en el repaso. 'reading' (o null) = la lectura en japonés/chino;
+  // 'meaning' = el significado (mazos cuyo frente ya muestra la lectura). Lo fija la importación y el usuario
+  // puede cambiarlo en las opciones del mazo
+  answerMode: text('answer_mode', { enum: ['reading', 'meaning'] }),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
 

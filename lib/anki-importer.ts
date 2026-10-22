@@ -22,6 +22,9 @@ import {
   isZstd,
   parseAnkiFuriganaSyntax,
   parseAnkiNotes,
+  AnswerMode,
+  buildFieldPlan,
+  detectAnswerMode,
   ParsedVocabularyItem,
   prepareAnkiCollection,
 } from './anki-collection';
@@ -423,6 +426,8 @@ export interface AnkiPackageExtractResult {
    * 'anki': cualquier otro; cada tarjeta se muestra con el diseño del mazo y el usuario decide cuándo vuelve.
    */
   mode: 'vocabulary' | 'anki';
+  /** Mazos de vocabulario: qué se responde en el repaso (lectura o significado), según el frente del mazo */
+  answerMode?: AnswerMode;
   items: ParsedVocabularyItem[];
   totalNotes: number;
   /** Tipos de nota que usan las notas (plantillas, CSS y campos), por id */
@@ -586,6 +591,28 @@ export async function extractAnkiPackageAsync(
     const { items, referencedMedia } =
       mode === 'vocabulary' ? parsed : buildAnkiCardItems(cards, notes, noteTypes, deckName);
 
+    // Mazo de vocabulario: qué se responde, según lo que muestra el frente de su tarjeta más usada
+    let answerMode: AnswerMode | undefined;
+    if (mode === 'vocabulary') {
+      const notesPerModel = new Map<number, number>();
+      for (const note of notes) notesPerModel.set(note.mid, (notesPerModel.get(note.mid) ?? 0) + 1);
+      const mainModel = [...notesPerModel.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+      const mainType = mainModel !== undefined ? noteTypes.get(mainModel) : undefined;
+      if (mainType) {
+        const mainNoteIds = new Set(notes.filter((n) => n.mid === mainModel).map((n) => n.id));
+        const cardsPerOrd = new Map<number, number>();
+        for (const c of cards) if (mainNoteIds.has(c.noteId)) cardsPerOrd.set(c.ord, (cardsPerOrd.get(c.ord) ?? 0) + 1);
+        const mainOrd = [...cardsPerOrd.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 0;
+        answerMode = detectAnswerMode(
+          mainType.templates[mainOrd]?.qfmt ?? mainType.templates[0]?.qfmt ?? '',
+          mainType.fieldNames,
+          buildFieldPlan(mainType.fieldNames, preferredLanguage),
+          notes.filter((n) => n.mid === mainModel).map((n) => n.flds.split('\x1f')),
+          parsed.languageCode
+        );
+      }
+    }
+
     const designFiles = new Set(Object.values(usedTypes).flatMap(noteTypeMediaFiles));
 
     // Índice de media: nombre real -> entrada del zip
@@ -631,6 +658,7 @@ export async function extractAnkiPackageAsync(
       languageCode: parsed.languageCode,
       deckType: mode === 'vocabulary' ? 'language' : 'custom',
       mode,
+      answerMode,
       items,
       totalNotes: items.length,
       noteTypes: usedTypes,

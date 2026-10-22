@@ -4,6 +4,7 @@ import { Alert, Animated, Easing } from 'react-native';
 import { Rating } from 'ts-fsrs';
 import { speakCard, stopSpeech } from '../../../lib/audio-service';
 import { getEffectiveCardLanguage } from '../../../lib/japanese-utils';
+import { detectMeaningLocale } from '../../../lib/meaning-language';
 import { registerWordInDictionary } from '../../../lib/phonetic-dictionary';
 import { calculateChineseAccuracyScore } from '../../../lib/pinyin-utils';
 import { MODEL_NOT_DOWNLOADED, sherpaVoiceService } from '../../../lib/sherpa-service';
@@ -76,6 +77,21 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
   // Espera de los audios del dorso del mazo (tarjetas de Anki): done arranca la cuenta para avanzar,
   // cancel la descarta (se pasó de tarjeta o se cortó la sesión antes de que terminaran)
   const deckAudioWaitRef = useRef<{ done: () => void; cancel: () => void } | null>(null);
+  // Idioma de los significados de cada mazo (se calcula una vez por mazo con todas sus tarjetas de la sesión)
+  const meaningLocaleByDeck = useRef(new Map<string, string>());
+
+  /** Idioma en que se responde el significado: el de los significados del mazo, o el de la app si no se distingue. */
+  const meaningSpeechLocale = (card: DueCardWithContext): string => {
+    const deckKey = card.deckId ?? '';
+    const cached = meaningLocaleByDeck.current.get(deckKey);
+    if (cached) return cached;
+    const meanings = store()
+      .dueCards.filter((c) => (c.deckId ?? '') === deckKey)
+      .map((c) => getCardMeaningTargets(c));
+    const locale = detectMeaningLocale(meanings) ?? getUserSpeechLocale();
+    meaningLocaleByDeck.current.set(deckKey, locale);
+    return locale;
+  };
 
   /** Cancela la cuenta para avanzar y la espera de los audios del mazo, que la arrancaría después. */
   const cancelAdvance = () => {
@@ -237,13 +253,18 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
     setEvaluation({ ...evaluation, isReadingCorrect: false, isMeaningCorrect: false, computedRating: Rating.Again, matchedReading: undefined });
   };
 
-  /** Abre el micrófono para la tarjeta, con 15 s y hasta 3 intentos. */
-  const startListening = async (card: DueCardWithContext, lang: string) => {
-    stopSpeech();
-    cancelAdvance();
-    progressAnim.stopAnimation();
-    progressAnim.setValue(0);
-    flip.reset();
+  /**
+   * Abre el micrófono para la tarjeta, con 15 s y hasta 3 intentos.
+   * resume: el reconocedor se cerró solo (silencio, fin de frase) y se reabre sin reiniciar el tiempo.
+   */
+  const startListening = async (card: DueCardWithContext, lang: string, resume = false) => {
+    if (!resume) {
+      stopSpeech();
+      cancelAdvance();
+      progressAnim.stopAnimation();
+      progressAnim.setValue(0);
+      flip.reset();
+    }
 
     // Cualquier resultado tardío de la tarjeta anterior queda descartado
     speechService.invalidate();
@@ -251,23 +272,30 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
     isCardEvaluated.current = false;
     const isStale = () => speechService.getGeneration() !== generation || isCardEvaluated.current;
 
-    setSpeechTranscript('');
-    setIsListening(false);
-    setSpeechStatus('starting');
+    if (!resume) {
+      setSpeechTranscript('');
+      setIsListening(false);
+      setSpeechStatus('starting');
+    }
 
     let timerStarted = false;
-    const startTimeout = () => {
-      if (timerStarted || isStale()) return;
-      timerStarted = true;
-      progressAnim.setValue(0);
+    const runTimer = (from: number) => {
+      progressAnim.setValue(from);
       Animated.timing(progressAnim, {
         toValue: 1,
-        duration: VOICE_TIMEOUT_SECONDS * 1000,
+        duration: Math.max(0, (1 - from) * VOICE_TIMEOUT_SECONDS * 1000),
         easing: Easing.linear,
         useNativeDriver: false,
       }).start(({ finished }) => {
         if (finished && !isStale()) evaluate(card, false);
       });
+    };
+    const startTimeout = () => {
+      if (timerStarted || isStale()) return;
+      timerStarted = true;
+      // Al reabrir, el tiempo sigue desde donde iba
+      if (resume) progressAnim.stopAnimation((value) => runTimer(value));
+      else runTimer(0);
     };
 
     console.log('[ReviewVoice] Escuchando tarjeta:', card.displayText);
@@ -278,9 +306,9 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
     }
     let reportedError: string | null = null;
 
-    // Palabra en kana: se responde qué significa, en el idioma del usuario (no se lee en japonés)
+    // Palabra en kana: se responde qué significa, en el idioma de los significados del mazo (no en japonés)
     const meaningMode = asksForMeaning(card);
-    const listenLang = meaningMode ? getUserSpeechLocale() : lang;
+    const listenLang = meaningMode ? meaningSpeechLocale(card) : lang;
     const meaningTargets = meaningMode ? getCardMeaningTargets(card) : '';
 
     const started = await speechService.start(
@@ -362,11 +390,13 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
         },
         onEnd: () => {
           if (isStale() || isCardEvaluated.current) return;
-          if (attempts.current.count > 0 && attempts.current.count < MAX_VOICE_ATTEMPTS && !store().isChecked) {
-            console.log('[ReviewVoice] Reconocedor finalizó intento, reabriendo micrófono limpio para intento restante');
+          // El reconocedor del teléfono se cierra solo tras un silencio o una frase: mientras quede tiempo e
+          // intentos, se reabre (sin reiniciar el tiempo) para que el micrófono no se apague con el reloj corriendo
+          if (attempts.current.count < MAX_VOICE_ATTEMPTS && !store().isChecked) {
+            console.log('[ReviewVoice] El reconocedor se cerró, reabriendo el micrófono');
             setTimeout(() => {
               if (!isStale() && !isCardEvaluated.current && !store().isChecked) {
-                startListening(card, lang);
+                startListening(card, lang, true);
               }
             }, 100);
           }

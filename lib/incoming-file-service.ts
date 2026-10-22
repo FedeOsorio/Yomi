@@ -104,6 +104,7 @@ export async function processIncomingBackupFile(uri: string): Promise<boolean> {
                   mode: result.mode,
                   noteTypes: result.noteTypes,
                   languageCode: result.languageCode,
+                  answerMode: result.answerMode,
                   manifest: result.mediaManifest,
                   getDeckId: () => createDeck(result.deckName, result.languageCode, result.deckType),
                   onProgress: progress.update,

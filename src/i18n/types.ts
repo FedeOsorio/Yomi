@@ -89,6 +89,10 @@ export interface TranslationSchema {
     importCustom: string;
     importWords: string;
     exportDeck: string;
+    answerModeTitle: string;
+    answerModeMsg: string;
+    answerReading: string;
+    answerMeaning: string;
     deleteDeck: string;
     deleteDeckConfirm: string;
     emptyCustom: string;

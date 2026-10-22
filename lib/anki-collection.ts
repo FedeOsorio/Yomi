@@ -565,6 +565,51 @@ export function parseAnkiNotes(
   return { languageCode, items: vocabItems, referencedMedia, vocabularyDetected };
 }
 
+// ─── Qué se responde en un mazo de vocabulario ───────────────────────────────────────────────────
+
+export type AnswerMode = 'reading' | 'meaning';
+
+/**
+ * Qué se responde en el repaso de un mazo de vocabulario importado: lo que el frente esconde y el dorso muestra.
+ * No se adivina la intención del usuario: se lee el diseño del mazo (la plantilla del frente).
+ *
+ * - El frente ya muestra la lectura → se responde el significado. La muestra si pone un campo de lectura
+ *   (con cualquier filtro salvo hint:, que la esconde detrás de un toque), o un campo con furigana:/kana:
+ *   que trae lecturas entre corchetes (作[つく]る).
+ * - Mazo japonés con casi todas las palabras en kana: la lectura es la palabra misma → el significado.
+ * - Si no, la lectura (como en los mazos de kanji).
+ */
+export function detectAnswerMode(
+  frontTemplate: string,
+  fieldNames: string[],
+  plan: FieldPlan,
+  notesFields: string[][],
+  languageCode: string
+): AnswerMode {
+  const indexOfField = new Map(fieldNames.map((name, i) => [name.trim(), i]));
+  const sample = notesFields.slice(0, 300);
+  const hasBracketReadings = (i: number) =>
+    sample.filter((f) => /[^\s\[\]]\[[^\]]+\]/.test(f[i] || '')).length >= sample.length / 2;
+
+  for (const ref of frontTemplate.matchAll(/\{\{\s*([^#^/!>{}][^{}]*?)\s*\}\}/g)) {
+    const parts = ref[1].split(':').map((p) => p.trim());
+    const fieldIdx = indexOfField.get(parts[parts.length - 1]);
+    const filters = parts.slice(0, -1).map((f) => f.toLowerCase());
+    if (fieldIdx === undefined || filters.includes('hint')) continue;
+    if (plan.reading.includes(fieldIdx)) return 'meaning';
+    if ((filters.includes('furigana') || filters.includes('kana')) && hasBracketReadings(fieldIdx)) return 'meaning';
+  }
+
+  if (languageCode.startsWith('ja') && plan.word.length > 0) {
+    const words = sample
+      .map((f) => cleanHtmlAndAnkiTags(plan.word.map((i) => f[i] || '').find((w) => w.trim()) || ''))
+      .filter(Boolean);
+    const kanaOnly = words.filter((w) => /[぀-ヿ]/.test(w) && !/[㐀-䶿一-鿿々]/.test(w));
+    if (words.length > 0 && kanaOnly.length >= words.length * 0.9) return 'meaning';
+  }
+  return 'reading';
+}
+
 // ─── Mazos con su propio diseño ────────────────────────────────────────────────────────────────
 
 export interface AnkiCard {

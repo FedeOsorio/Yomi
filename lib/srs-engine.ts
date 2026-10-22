@@ -3,7 +3,7 @@ import * as crypto from 'expo-crypto';
 import { Card, createEmptyCard, fsrs, generatorParameters, Rating, State } from 'ts-fsrs';
 import { db } from '../db';
 import { decks, srsItems, words } from '../db/schema';
-import { getEffectiveCardLanguage, JA_NUMBERS, toNormalizedHiragana, ZH_NUMBERS } from './japanese-utils';
+import { JA_NUMBERS, toNormalizedHiragana, ZH_NUMBERS } from './japanese-utils';
 import { toSearchKey } from './pinyin-utils';
 import { parseAux, stringifyAux } from './word-aux';
 
@@ -31,27 +31,22 @@ export interface DueCardWithContext extends SrsItem {
   deckId?: string | null;
   languageCode?: string | null;
   deckType?: 'language' | 'custom' | null;
+  /** Mazos de idioma: qué se responde ('meaning' = el significado; si no, la lectura) */
+  deckAnswerMode?: 'reading' | 'meaning' | null;
   auxiliaryInfo?: string | null;
   wordMeanings?: string | null;
 }
 
 /**
- * Tarjeta de un mazo personalizado: se repasa con autoevaluación (botones), nunca por voz ni escritura.
- * Los mazos viejos sin tipo se guardaban con idioma 'es-ES'.
- */
-/**
- * Palabra japonesa escrita solo con kana (これ, ちょっと, テレビ): leerla en voz alta no evalúa nada (la lectura
- * está a la vista), así que se pregunta qué significa. Se mantiene el sentido del mazo: ver japonés y entenderlo.
+ * El mazo de idioma se responde con el significado (no con la lectura). Lo decide el mazo, no la tarjeta: lo fija
+ * la importación según lo que muestra su frente, y el usuario lo puede cambiar en las opciones del mazo.
  * Hace falta un significado contra el cual comparar.
  */
 export function asksForMeaning(
-  card: Pick<DueCardWithContext, 'deckType' | 'languageCode' | 'displayText' | 'displayMeaning'>
+  card: Pick<DueCardWithContext, 'deckType' | 'languageCode' | 'deckAnswerMode' | 'displayMeaning'>
 ): boolean {
-  if (isCustomReviewCard(card) || !getEffectiveCardLanguage(card).startsWith('ja')) return false;
-  const text = (card.displayText || '').trim();
-  const hasKana = /[\u3040-\u30ff]/.test(text);
-  const hasKanji = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff々〆]/.test(text);
-  return hasKana && !hasKanji && (card.displayMeaning || '').replace(/[\[\]"\s,]/g, '') !== '';
+  if (card.deckAnswerMode !== 'meaning' || isCustomReviewCard(card)) return false;
+  return (card.displayMeaning || '').replace(/[\[\]"\s,]/g, '') !== '';
 }
 
 /** Significados que se aceptan como respuesta (los elegidos en la tarjeta, si los hay). */
@@ -60,6 +55,10 @@ export function getCardMeaningTargets(card: Pick<DueCardWithContext, 'displayMea
   return Array.isArray(selected) && selected.length > 0 ? JSON.stringify(selected) : card.displayMeaning;
 }
 
+/**
+ * Tarjeta de un mazo personalizado: se repasa con autoevaluación (botones), nunca por voz ni escritura.
+ * Los mazos viejos sin tipo se guardaban con idioma 'es-ES'.
+ */
 export function isCustomReviewCard(card: Pick<DueCardWithContext, 'deckType' | 'languageCode'>): boolean {
   return card.deckType === 'custom' || card.languageCode === 'custom' || (card.deckType !== 'language' && card.languageCode === 'es-ES');
 }
@@ -268,6 +267,7 @@ export async function getDueCards(deckId?: string): Promise<DueCardWithContext[]
       deckId: words.deckId,
       languageCode: decks.languageCode,
       deckType: decks.type,
+      deckAnswerMode: decks.answerMode,
       auxiliaryInfo: words.auxiliaryInfo,
       wordMeanings: words.meanings,
     })

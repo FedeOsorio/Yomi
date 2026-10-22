@@ -11,7 +11,7 @@ import { words } from '../db/schema';
 import { AnkiMediaManifest, extractAnkiPackageAsync, importAnkiMediaAsync, ParsedVocabularyItem } from './anki-importer';
 import { cleanOrphanMedia } from './data-repair';
 import type { AnkiNoteType } from './anki-template';
-import { addDeckAnkiDesign, getDeckAnkiDesign, setDeckMediaSource } from './deck-service';
+import { addDeckAnkiDesign, DeckAnswerMode, getDeckAnkiDesign, setDeckAnswerMode, setDeckMediaSource } from './deck-service';
 import { listMediaFiles, mediaFileName } from './media-service';
 import { MediaItem, parseAux } from './word-aux';
 import { saveBatchAnkiCards, saveBatchWords, updateWordAux } from './word-service';
@@ -36,6 +36,7 @@ export async function importAnkiDeckAsync({
   mode = 'vocabulary',
   noteTypes,
   languageCode,
+  answerMode,
   manifest,
   getDeckId,
   onProgress,
@@ -49,6 +50,8 @@ export async function importAnkiDeckAsync({
   noteTypes?: Record<string, AnkiNoteType>;
   /** Idioma del contenido detectado al importar (se guarda con el diseño del mazo) */
   languageCode?: string;
+  /** Mazos de vocabulario: qué se responde, según el frente del mazo (ver detectAnswerMode) */
+  answerMode?: DeckAnswerMode;
   manifest?: AnkiMediaManifest | null;
   getDeckId: () => Promise<string>;
   onProgress?: (done: number, total: number) => void;
@@ -74,6 +77,9 @@ export async function importAnkiDeckAsync({
     }
 
     const deckId = await getDeckId();
+    if (mode === 'vocabulary' && answerMode) {
+      await setDeckAnswerMode(deckId, answerMode).catch((err) => console.warn('[AnkiImport] Error guardando qué se responde:', err));
+    }
     if (mediaSaved > 0) {
       await setDeckMediaSource(deckId, {
         file: fileName,

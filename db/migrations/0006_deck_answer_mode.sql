@@ -1,0 +1,1 @@
+ALTER TABLE `decks` ADD `answer_mode` text;

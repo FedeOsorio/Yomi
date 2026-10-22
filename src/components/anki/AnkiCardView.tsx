@@ -30,6 +30,11 @@ interface AnkiCardViewProps {
    * Alto según el contenido (para mostrarla dentro de un ScrollView). Sin esto ocupa el espacio disponible.
    */
   autoHeight?: boolean;
+  /**
+   * Dorso de un mazo de idioma, solo como contexto: texto y audios, sin el JavaScript del mazo (la evaluación
+   * es de Yomi) ni imágenes o videos (eso es de los mazos personalizados).
+   */
+  languageContext?: boolean;
   /** Se llama cuando terminan los audios que sonaron solos (o enseguida, si no hay o la tarjeta no se dibuja). */
   onAutoplayDone?: () => void;
 }
@@ -52,6 +57,7 @@ export function AnkiCardView({
   style,
   fallback = null,
   autoHeight = false,
+  languageContext = false,
   onAutoplayDone,
 }: AnkiCardViewProps) {
   const { isDark, colors } = useTheme();
@@ -85,11 +91,13 @@ export function AnkiCardView({
     const mediaUrl = (name: string) =>
       new File(Paths.document, pathsByName.get(name) ?? design.files[name] ?? mediaPath(sanitizeMediaName(name))).uri;
     try {
-      return renderAnkiCard({ noteType, fields: ref.fields, ord: ref.ord, tags: ref.tags, mediaUrl });
+      const rendered = renderAnkiCard({ noteType, fields: ref.fields, ord: ref.ord, tags: ref.tags, mediaUrl });
+      if (!languageContext) return rendered;
+      return { ...rendered, question: textAndAudioOnly(rendered.question), answer: textAndAudioOnly(rendered.answer) };
     } catch {
       return null;
     }
-  }, [aux, design]);
+  }, [aux, design, languageContext]);
 
   // La página empieza siempre con el frente (y el dorso se agrega después, como en Anki)
   useEffect(() => {
@@ -180,6 +188,19 @@ export function AnkiCardView({
       )}
     </View>
   );
+}
+
+/**
+ * Deja solo texto y botones de audio: quita los <script> del mazo (con su código, para que no quede a la
+ * vista), las imágenes y los videos.
+ */
+function textAndAudioOnly(html: string): string {
+  return html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, '')
+    .replace(/<script\b[\s\S]*$/i, '')
+    .replace(/<video\b[\s\S]*?<\/video>/gi, '')
+    // (svg no: es el ícono de los botones de audio)
+    .replace(/<(?:img|video|source|picture|canvas)\b[^>]*>/gi, '');
 }
 
 const styles = StyleSheet.create({

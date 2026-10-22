@@ -12,7 +12,7 @@ import { recoverDeckMediaAsync } from '../../../lib/anki-import-service';
 import { deleteFileQuietly, listMediaFiles, mediaFileName } from '../../../lib/media-service';
 import * as DocumentPicker from 'expo-document-picker';
 import { speakCard } from '../../../lib/audio-service';
-import { ALL_LANGUAGES, deleteDeck } from '../../../lib/deck-service';
+import { ALL_LANGUAGES, DeckAnswerMode, deleteDeck, setDeckAnswerMode } from '../../../lib/deck-service';
 import { getQuickHskLevel } from '../../../lib/hsk-data';
 import { cleanAndFormatMeanings } from '../../../lib/japanese-search';
 import { classifyJapaneseWord, detectTextLanguage, isJapaneseDictionaryForm, formatJapaneseReading, katakanaToHiragana, romajiToHiragana } from '../../../lib/japanese-utils';
@@ -425,6 +425,21 @@ export default function DeckDetailScreen() {
 
   const [menuVisible, setMenuVisible] = useState(false);
 
+  // Mazos de idioma: qué se responde en el repaso (la importación lo fija según el mazo; acá lo decide el usuario)
+  const answerMode: DeckAnswerMode = deckInfo?.answerMode === 'meaning' ? 'meaning' : 'reading';
+  const handleChooseAnswerMode = () => {
+    setMenuVisible(false);
+    const choose = async (mode: DeckAnswerMode) => {
+      await setDeckAnswerMode(id, mode);
+      setDeckInfo((prev: any) => (prev ? { ...prev, answerMode: mode } : prev));
+    };
+    Alert.alert(t('deckDetail.answerModeTitle'), t('deckDetail.answerModeMsg'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      { text: t('deckDetail.answerReading'), onPress: () => choose('reading') },
+      { text: t('deckDetail.answerMeaning'), onPress: () => choose('meaning') },
+    ]);
+  };
+
   const handleGenerateConjugations = async () => {
     setMenuVisible(false);
     if (!id) return;
@@ -604,6 +619,18 @@ export default function DeckDetailScreen() {
               >
                 <Ionicons name="flash" size={20} color={colors.primary} style={{ marginRight: 10 }} />
                 <Text style={[styles.menuDropdownText, { color: colors.text, fontWeight: 'bold' }]}>{t('deckDetail.reviewDeck')}</Text>
+              </TouchableOpacity>
+            )}
+
+            {!isCustomDeck && (
+              <TouchableOpacity
+                style={[styles.menuDropdownItem, { borderBottomColor: colors.border }]}
+                onPress={handleChooseAnswerMode}
+              >
+                <Ionicons name="help-circle-outline" size={20} color={colors.primary} style={{ marginRight: 10 }} />
+                <Text style={[styles.menuDropdownText, { color: colors.text }]}>
+                  {t('deckDetail.answerModeTitle')}: {answerMode === 'meaning' ? t('deckDetail.answerMeaning') : t('deckDetail.answerReading')}
+                </Text>
               </TouchableOpacity>
             )}
 

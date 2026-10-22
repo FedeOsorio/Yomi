@@ -161,25 +161,20 @@ export function ReviewCard({
           </View>
         ) : (
           <>
-            {/* Consigna frontal en tarjeta de idioma (ej. listening video/imagen) */}
-            {frontVideos.length > 0 && <CardVideo uri={frontVideos[0]} autoPlay={false} />}
-            {frontImages.length > 0 && <CardImage uri={frontImages[0]} />}
-
-            {!isFrontPlaceholderOnly && (
-              <Text
-                style={[
-                  isIdeographic ? styles.charIdeographic : styles.charAlphabetic,
-                  {
-                    color: colors.text,
-                    fontSize: 38,
-                  },
-                ]}
-                numberOfLines={1}
-                adjustsFontSizeToFit={true}
-              >
-                {currentCard.displayText}
-              </Text>
-            )}
+            {/* Mazo de idioma: solo el texto, nunca imágenes ni videos (eso es de los mazos personalizados) */}
+            <Text
+              style={[
+                isIdeographic ? styles.charIdeographic : styles.charAlphabetic,
+                {
+                  color: colors.text,
+                  fontSize: 38,
+                },
+              ]}
+              numberOfLines={1}
+              adjustsFontSizeToFit={true}
+            >
+              {currentCard.displayText}
+            </Text>
 
             {asksForMeaning && studyMethod !== 'text' && !isChecked && (
               <Text style={[styles.promptHintText, { color: colors.textMuted }]}>{t('review.whatWordMeans')}</Text>
@@ -322,8 +317,8 @@ export function ReviewCard({
                 {meaningsList.join(', ')}
               </Text>
 
-              {/* Media complementaria: sólo si la tarjeta no viene de Anki (si viene, el dorso del mazo
-                  se muestra debajo con su oración, imagen y audios) */}
+              {/* Audio de la oración: sólo si la tarjeta no viene de Anki (si viene, el dorso del mazo
+                  se muestra debajo con su oración y audios). Nunca imágenes ni videos en mazos de idioma */}
               {!fromAnkiDeck && sentenceAudio && (
                 <TouchableOpacity
                   style={[styles.sentenceAudioBtn, { backgroundColor: colors.surface }]}
@@ -336,8 +331,6 @@ export function ReviewCard({
                   </Text>
                 </TouchableOpacity>
               )}
-              {!fromAnkiDeck && backImages.length > 0 && <CardImage uri={backImages[0]} />}
-              {!fromAnkiDeck && isChecked && backVideos.length > 0 && <CardVideo uri={backVideos[0]} />}
             </View>
           </>
         )}

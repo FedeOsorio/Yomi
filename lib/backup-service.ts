@@ -50,6 +50,8 @@ export interface YomiDeckBackupItem {
   mediaSource?: string | null;
   /** Diseño de un mazo importado de Anki (JSON de AnkiDeckDesign) */
   ankiNoteTypes?: string | null;
+  /** Mazos de idioma: qué se responde en el repaso ('meaning'; si falta, la lectura) */
+  answerMode?: 'reading' | 'meaning' | null;
   createdAt: string;
 }
 
@@ -153,6 +155,7 @@ export async function createFullBackupPackage(): Promise<YomiFullBackupPackage> 
     folderId: d.folderId || null,
     mediaSource: d.mediaSource || null,
     ankiNoteTypes: d.ankiNoteTypes || null,
+    answerMode: d.answerMode || null,
     createdAt: d.createdAt instanceof Date ? d.createdAt.toISOString() : new Date(d.createdAt).toISOString(),
   }));
 
@@ -500,6 +503,7 @@ export async function restoreBackupPackage(
     const folderId = d.folderId || null;
     const mediaSource = d.mediaSource || null;
     const ankiNoteTypes = d.ankiNoteTypes || null;
+    const answerMode = d.answerMode === 'meaning' || d.answerMode === 'reading' ? d.answerMode : null;
     if (mode === 'merge') {
       const existing = await db.select().from(decks).where(eq(decks.id, d.id)).limit(1);
       if (existing.length > 0) {
@@ -511,6 +515,7 @@ export async function restoreBackupPackage(
             ...(folderId !== undefined ? { folderId } : {}),
             ...(d.mediaSource ? { mediaSource: d.mediaSource } : {}),
             ...(d.ankiNoteTypes ? { ankiNoteTypes: d.ankiNoteTypes } : {}),
+            ...(answerMode ? { answerMode } : {}),
           })
           .where(eq(decks.id, d.id));
         continue;
@@ -525,6 +530,7 @@ export async function restoreBackupPackage(
         folderId,
         mediaSource,
         ankiNoteTypes,
+        answerMode,
         createdAt: new Date(d.createdAt),
       });
     } catch {
@@ -537,6 +543,7 @@ export async function restoreBackupPackage(
         folderId: null,
         mediaSource,
         ankiNoteTypes,
+        answerMode,
         createdAt: new Date(d.createdAt),
       });
     }

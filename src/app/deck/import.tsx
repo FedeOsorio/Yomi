@@ -94,7 +94,7 @@ export default function ImportDeckScreen() {
   const [ankiFileName, setAnkiFileName] = useState<string>('');
   const [ankiMediaManifest, setAnkiMediaManifest] = useState<AnkiMediaManifest | null>(null);
   // Cómo se importa el .apkg (vocabulario corregido por Yomi o tarjetas con el diseño del mazo) y su diseño
-  const [ankiImport, setAnkiImport] = useState<Pick<AnkiPackageExtractResult, 'mode' | 'noteTypes' | 'languageCode'> | null>(null);
+  const [ankiImport, setAnkiImport] = useState<Pick<AnkiPackageExtractResult, 'mode' | 'noteTypes' | 'languageCode' | 'answerMode'> | null>(null);
   const [importProgress, setImportProgress] = useState<{ done: number; total: number; text: string } | null>(null);
 
   const cachedAnkiUriRef = useRef<string | null>(null);
@@ -239,7 +239,7 @@ export default function ImportDeckScreen() {
         setAnkiFileUri(file.uri);
         setAnkiFileName(filename);
         setAnkiMediaManifest(result.mediaManifest || null);
-        setAnkiImport({ mode: result.mode, noteTypes: result.noteTypes, languageCode: result.languageCode });
+        setAnkiImport({ mode: result.mode, noteTypes: result.noteTypes, languageCode: result.languageCode, answerMode: result.answerMode });
 
         setParseResult({
           delimiter: 'Anki (.apkg)',
@@ -437,6 +437,7 @@ export default function ImportDeckScreen() {
             mode: ankiImport?.mode,
             noteTypes: ankiImport?.noteTypes,
             languageCode: ankiImport?.languageCode,
+            answerMode: ankiImport?.answerMode,
             manifest: ankiMediaManifest,
             getDeckId: ensureTargetDeckId,
             onProgress: showProgress,
