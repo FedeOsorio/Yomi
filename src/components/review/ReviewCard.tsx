@@ -2,12 +2,12 @@ import { useMemo } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { Animated, ScrollView, StyleProp, StyleSheet, Text, TextStyle, TouchableOpacity, View } from 'react-native';
 import { speakCard } from '../../../lib/audio-service';
-import { getCardMediaUris, getCardSentenceAudio, isMediaPlaceholder } from '../../../lib/media-service';
+import { getCardMediaUris, isMediaPlaceholder } from '../../../lib/media-service';
 import { CardVideo } from '../media/CardVideo';
 import { CardImage } from '../media/CardImage';
 import { detectTextLanguage, formatJapaneseReading, toNormalizedHiragana } from '../../../lib/japanese-utils';
 import { DueCardWithContext } from '../../../lib/srs-engine';
-import { hasAnkiCardRef, parseAux } from '../../../lib/word-aux';
+import { parseAux } from '../../../lib/word-aux';
 import { Spacing, Typography } from '../../constants/theme';
 import { useTranslation } from '../../i18n';
 import { CardEvaluation, StudyMethod } from '../../stores/reviewStore';
@@ -103,13 +103,11 @@ export function ReviewCard({
   const isJapanese = lang.startsWith('ja');
 
   const aux = useMemo(() => parseAux(currentCard.auxiliaryInfo), [currentCard.auxiliaryInfo]);
-  const fromAnkiDeck = hasAnkiCardRef(currentCard.auxiliaryInfo);
   const kanjiReadings = aux.kanjiReadings;
   const frontVideos = useMemo(() => getCardMediaUris(aux, 'video', 'front'), [aux]);
   const backVideos = useMemo(() => getCardMediaUris(aux, 'video', 'back'), [aux]);
   const frontImages = useMemo(() => getCardMediaUris(aux, 'image', 'front'), [aux]);
   const backImages = useMemo(() => getCardMediaUris(aux, 'image', 'back'), [aux]);
-  const sentenceAudio = useMemo(() => getCardSentenceAudio(aux), [aux]);
 
   const isFrontPlaceholderOnly = useMemo(
     () =>
@@ -140,7 +138,7 @@ export function ReviewCard({
               <TouchableOpacity
                 style={styles.customCleanSpeakerBtn}
                 activeOpacity={0.7}
-                onPress={() => speakCard(currentCard, detectTextLanguage(currentCard.displayText), { side: 'front' })}
+                onPress={() => speakCard(currentCard, detectTextLanguage(currentCard.displayText), { side: 'front', useCardMedia: true })}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
                 <Ionicons name="volume-medium-outline" size={22} color={colors.primary} />
@@ -219,7 +217,7 @@ export function ReviewCard({
                 activeOpacity={0.7}
                 onPress={() => {
                   const answer = meaningsList[0] || currentCard.displayMeaning;
-                  speakCard(currentCard, detectTextLanguage(answer), { side: 'back' });
+                  speakCard(currentCard, detectTextLanguage(answer), { side: 'back', useCardMedia: true });
                 }}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
@@ -317,20 +315,6 @@ export function ReviewCard({
                 {meaningsList.join(', ')}
               </Text>
 
-              {/* Audio de la oración: sólo si la tarjeta no viene de Anki (si viene, el dorso del mazo
-                  se muestra debajo con su oración y audios). Nunca imágenes ni videos en mazos de idioma */}
-              {!fromAnkiDeck && sentenceAudio && (
-                <TouchableOpacity
-                  style={[styles.sentenceAudioBtn, { backgroundColor: colors.surface }]}
-                  activeOpacity={0.7}
-                  onPress={() => speakCard(currentCard, lang, { role: 'sentence' })}
-                >
-                  <Ionicons name="volume-medium" size={15} color={colors.primary} />
-                  <Text style={[styles.sentenceAudioBtnText, { color: colors.primary }]}>
-                    {t('wordDetail.sentenceAudio')}
-                  </Text>
-                </TouchableOpacity>
-              )}
             </View>
           </>
         )}
@@ -548,20 +532,5 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textAlign: 'center',
     lineHeight: 28,
-  },
-  sentenceAudioBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-    borderRadius: 12,
-    alignSelf: 'center',
-    marginTop: 8,
-    marginBottom: 4,
-  },
-  sentenceAudioBtnText: {
-    fontSize: 12,
-    fontWeight: '600',
-    marginLeft: 4,
   },
 });

@@ -422,7 +422,8 @@ export interface AnkiPackageExtractResult {
   languageCode: string;
   deckType: 'language' | 'custom';
   /**
-   * 'vocabulary': mazo de vocabulario con palabra, lectura y significado reconocibles (Yomi corrige solo).
+   * 'vocabulary': mazo de vocabulario con palabra, lectura y significado reconocibles, sin JavaScript ni media
+   *   (Yomi corrige solo, con su propia tarjeta).
    * 'anki': cualquier otro; cada tarjeta se muestra con el diseño del mazo y el usuario decide cuándo vuelve.
    */
   mode: 'vocabulary' | 'anki';
@@ -587,7 +588,11 @@ export async function extractAnkiPackageAsync(
     );
     const fieldNamesByModel = new Map([...noteTypes].map(([id, t]) => [id, t.fieldNames]));
     const parsed = parseAnkiNotes(notes, fieldNamesByModel, deckName, preferredLanguage, cardOrdsByNote);
-    const mode: AnkiPackageExtractResult['mode'] = parsed.vocabularyDetected && !hasOwnLogic ? 'vocabulary' : 'anki';
+    // Un mazo de idioma es solo la estructura de Yomi (su tarjeta, su voz): si el mazo trae media (audios,
+    // imágenes, videos) va a personalizado, donde se ve con su diseño
+    const hasMedia = parsed.referencedMedia.size > 0;
+    const mode: AnkiPackageExtractResult['mode'] =
+      parsed.vocabularyDetected && !hasOwnLogic && !hasMedia ? 'vocabulary' : 'anki';
     const { items, referencedMedia } =
       mode === 'vocabulary' ? parsed : buildAnkiCardItems(cards, notes, noteTypes, deckName);
 

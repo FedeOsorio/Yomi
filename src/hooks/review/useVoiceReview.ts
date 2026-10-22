@@ -17,7 +17,6 @@ import {
   getCardMeaningTargets,
   isCustomReviewCard,
 } from '../../../lib/srs-engine';
-import { hasAnkiCardRef } from '../../../lib/word-aux';
 import { CardEvaluation, useReviewStore } from '../../stores/reviewStore';
 import { getUserSpeechLocale, useTranslation } from '../../i18n';
 import type { useAutoAdvance } from './useAutoAdvance';
@@ -30,8 +29,6 @@ const VOICE_TIMEOUT_SECONDS = 15;
 const MAX_VOICE_ATTEMPTS = 3;
 /** Tiempo con la respuesta a la vista antes de pasar sola a la siguiente tarjeta. */
 const ANSWER_VISIBLE_MS = 7000;
-/** Tope para los audios del dorso del mazo (AnkiCardView): si no avisan, se avanza igual. */
-const DECK_AUDIO_MAX_MS = 20000;
 
 /** Palabras esperadas de la tarjeta: sesgan el reconocedor (pistas del modelo japonés). */
 const getContextualStrings = (card: DueCardWithContext): string[] => expectedVoiceWords(card, getEffectiveCardLanguage(card));
@@ -75,9 +72,6 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
   // Respuesta evaluada pero aún no guardada en el SRS. Se guarda al pasar de tarjeta,
   // para que el usuario pueda "Marcar incorrecta" un acierto que el reconocedor dio por bueno.
   const pendingReview = useRef<{ cardId: string; rating: Rating; wasFailedInSession: boolean } | null>(null);
-  // Espera de los audios del dorso del mazo (tarjetas de Anki): done arranca la cuenta para avanzar,
-  // cancel la descarta (se pasó de tarjeta o se cortó la sesión antes de que terminaran)
-  const deckAudioWaitRef = useRef<{ done: () => void; cancel: () => void } | null>(null);
   // Idioma de los significados de cada mazo (se calcula una vez por mazo con todas sus tarjetas de la sesión)
   const meaningLocaleByDeck = useRef(new Map<string, string>());
 
@@ -94,11 +88,6 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
     return locale;
   };
 
-  /** Cancela la cuenta para avanzar y la espera de los audios del mazo, que la arrancaría después. */
-  const cancelAdvance = () => {
-    deckAudioWaitRef.current?.cancel();
-    autoAdvance.cancel();
-  };
 
   useEffect(() => {
     if (!isListening) {
@@ -205,24 +194,6 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
         autoAdvance.start(ANSWER_VISIBLE_MS, advance);
       };
 
-      // Tarjeta de un mazo de Anki: suenan los audios del dorso del mazo (el visor de abajo), no la lectura
-      // de Yomi; la cuenta arranca cuando terminan (deckAudioDone)
-      if (hasAnkiCardRef(card.auxiliaryInfo)) {
-        const deckAudioTimeout = setTimeout(triggerAdvance, DECK_AUDIO_MAX_MS);
-        const stopWaiting = () => {
-          clearTimeout(deckAudioTimeout);
-          deckAudioWaitRef.current = null;
-        };
-        deckAudioWaitRef.current = {
-          done: () => {
-            stopWaiting();
-            triggerAdvance();
-          },
-          cancel: stopWaiting,
-        };
-        return;
-      }
-
       // Temporizador de seguridad: si el audio tarda más de 5 s o no emite eventos, avanzar de todos modos
       const safetyTimeout = setTimeout(triggerAdvance, 5000);
 
@@ -261,7 +232,7 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
   const startListening = async (card: DueCardWithContext, lang: string, resume = false) => {
     if (!resume) {
       stopSpeech();
-      cancelAdvance();
+      autoAdvance.cancel();
       progressAnim.stopAnimation();
       progressAnim.setValue(0);
       flip.reset();
@@ -429,7 +400,7 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
   /** Guarda la respuesta, gira la tarjeta al frente y empieza a escuchar la siguiente. */
   async function advance() {
     flushPendingReview();
-    cancelAdvance();
+    autoAdvance.cancel();
     await stopSpeech();
     setSpeechTranscript('');
 
@@ -468,7 +439,7 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
 
   /** Al empezar una sesión: micrófono en reposo hasta que el usuario lo active. */
   const resetForSession = () => {
-    cancelAdvance();
+    autoAdvance.cancel();
     setIsListening(false);
     setSpeechStatus('idle');
     progressAnim.setValue(0);
@@ -478,7 +449,7 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
   const pauseOnBlur = () => {
     flushPendingReview();
     stopSpeech();
-    cancelAdvance();
+    autoAdvance.cancel();
     isCardEvaluated.current = true;
     speechService.stop();
     setIsListening(false);
@@ -497,7 +468,7 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
   const endSession = () => {
     flushPendingReview();
     stopSpeech();
-    cancelAdvance();
+    autoAdvance.cancel();
     isCardEvaluated.current = true;
     speechService.invalidate();
     progressAnim.stopAnimation();
@@ -522,8 +493,6 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
     evaluate,
     markIncorrect,
     advance,
-    /** Avisa que terminaron los audios del dorso del mazo (AnkiCardView), para arrancar la cuenta. */
-    deckAudioDone: () => deckAudioWaitRef.current?.done(),
     resetForSession,
     pauseOnBlur,
     pauseOnBackground,

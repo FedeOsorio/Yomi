@@ -536,7 +536,7 @@ export default function DeckDetailScreen() {
   const handleSpeak = useCallback((text: string, reading?: string, auxiliaryInfo?: string | null) => {
     // Mazo personalizado: cada texto puede estar en cualquier idioma, se detecta por su escritura
     const lang = isCustomDeck ? detectTextLanguage(text) : (deckInfo?.languageCode || 'zh-CN');
-    speakCard({ displayText: text, displayReading: reading, auxiliaryInfo }, lang, { reading });
+    speakCard({ displayText: text, displayReading: reading, auxiliaryInfo }, lang, { reading, useCardMedia: isCustomDeck });
   }, [isCustomDeck, deckInfo?.languageCode]);
 
   const handlePressWord = useCallback((wordId: string) => {

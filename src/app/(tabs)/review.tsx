@@ -1,5 +1,5 @@
 import { useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -111,9 +111,6 @@ export default function ReviewScreen() {
 
   // Práctica de conjugaciones (se abre desde el modal de opciones)
   const [conjugationDeck, setConjugationDeck] = useState<{ id: string; name: string } | null>(null);
-  // Desplazamiento hasta el dorso del mazo de Anki cuando aparece (queda debajo de la tarjeta de Yomi)
-  const cardScrollRef = useRef<ScrollView>(null);
-  const cardScrollHeight = useRef(0);
 
   // ───────────── Sesión ─────────────
 
@@ -182,7 +179,7 @@ export default function ReviewScreen() {
   useEffect(() => {
     if (!currentCard || isChecked || sessionCompleted) return;
     if (!isCustomReviewCard(currentCard) || hasAnkiCardRef(currentCard.auxiliaryInfo)) return;
-    const timer = setTimeout(() => speakCard(currentCard, detectTextLanguage(currentCard.displayText), { side: 'front' }), 300);
+    const timer = setTimeout(() => speakCard(currentCard, detectTextLanguage(currentCard.displayText), { side: 'front', useCardMedia: true }), 300);
     return () => clearTimeout(timer);
   }, [currentCard?.id, isChecked, sessionCompleted]);
 
@@ -200,7 +197,7 @@ export default function ReviewScreen() {
   const revealAnswer = (result: CardEvaluation) => {
     setEvaluation(result);
     setIsChecked(true);
-    flip.showBack(320, currentCard && hasAnkiCardRef(currentCard.auxiliaryInfo) ? undefined : speakCurrentCard);
+    flip.showBack(320, speakCurrentCard);
   };
 
   const handleCheck = () => {
@@ -403,13 +400,7 @@ export default function ReviewScreen() {
   const isVoice = studyMethod === 'voice';
 
   const yomiCard = (
-    <ScrollView
-      ref={cardScrollRef}
-      contentContainerStyle={styles.scrollContainer}
-      keyboardShouldPersistTaps="handled"
-      showsVerticalScrollIndicator={false}
-      onLayout={(e) => (cardScrollHeight.current = e.nativeEvent.layout.height)}
-    >
+    <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
       {isVoice && <VoiceTranscriptArea card={currentCard} isChecked={isChecked} feedback={voice.feedback} colors={colors} />}
 
       <ReviewCard
@@ -448,26 +439,6 @@ export default function ReviewScreen() {
         </View>
       )}
 
-      {/* Dorso del mazo de Anki (oración, imagen, audios…) como contexto, se acierte o no */}
-      {isChecked && !isCustomCard && hasAnkiCardRef(currentCard.auxiliaryInfo) && (
-        <View
-          style={styles.deckContext}
-          // Al aparecer, subirlo hasta la mitad de la pantalla: se ve que hay más sin perder la respuesta de vista
-          onLayout={(e) =>
-            cardScrollRef.current?.scrollTo({ y: Math.max(0, e.nativeEvent.layout.y - cardScrollHeight.current / 2), animated: true })
-          }
-        >
-          <AnkiCardView
-            key={`context-${currentCard.id}`}
-            deckId={currentCard.deckId}
-            auxiliaryInfo={currentCard.auxiliaryInfo}
-            side="answer"
-            autoHeight
-            languageContext
-            onAutoplayDone={isVoice ? voice.deckAudioDone : undefined}
-          />
-        </View>
-      )}
     </ScrollView>
   );
 
@@ -549,11 +520,6 @@ export default function ReviewScreen() {
 }
 
 const styles = StyleSheet.create({
-  deckContext: {
-    marginTop: Spacing.md,
-    borderRadius: 16,
-    overflow: 'hidden',
-  },
   container: {
     flex: 1,
   },

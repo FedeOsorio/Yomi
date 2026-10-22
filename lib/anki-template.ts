@@ -514,21 +514,7 @@ function yomiShowAnswer(html) {
   } else {
     window.scrollTo(0, 0);
   }
-  yomiReportHeight();
 }
-/* Alto del contenido, para que la app ajuste el visor (se mide la tarjeta, no el documento:
-   el documento nunca es más bajo que el visor y no le permitiría achicarse) */
-function yomiReportHeight() {
-  var qa = document.getElementById('qa');
-  if (!window.ReactNativeWebView || !qa) return;
-  var height = qa.getBoundingClientRect().bottom + window.scrollY + 12;
-  window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'height', value: height }));
-}
-document.addEventListener('DOMContentLoaded', function () {
-  yomiReportHeight();
-  if (window.ResizeObserver) new ResizeObserver(yomiReportHeight).observe(document.getElementById('qa'));
-});
-window.addEventListener('load', yomiReportHeight);
 </script>
 </head>
 <body class="${card.cardClass}${night}">

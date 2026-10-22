@@ -220,8 +220,8 @@ export async function stopSpeech(): Promise<void> {
 
 /**
  * Punto de entrada unificado para reproducir el audio de una tarjeta.
- * Si la tarjeta contiene un archivo de audio grabado importado de Anki, lo reproduce nativamente
- * con expo-audio. Si el archivo no existe o falla, recurre a TTS nativo (expo-speech) como fallback transparente.
+ * Con useCardMedia (solo mazos personalizados) reproduce el audio que trae la tarjeta, si lo tiene; si no, o en
+ * los mazos de idioma (que son siempre de Yomi, sin nada del mazo), la voz de Yomi (TTS).
  */
 export async function speakCard(
   card: {
@@ -232,13 +232,15 @@ export async function speakCard(
     auxiliaryInfo?: string | null;
   },
   languageCode: string = 'zh-CN',
-  opts?: SpeakOptions & { side?: 'front' | 'back'; reading?: string; role?: 'word' | 'sentence' }
+  opts?: SpeakOptions & { side?: 'front' | 'back'; reading?: string; role?: 'word' | 'sentence'; useCardMedia?: boolean }
 ): Promise<void> {
   await stopSpeech();
 
-  const aux = parseAux(card.auxiliaryInfo);
-  const audioUri = opts?.role === 'sentence' ? getCardSentenceAudio(aux) : getCardAudio(aux, opts?.side);
-  if (audioUri && (await playMediaAudio(audioUri, opts))) return;
+  if (opts?.useCardMedia) {
+    const aux = parseAux(card.auxiliaryInfo);
+    const audioUri = opts.role === 'sentence' ? getCardSentenceAudio(aux) : getCardAudio(aux, opts.side);
+    if (audioUri && (await playMediaAudio(audioUri, opts))) return;
+  }
 
   const text = card.displayText || card.simplified || '';
   await speakText(text, languageCode, opts?.reading || card.displayReading || card.pinyinDisplay, opts);

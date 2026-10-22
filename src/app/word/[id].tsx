@@ -439,6 +439,7 @@ export default function WordDetailScreen() {
     setIsPlayingAudio(true);
     speakCard(data.word, lang, {
       reading: cleanReading,
+      useCardMedia: data.deck?.type === 'custom',
       onStart: () => setIsPlayingAudio(true),
       onDone: () => setIsPlayingAudio(false),
       onStopped: () => setIsPlayingAudio(false),
@@ -524,11 +525,13 @@ export default function WordDetailScreen() {
   // de hooks entre renders (React cierra la pantalla). Son pocas comprobaciones de archivos por tarjeta.
   const parsedAux = parseAux(word.auxiliaryInfo);
   const isAnkiDesignCard = isCustomDeck && Boolean(parsedAux.anki);
-  const frontVideos = getCardMediaUris(parsedAux, 'video', 'front');
-  const frontImages = getCardMediaUris(parsedAux, 'image', 'front');
-  const backVideos = getCardMediaUris(parsedAux, 'video', 'back');
-  const backImages = getCardMediaUris(parsedAux, 'image', 'back');
-  const sentenceAudio = getCardSentenceAudio(parsedAux);
+  // Imágenes, videos y audios del mazo: solo en mazos personalizados (los de idioma son siempre de Yomi)
+  const mediaAux = isCustomDeck ? parsedAux : {};
+  const frontVideos = getCardMediaUris(mediaAux, 'video', 'front');
+  const frontImages = getCardMediaUris(mediaAux, 'image', 'front');
+  const backVideos = getCardMediaUris(mediaAux, 'video', 'back');
+  const backImages = getCardMediaUris(mediaAux, 'image', 'back');
+  const sentenceAudio = getCardSentenceAudio(mediaAux);
   const isFrontPlaceholderOnly =
     (frontVideos.length > 0 || frontImages.length > 0) &&
     /^\[(Video|Imagen|Audio)\]$/i.test((word.simplified || '').trim());
@@ -1064,7 +1067,7 @@ export default function WordDetailScreen() {
               <TouchableOpacity
                 style={[styles.sentenceAudioBtn, { backgroundColor: colors.surfaceHighlight }]}
                 activeOpacity={0.7}
-                onPress={() => speakCard(word, lang, { role: 'sentence' })}
+                onPress={() => speakCard(word, lang, { role: 'sentence', useCardMedia: true })}
               >
                 <Ionicons name="volume-medium" size={16} color={colors.primary} />
                 <Text style={[styles.sentenceAudioBtnText, { color: colors.primary }]}>

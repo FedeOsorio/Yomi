@@ -26,23 +26,7 @@ interface AnkiCardViewProps {
   style?: StyleProp<ViewStyle>;
   /** Lo que se muestra si la tarjeta no se puede dibujar (mazo sin diseño guardado, plantilla rota). */
   fallback?: ReactNode;
-  /**
-   * Alto según el contenido (para mostrarla dentro de un ScrollView). Sin esto ocupa el espacio disponible.
-   */
-  autoHeight?: boolean;
-  /**
-   * Dorso de un mazo de idioma, solo como contexto: texto y audios, sin el JavaScript del mazo (la evaluación
-   * es de Yomi) ni imágenes o videos (eso es de los mazos personalizados).
-   */
-  languageContext?: boolean;
-  /** Se llama cuando terminan los audios que sonaron solos (o enseguida, si no hay o la tarjeta no se dibuja). */
-  onAutoplayDone?: () => void;
 }
-
-/** Alto máximo con autoHeight: corta un posible ciclo con CSS en vh (más alto -> imagen más alta -> …). */
-const MAX_AUTO_HEIGHT = 4000;
-/** Alto mientras la página todavía no informó el suyo. */
-const MIN_AUTO_HEIGHT = 120;
 
 /**
  * Tarjeta de un mazo de Anki dibujada con su propio diseño (plantillas, CSS y JavaScript del mazo),
@@ -56,20 +40,13 @@ export function AnkiCardView({
   autoplay = true,
   style,
   fallback = null,
-  autoHeight = false,
-  languageContext = false,
-  onAutoplayDone,
 }: AnkiCardViewProps) {
   const { isDark, colors } = useTheme();
   const webRef = useRef<WebView>(null);
   const [design, setDesign] = useState<AnkiDeckDesign | null | undefined>(undefined);
   const [pageUri, setPageUri] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const [contentHeight, setContentHeight] = useState<number | null>(null);
   const shownAnswer = useRef(false);
-  const onAutoplayDoneRef = useRef(onAutoplayDone);
-  onAutoplayDoneRef.current = onAutoplayDone;
-  const autoplayDone = () => onAutoplayDoneRef.current?.();
 
   useEffect(() => {
     let alive = true;
@@ -91,13 +68,11 @@ export function AnkiCardView({
     const mediaUrl = (name: string) =>
       new File(Paths.document, pathsByName.get(name) ?? design.files[name] ?? mediaPath(sanitizeMediaName(name))).uri;
     try {
-      const rendered = renderAnkiCard({ noteType, fields: ref.fields, ord: ref.ord, tags: ref.tags, mediaUrl });
-      if (!languageContext) return rendered;
-      return { ...rendered, question: textAndAudioOnly(rendered.question), answer: textAndAudioOnly(rendered.answer) };
+      return renderAnkiCard({ noteType, fields: ref.fields, ord: ref.ord, tags: ref.tags, mediaUrl });
     } catch {
       return null;
     }
-  }, [aux, design, languageContext]);
+  }, [aux, design]);
 
   // La página empieza siempre con el frente (y el dorso se agrega después, como en Anki)
   useEffect(() => {
@@ -125,13 +100,8 @@ export function AnkiCardView({
     if (!card || !loaded || side !== 'answer' || shownAnswer.current) return;
     shownAnswer.current = true;
     webRef.current?.injectJavaScript(`yomiShowAnswer(${JSON.stringify(card.answer)}); true;`);
-    if (autoplay) playMediaSequence(card.answerAudio, autoplayDone);
+    if (autoplay) playMediaSequence(card.answerAudio);
   }, [card, loaded, side, autoplay]);
-
-  // Sin tarjeta que dibujar no hay audios: avisar enseguida (el modo voz espera este aviso para avanzar)
-  useEffect(() => {
-    if (design !== undefined && !card) autoplayDone();
-  }, [design, card]);
 
   if (design === undefined) {
     return (
@@ -144,22 +114,18 @@ export function AnkiCardView({
 
   const onLoadEnd = () => {
     setLoaded(true);
-    if (autoplay && side === 'question') playMediaSequence(card.questionAudio, autoplayDone);
+    if (autoplay && side === 'question') playMediaSequence(card.questionAudio);
   };
 
   const onMessage = (event: WebViewMessageEvent) => {
     try {
       const message = JSON.parse(event.nativeEvent.data);
       if (message?.type === 'play' && typeof message.url === 'string') playMediaAudio(message.url);
-      if (message?.type === 'height' && autoHeight && typeof message.value === 'number') {
-        const height = Math.min(Math.ceil(message.value), MAX_AUTO_HEIGHT);
-        setContentHeight((current) => (current !== null && Math.abs(current - height) < 4 ? current : height));
-      }
     } catch {}
   };
 
   return (
-    <View style={[autoHeight ? { height: contentHeight ?? MIN_AUTO_HEIGHT } : styles.container, style]}>
+    <View style={[styles.container, style]}>
       {pageUri && (
         <WebView
           ref={webRef}
@@ -178,8 +144,6 @@ export function AnkiCardView({
           allowsInlineMediaPlayback
           allowsFullscreenVideo
           javaScriptEnabled
-          // Con alto automático el scroll es el de la pantalla, no el del visor
-          scrollEnabled={!autoHeight}
           nestedScrollEnabled
           onLoadEnd={onLoadEnd}
           onMessage={onMessage}
@@ -188,19 +152,6 @@ export function AnkiCardView({
       )}
     </View>
   );
-}
-
-/**
- * Deja solo texto y botones de audio: quita los <script> del mazo (con su código, para que no quede a la
- * vista), las imágenes y los videos.
- */
-function textAndAudioOnly(html: string): string {
-  return html
-    .replace(/<script\b[\s\S]*?<\/script>/gi, '')
-    .replace(/<script\b[\s\S]*$/i, '')
-    .replace(/<video\b[\s\S]*?<\/video>/gi, '')
-    // (svg no: es el ícono de los botones de audio)
-    .replace(/<(?:img|video|source|picture|canvas)\b[^>]*>/gi, '');
 }
 
 const styles = StyleSheet.create({
