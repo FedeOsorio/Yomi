@@ -221,7 +221,8 @@ export async function cleanOrphanMedia(): Promise<void> {
     for (const name of listMediaFiles()) {
       if (name.startsWith('.') || referenced.has(name)) continue;
       try {
-        new File(mediaDir, name).moveSync(new File(trashDir, `${now}__${name}`));
+        // Asíncrono: al borrar un mazo grande son miles de archivos y la versión síncrona trababa la app
+        await new File(mediaDir, name).move(new File(trashDir, `${now}__${name}`));
         movedToTrash++;
       } catch (e) {
         console.warn(`[DataRepair] Error moviendo archivo huérfano a la papelera (${name}):`, e);

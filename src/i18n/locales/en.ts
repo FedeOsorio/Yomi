@@ -68,6 +68,7 @@ export const en: TranslationSchema = {
     deleteDeckTitle: 'Delete deck',
     deleteDeckConfirm: 'Are you sure you want to delete the deck "{{name}}" and all its cards? This cannot be undone.',
     deleteDeckBtn: 'Delete Deck',
+    deletingDeck: 'Deleting deck…',
     moveDeckTitle: 'Move deck to folder',
     moveDeckPrompt: 'Select destination for "{{name}}":',
     noFolderGeneral: 'No folder (General)',

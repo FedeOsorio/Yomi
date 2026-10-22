@@ -68,6 +68,7 @@ export const ja: TranslationSchema = {
     deleteDeckTitle: 'デッキを削除',
     deleteDeckConfirm: 'デッキ「{{name}}」と保存されているすべての単語を削除してもよろしいですか？この操作は元に戻せません。',
     deleteDeckBtn: 'デッキを削除',
+    deletingDeck: 'デッキを削除しています…',
     moveDeckTitle: 'デッキをフォルダに移動',
     moveDeckPrompt: '「{{name}}」の移動先を選択:',
     noFolderGeneral: 'フォルダなし (一般)',

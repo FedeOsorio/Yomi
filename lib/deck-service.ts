@@ -1,7 +1,7 @@
 import { db } from '../db';
 import { decks, words, srsItems, folders } from '../db/schema';
 import * as crypto from 'expo-crypto';
-import { eq, and, sql, asc, isNull } from 'drizzle-orm';
+import { eq, and, sql, asc, isNull, inArray } from 'drizzle-orm';
 import { canMoveFolder } from './folder-tree';
 import type { AnkiNoteType } from './anki-template';
 import { cleanOrphanMedia } from './data-repair';
@@ -220,17 +220,13 @@ export async function assignDeckToFolder(deckId: string, folderId: string | null
 
 export async function deleteDeck(deckId: string): Promise<void> {
   designCache.delete(deckId);
-  // Obtener palabras del mazo para borrar tarjetas SRS
-  const deckWords = await db.select({ id: words.id }).from(words).where(eq(words.deckId, deckId));
-  for (const w of deckWords) {
-    await db.delete(srsItems).where(
-      and(eq(srsItems.itemType, 'word'), eq(srsItems.itemId, w.id))
-    );
-  }
-  // Borrar palabras
-  await db.delete(words).where(eq(words.deckId, deckId));
-  // Borrar mazo
-  await db.delete(decks).where(eq(decks.id, deckId));
+  // Tres sentencias en una transacción (antes era una consulta por tarjeta: miles en un mazo grande)
+  const deckWordIds = db.select({ id: words.id }).from(words).where(eq(words.deckId, deckId));
+  await db.$client.withTransactionAsync(async () => {
+    await db.delete(srsItems).where(and(eq(srsItems.itemType, 'word'), inArray(srsItems.itemId, deckWordIds)));
+    await db.delete(words).where(eq(words.deckId, deckId));
+    await db.delete(decks).where(eq(decks.id, deckId));
+  });
 
   // Limpiar archivos multimedia huérfanos que pertenecían a las palabras eliminadas
   cleanOrphanMedia().catch((err) => {
@@ -257,52 +253,32 @@ export async function getDefaultDeckId(): Promise<string> {
 
 export async function getDecksWithStats(): Promise<DeckWithStats[]> {
   const allDecks = await db.select().from(decks);
-  const now = new Date();
+  // Los conteos los hace SQLite en una sola consulta (antes se traían todas las tarjetas a JavaScript)
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const counts = await db
+    .select({
+      deckId: words.deckId,
+      wordCount: sql<number>`count(distinct ${words.id})`,
+      activeCardsCount: sql<number>`count(distinct case when ${srsItems.id} is not null then ${words.id} end)`,
+      dueCount: sql<number>`count(distinct case when ${srsItems.due} <= ${nowSeconds} then ${words.id} end)`,
+    })
+    .from(words)
+    .leftJoin(srsItems, and(eq(srsItems.itemId, words.id), eq(srsItems.itemType, 'word')))
+    .groupBy(words.deckId);
+  const countsByDeck = new Map(counts.map((c) => [c.deckId, c]));
 
-  // Consultar todos los ítems SRS de tipo 'word' de una sola vez
-  const allSrsCards = await db
-    .select({ id: srsItems.id, itemId: srsItems.itemId, due: srsItems.due })
-    .from(srsItems)
-    .where(eq(srsItems.itemType, 'word'));
-
-  const srsMap = new Map<string, { due: Date }>();
-  for (const s of allSrsCards) {
-    srsMap.set(s.itemId, { due: new Date(s.due) });
-  }
-
-  const results: DeckWithStats[] = [];
-
-  for (const deck of allDecks) {
-    const deckWords = await db
-      .select({ id: words.id })
-      .from(words)
-      .where(eq(words.deckId, deck.id));
-
-    let dueCount = 0;
-    let activeCardsCount = 0;
-
-    for (const w of deckWords) {
-      const srs = srsMap.get(w.id);
-      if (srs) {
-        activeCardsCount++;
-        if (srs.due <= now) {
-          dueCount++;
-        }
-      }
-    }
-
-    results.push({
+  return allDecks.map((deck) => {
+    const c = countsByDeck.get(deck.id);
+    return {
       id: deck.id,
       name: deck.name,
       languageCode: deck.languageCode,
       type: (deck.type as 'language' | 'custom') || 'language',
       folderId: deck.folderId || null,
       createdAt: deck.createdAt,
-      wordCount: deckWords.length,
-      activeCardsCount,
-      dueCount,
-    });
-  }
-
-  return results;
+      wordCount: c?.wordCount ?? 0,
+      activeCardsCount: c?.activeCardsCount ?? 0,
+      dueCount: c?.dueCount ?? 0,
+    };
+  });
 }

@@ -68,6 +68,7 @@ export const pt: TranslationSchema = {
     deleteDeckTitle: 'Excluir baralho',
     deleteDeckConfirm: 'Tem certeza de que deseja excluir o baralho "{{name}}" e todas as suas palavras? Esta ação não pode ser desfeita.',
     deleteDeckBtn: 'Excluir Baralho',
+    deletingDeck: 'Excluindo baralho…',
     moveDeckTitle: 'Mover baralho para pasta',
     moveDeckPrompt: 'Selecione o destino para "{{name}}":',
     noFolderGeneral: 'Sem pasta (Geral)',

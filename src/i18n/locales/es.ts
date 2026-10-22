@@ -68,6 +68,7 @@ export const es: TranslationSchema = {
     deleteDeckTitle: 'Eliminar mazo',
     deleteDeckConfirm: '¿Estás seguro de que querés eliminar el mazo "{{name}}" y todas sus palabras guardadas? Esta acción no se puede deshacer.',
     deleteDeckBtn: 'Eliminar Mazo',
+    deletingDeck: 'Eliminando mazo…',
     moveDeckTitle: 'Mover mazo a carpeta',
     moveDeckPrompt: 'Selecciona el destino para "{{name}}":',
     noFolderGeneral: 'Sin carpeta (General)',

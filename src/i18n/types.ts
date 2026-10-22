@@ -68,6 +68,7 @@ export interface TranslationSchema {
     deleteDeckTitle: string;
     deleteDeckConfirm: string;
     deleteDeckBtn: string;
+    deletingDeck: string;
     moveDeckTitle: string;
     moveDeckPrompt: string;
     noFolderGeneral: string;

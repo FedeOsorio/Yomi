@@ -5,8 +5,9 @@ import { useTranslation } from '../i18n';
 import { useImportProgressStore } from '../stores/importProgressStore';
 
 /**
- * Progreso de una importación de Anki iniciada desde "Abrir con Yomi" (fuera de la pantalla de importación).
- * Cubre la app mientras dura, para que no se pueda navegar a un mazo a medio guardar.
+ * Progreso de una importación de Anki iniciada desde "Abrir con Yomi" (fuera de la pantalla de importación),
+ * o de otra operación larga sobre un mazo (eliminarlo). Cubre la app mientras dura, para que no se pueda
+ * navegar a un mazo a medio guardar.
  */
 export function ImportProgressOverlay() {
   const { colors } = useTheme();
@@ -26,9 +27,10 @@ export function ImportProgressOverlay() {
           {progress.deckName}
         </Text>
         <Text style={[styles.text, { color: colors.textMuted }]}>
-          {isExtractingMedia
-            ? t('importDeck.extractingMediaProgress', { done: progress.done, total: progress.total })
-            : t('importDeck.savingCards')}
+          {progress.message ??
+            (isExtractingMedia
+              ? t('importDeck.extractingMediaProgress', { done: progress.done, total: progress.total })
+              : t('importDeck.savingCards'))}
         </Text>
         {isExtractingMedia && (
           <View style={[styles.barTrack, { backgroundColor: colors.border }]}>

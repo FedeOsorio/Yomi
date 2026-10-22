@@ -24,6 +24,7 @@ import { ConjugationPracticeModal } from '../../components/ConjugationPracticeMo
 import { CustomCardData, CustomCardModal } from '../../components/CustomCardModal';
 import { Shadows, Spacing, Typography } from '../../constants/theme';
 import { useTranslation } from '../../i18n';
+import { useImportProgressStore } from '../../stores/importProgressStore';
 import { useDeckBrowseStore } from '../../stores/deckBrowseStore';
 
 // Minúsculas y sin tildes latinas (á, ü, tonos del pinyin). Se recompone con NFC para no perder el dakuten (が ≠ か).
@@ -501,7 +502,13 @@ export default function DeckDetailScreen() {
           text: t('deckDetail.deleteDeck'),
           style: 'destructive',
           onPress: async () => {
-            await deleteDeck(id);
+            const progress = useImportProgressStore.getState();
+            progress.start(deckInfo.name, 0, t('decks.deletingDeck'));
+            try {
+              await deleteDeck(id);
+            } finally {
+              progress.finish();
+            }
             router.back();
           },
         },

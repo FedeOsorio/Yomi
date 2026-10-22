@@ -46,6 +46,7 @@ import { FolderBreadcrumb } from '../../components/folders/FolderBreadcrumb';
 import { useFolderManager } from '../../hooks/useFolderManager';
 import { countDecksRecursive, getChildFolders, getFolderPath } from '../../../lib/folder-tree';
 import { useTranslation } from '../../i18n';
+import { useImportProgressStore } from '../../stores/importProgressStore';
 
 export default function HomeScreen() {
   const { t } = useTranslation();
@@ -217,8 +218,14 @@ export default function HomeScreen() {
           text: t('decks.deleteDeckBtn'),
           style: 'destructive',
           onPress: async () => {
-            await deleteDeck(deckId);
-            await fetchDecks();
+            const progress = useImportProgressStore.getState();
+            progress.start(deckName, 0, t('decks.deletingDeck'));
+            try {
+              await deleteDeck(deckId);
+              await fetchDecks();
+            } finally {
+              progress.finish();
+            }
           },
         },
       ]

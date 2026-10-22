@@ -1,4 +1,4 @@
-import { and, eq, lte } from 'drizzle-orm';
+import { and, eq, lte, sql } from 'drizzle-orm';
 import * as crypto from 'expo-crypto';
 import { Card, createEmptyCard, fsrs, generatorParameters, Rating, State } from 'ts-fsrs';
 import { db } from '../db';
@@ -520,24 +520,26 @@ export async function getStudyStats(deckId?: string): Promise<{
   learningCards: number;
   reviewCards: number;
 }> {
-  const allCards = await getDueCards(deckId);
-  const total = await db.select().from(srsItems);
-
-  let newCount = 0;
-  let learningCount = 0;
-  let reviewCount = 0;
-
-  allCards.forEach(c => {
-    if (c.state === State.New) newCount++;
-    else if (c.state === State.Learning || c.state === State.Relearning) learningCount++;
-    else if (c.state === State.Review) reviewCount++;
-  });
+  // Conteos en SQLite: antes se traían a JavaScript todas las tarjetas (y todas las vencidas con sus datos)
+  const now = new Date();
+  const dueWhere = deckId ? and(lte(srsItems.due, now), eq(words.deckId, deckId)) : lte(srsItems.due, now);
+  const [due] = await db
+    .select({
+      count: sql<number>`count(*)`,
+      newCards: sql<number>`coalesce(sum(case when ${srsItems.state} = ${State.New} then 1 else 0 end), 0)`,
+      learningCards: sql<number>`coalesce(sum(case when ${srsItems.state} in (${State.Learning}, ${State.Relearning}) then 1 else 0 end), 0)`,
+      reviewCards: sql<number>`coalesce(sum(case when ${srsItems.state} = ${State.Review} then 1 else 0 end), 0)`,
+    })
+    .from(srsItems)
+    .innerJoin(words, eq(srsItems.itemId, words.id))
+    .where(dueWhere);
+  const [total] = await db.select({ count: sql<number>`count(*)` }).from(srsItems);
 
   return {
-    totalCards: total.length,
-    dueCards: allCards.length,
-    newCards: newCount,
-    learningCards: learningCount,
-    reviewCards: reviewCount,
+    totalCards: total?.count ?? 0,
+    dueCards: due?.count ?? 0,
+    newCards: due?.newCards ?? 0,
+    learningCards: due?.learningCards ?? 0,
+    reviewCards: due?.reviewCards ?? 0,
   };
 }
