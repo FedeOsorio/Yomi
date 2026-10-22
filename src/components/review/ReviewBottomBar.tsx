@@ -4,7 +4,7 @@ import { Shadows, Spacing } from '../../constants/theme';
 import { useTranslation } from '../../i18n';
 import { CardEvaluation, StudyMethod } from '../../stores/reviewStore';
 
-export type CustomCardAction = 'soon' | 'later' | 'next_day' | 'never';
+export type CustomCardAction = 'soon' | 'later' | 'next_day' | 'learned' | 'never';
 
 interface ReviewBottomBarProps {
   studyMethod: StudyMethod;
@@ -17,6 +17,8 @@ interface ReviewBottomBarProps {
   // Tarjetas personalizadas
   onShowCustomAnswer: () => void;
   onCustomAction: (action: CustomCardAction) => void;
+  /** Días hasta el próximo repaso si se marca "Aprendida" (se muestra debajo del botón). */
+  learnedDays: number;
   // Modo voz
   onVoiceGiveUp: () => void;
   onMarkIncorrect: () => void;
@@ -38,6 +40,7 @@ export function ReviewBottomBar({
   colors,
   onShowCustomAnswer,
   onCustomAction,
+  learnedDays,
   onVoiceGiveUp,
   onMarkIncorrect,
   onVoiceNext,
@@ -83,7 +86,7 @@ export function ReviewBottomBar({
                 disabled={isProcessing}
                 onPress={() => onCustomAction('soon')}
               >
-                <Text style={styles.customChoiceTitle}>{t('review.soon')}</Text>
+                <Text style={styles.customChoiceTitle} numberOfLines={1} adjustsFontSizeToFit>{t('review.soon')}</Text>
                 <Text style={styles.customChoiceSub}>{t('review.soonSub')}</Text>
               </TouchableOpacity>
 
@@ -94,7 +97,7 @@ export function ReviewBottomBar({
                 disabled={isProcessing}
                 onPress={() => onCustomAction('later')}
               >
-                <Text style={styles.customChoiceTitle}>{t('review.later')}</Text>
+                <Text style={styles.customChoiceTitle} numberOfLines={1} adjustsFontSizeToFit>{t('review.later')}</Text>
                 <Text style={styles.customChoiceSub}>{t('review.laterSub')}</Text>
               </TouchableOpacity>
 
@@ -105,18 +108,31 @@ export function ReviewBottomBar({
                 disabled={isProcessing}
                 onPress={() => onCustomAction('next_day')}
               >
-                <Text style={styles.customChoiceTitle}>{t('review.nextDay')}</Text>
+                <Text style={styles.customChoiceTitle} numberOfLines={1} adjustsFontSizeToFit>{t('review.nextDay')}</Text>
                 <Text style={styles.customChoiceSub}>{t('review.nextDaySub')}</Text>
               </TouchableOpacity>
 
-              {/* 4. Nunca (Rojo) */}
+              {/* 4. Aprendida (Violeta): cada vez un día más (2, 3, 4…) */}
+              <TouchableOpacity
+                style={[styles.customChoiceBtn, { backgroundColor: '#8B5CF6' }, isProcessing && { opacity: 0.6 }]}
+                activeOpacity={0.8}
+                disabled={isProcessing}
+                onPress={() => onCustomAction('learned')}
+              >
+                <Text style={styles.customChoiceTitle} numberOfLines={1} adjustsFontSizeToFit>
+                  {t('review.learned')}
+                </Text>
+                <Text style={styles.customChoiceSub}>{t('review.learnedSub', { count: learnedDays })}</Text>
+              </TouchableOpacity>
+
+              {/* 5. Nunca (Rojo) */}
               <TouchableOpacity
                 style={[styles.customChoiceBtn, { backgroundColor: '#EF4444' }, isProcessing && { opacity: 0.6 }]}
                 activeOpacity={0.8}
                 disabled={isProcessing}
                 onPress={() => onCustomAction('never')}
               >
-                <Text style={styles.customChoiceTitle}>{t('review.never')}</Text>
+                <Text style={styles.customChoiceTitle} numberOfLines={1} adjustsFontSizeToFit>{t('review.never')}</Text>
                 <Text style={styles.customChoiceSub}>{t('review.neverSub')}</Text>
               </TouchableOpacity>
             </View>

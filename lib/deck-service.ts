@@ -3,6 +3,7 @@ import { decks, words, srsItems, folders } from '../db/schema';
 import * as crypto from 'expo-crypto';
 import { eq, and, sql, asc, isNull } from 'drizzle-orm';
 import { canMoveFolder } from './folder-tree';
+import type { AnkiNoteType } from './anki-template';
 import { cleanOrphanMedia } from './data-repair';
 
 export interface Folder {
@@ -75,6 +76,53 @@ export interface DeckMediaSource {
 
 export async function setDeckMediaSource(deckId: string, source: DeckMediaSource): Promise<void> {
   await db.update(decks).set({ mediaSource: JSON.stringify(source) }).where(eq(decks.id, deckId));
+}
+
+/** Diseño de un mazo importado de Anki: con esto sus tarjetas se dibujan como en Anki (anki-template). */
+export interface AnkiDeckDesign {
+  /** Tipos de nota por id (plantillas, CSS, campos) */
+  noteTypes: Record<string, AnkiNoteType>;
+  /** Archivos que pide el diseño (CSS importado, imágenes), nombre original -> ruta en disco ("media/…") */
+  files: Record<string, string>;
+  /**
+   * Idioma del contenido ("ja-JP", "zh-CN"…), detectado al importar: elige la forma de kanji/hanzi.
+   * Un mazo personalizado puede tener contenido en japonés aunque el mazo no sea "de idiomas".
+   */
+  language?: string;
+}
+
+const designCache = new Map<string, AnkiDeckDesign | null>();
+
+/**
+ * Agrega el diseño de un .apkg al del mazo. Un mazo puede recibir varios .apkg: se conservan los tipos de
+ * nota y archivos que ya tenía (si un tipo de nota vuelve a venir, queda la versión nueva).
+ */
+export async function addDeckAnkiDesign(deckId: string, design: AnkiDeckDesign): Promise<void> {
+  const current = await getDeckAnkiDesign(deckId);
+  const merged: AnkiDeckDesign = {
+    noteTypes: { ...current?.noteTypes, ...design.noteTypes },
+    files: { ...current?.files, ...design.files },
+    language: design.language ?? current?.language,
+  };
+  await db.update(decks).set({ ankiNoteTypes: JSON.stringify(merged) }).where(eq(decks.id, deckId));
+  designCache.set(deckId, merged);
+}
+
+/** Después de restaurar un backup el diseño guardado puede ser otro: se vuelve a leer de la base. */
+export function clearDeckAnkiDesignCache(): void {
+  designCache.clear();
+}
+
+/** Diseño del mazo (en memoria después de la primera lectura). null si el mazo no viene de Anki. */
+export async function getDeckAnkiDesign(deckId: string): Promise<AnkiDeckDesign | null> {
+  if (designCache.has(deckId)) return designCache.get(deckId)!;
+  const rows = await db.select({ design: decks.ankiNoteTypes }).from(decks).where(eq(decks.id, deckId)).limit(1);
+  let design: AnkiDeckDesign | null = null;
+  try {
+    design = rows[0]?.design ? (JSON.parse(rows[0].design) as AnkiDeckDesign) : null;
+  } catch {}
+  designCache.set(deckId, design);
+  return design;
 }
 
 /** Todas las carpetas, ordenadas entre hermanas. Una carpeta cuyo padre ya no existe se muestra en Inicio. */
@@ -171,6 +219,7 @@ export async function assignDeckToFolder(deckId: string, folderId: string | null
 }
 
 export async function deleteDeck(deckId: string): Promise<void> {
+  designCache.delete(deckId);
   // Obtener palabras del mazo para borrar tarjetas SRS
   const deckWords = await db.select({ id: words.id }).from(words).where(eq(words.deckId, deckId));
   for (const w of deckWords) {

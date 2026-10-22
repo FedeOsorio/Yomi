@@ -18,7 +18,7 @@ import { cleanAndFormatMeanings } from '../../../lib/japanese-search';
 import { classifyJapaneseWord, detectTextLanguage, isJapaneseDictionaryForm, formatJapaneseReading, katakanaToHiragana, romajiToHiragana } from '../../../lib/japanese-utils';
 import { getQuickJlptLevel } from '../../../lib/jlpt-data';
 import { addCardToReview, deleteWord, generateConjugationsForDeck, removeCardFromReviewByWordId, resolveJapaneseBaseForm } from '../../../lib/word-service';
-import { parseAux } from '../../../lib/word-aux';
+import { hasAnkiCardRef, parseAux } from '../../../lib/word-aux';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { ConjugationPracticeModal } from '../../components/ConjugationPracticeModal';
 import { CustomCardData, CustomCardModal } from '../../components/CustomCardModal';
@@ -56,7 +56,8 @@ const DeckWordCard = memo(function DeckWordCard({
     <TouchableOpacity
       style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
       activeOpacity={0.7}
-      onPress={() => (isCustomDeck ? onEdit?.(item) : onPress(item.id))}
+      // Las tarjetas de Anki se dibujan con los campos originales: editar su texto no cambiaría nada, se abre el detalle
+      onPress={() => (isCustomDeck && !hasAnkiCardRef(item.auxiliaryInfo) ? onEdit?.(item) : onPress(item.id))}
     >
       <View style={styles.cardHeader}>
         {/* Izquierda: Palabra o Pregunta (para mazos custom ocupa más ancho y hasta 2 líneas) */}

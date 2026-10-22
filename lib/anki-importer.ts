@@ -10,16 +10,22 @@ import { File, Paths } from 'expo-file-system';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as SQLite from 'expo-sqlite';
 import {
+  AnkiCard,
+  AnkiNote,
+  buildAnkiCardItems,
   cleanHtmlAndAnkiTags,
   decodeMediaIndex,
+  decodeNotetypeConfig,
+  decodeTemplateConfig,
   decompressZstd,
   enrichVocabularyItem,
   isZstd,
   parseAnkiFuriganaSyntax,
   parseAnkiNotes,
   ParsedVocabularyItem,
-  relaxAnkiCollations,
+  prepareAnkiCollection,
 } from './anki-collection';
+import { AnkiNoteType, noteTypeMediaFiles } from './anki-template';
 import { deleteFileQuietly, getMediaDir, invalidateMediaFilesCache, MediaKind, mediaFileName, mediaPath, sanitizeMediaName } from './media-service';
 import { parseAux } from './word-aux';
 import { openZip, ZipEntry } from './zip-reader';
@@ -317,41 +323,6 @@ export function parseVocabularyFile(content: string, customDelimiter?: string): 
   };
 }
 
-/**
- * Transforma un lote de ParsedVocabularyItem con un mapeo manual definido por el usuario.
- */
-export function applyMappingToRows(
-  rows: string[][],
-  mapping: ColumnMapping
-): ParsedVocabularyItem[] {
-  const items: ParsedVocabularyItem[] = [];
-
-  rows.forEach((row) => {
-    const rawText = row[mapping.textColumnIndex] || '';
-    const rawReading = mapping.readingColumnIndex !== undefined ? row[mapping.readingColumnIndex] : '';
-    const rawMeaning = row[mapping.meaningColumnIndex] || '';
-    const rawLevel = mapping.levelColumnIndex !== undefined ? row[mapping.levelColumnIndex] : '';
-
-    if (!rawText.trim() && !rawMeaning.trim()) return;
-
-    const ankiExtracted = parseAnkiFuriganaSyntax(rawText);
-    const mainText = ankiExtracted.text || cleanHtmlAndAnkiTags(rawText);
-    const reading = cleanHtmlAndAnkiTags(rawReading) || ankiExtracted.reading || '';
-    const cleanMeaningStr = cleanHtmlAndAnkiTags(rawMeaning);
-
-    const splitMeanings = cleanMeaningStr
-      .split(/[;\n\r\/]+/)
-      .map((m) => m.trim())
-      .filter((m) => m.length > 0);
-
-    const meanings = splitMeanings.length > 0 ? splitMeanings : [cleanMeaningStr];
-
-    items.push(enrichVocabularyItem(mainText, reading, meanings, cleanHtmlAndAnkiTags(rawLevel)));
-  });
-
-  return items;
-}
-
 export interface YomiDeckExportPackage {
   format: 'yomi-deck-v1';
   version: number;
@@ -439,14 +410,23 @@ export interface AnkiMediaManifest {
   imageCount: number;
   totalBytes: number;
   missing: string[];
+  /** Archivos del diseño de los tipos de nota (CSS importado, imágenes de las plantillas) que vienen en el zip */
+  designFiles: string[];
 }
 
 export interface AnkiPackageExtractResult {
   deckName: string;
   languageCode: string;
   deckType: 'language' | 'custom';
+  /**
+   * 'vocabulary': mazo de vocabulario con palabra, lectura y significado reconocibles (Yomi corrige solo).
+   * 'anki': cualquier otro; cada tarjeta se muestra con el diseño del mazo y el usuario decide cuándo vuelve.
+   */
+  mode: 'vocabulary' | 'anki';
   items: ParsedVocabularyItem[];
   totalNotes: number;
+  /** Tipos de nota que usan las notas (plantillas, CSS y campos), por id */
+  noteTypes: Record<string, AnkiNoteType>;
   mediaManifest?: AnkiMediaManifest;
 }
 
@@ -477,26 +457,39 @@ async function openCollectionDb(
 }
 
 /**
- * Nombres de campo de cada tipo de nota y nombre de cada mazo. El esquema nuevo de Anki (v18) los guarda
- * en las tablas `fields`, `notetypes` y `decks`; el clásico, como JSON en `col.models` / `col.decks`.
+ * Tipos de nota (campos, plantillas, CSS) y nombre de cada mazo. El esquema nuevo de Anki (v18) los guarda
+ * en las tablas `notetypes`, `fields`, `templates` y `decks`; el clásico, como JSON en `col.models` / `col.decks`.
  */
 async function readCollectionSchema(
   db: SQLite.SQLiteDatabase
-): Promise<{ fieldNamesByModel: Map<number, string[]>; deckNames: Map<number, string> }> {
-  const fieldNamesByModel = new Map<number, string[]>();
+): Promise<{ noteTypes: Map<number, AnkiNoteType>; deckNames: Map<number, string> }> {
+  const noteTypes = new Map<number, AnkiNoteType>();
   const deckNames = new Map<number, string>();
 
   const hasFieldsTable = await db.getFirstAsync(
     "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'fields'"
   );
   if (hasFieldsTable) {
+    const types = await db.getAllAsync<{ id: number; name: string; config: Uint8Array }>(
+      'SELECT id, name, config FROM notetypes'
+    );
+    for (const t of types) {
+      const { kind, css } = decodeNotetypeConfig(t.config);
+      noteTypes.set(Number(t.id), { name: t.name, kind, css, fieldNames: [], templates: [] });
+    }
     const fields = await db.getAllAsync<{ ntid: number; ord: number; name: string }>(
       'SELECT ntid, ord, name FROM fields ORDER BY ntid, ord'
     );
     for (const f of fields) {
-      const names = fieldNamesByModel.get(Number(f.ntid)) ?? [];
-      names[f.ord] = f.name;
-      fieldNamesByModel.set(Number(f.ntid), names);
+      const type = noteTypes.get(Number(f.ntid));
+      if (type) type.fieldNames[f.ord] = f.name;
+    }
+    const templates = await db.getAllAsync<{ ntid: number; ord: number; name: string; config: Uint8Array }>(
+      'SELECT ntid, ord, name, config FROM templates ORDER BY ntid, ord'
+    );
+    for (const tpl of templates) {
+      const type = noteTypes.get(Number(tpl.ntid));
+      if (type) type.templates[tpl.ord] = { name: tpl.name, ...decodeTemplateConfig(tpl.config) };
     }
     // Los mazos anidados se guardan como "Padre\x1fHijo"
     const decks = await db.getAllAsync<{ id: number; name: string }>('SELECT id, name FROM decks');
@@ -505,13 +498,22 @@ async function readCollectionSchema(
     const col = await db.getFirstAsync<{ decks: string; models: string }>('SELECT decks, models FROM col LIMIT 1');
     if (!col) throw new Error('La base de datos de Anki no contiene información de colección.');
     for (const m of Object.values(JSON.parse(col.models || '{}')) as any[]) {
-      fieldNamesByModel.set(Number(m.id), Array.isArray(m.flds) ? m.flds.map((f: any) => String(f.name || '')) : []);
+      const templates = (Array.isArray(m.tmpls) ? [...m.tmpls] : [])
+        .sort((a: any, b: any) => a.ord - b.ord)
+        .map((t: any) => ({ name: String(t.name || ''), qfmt: String(t.qfmt || ''), afmt: String(t.afmt || '') }));
+      noteTypes.set(Number(m.id), {
+        name: String(m.name || ''),
+        kind: m.type === 1 ? 1 : 0,
+        css: String(m.css || ''),
+        fieldNames: Array.isArray(m.flds) ? m.flds.map((f: any) => String(f.name || '')) : [],
+        templates,
+      });
     }
     for (const d of Object.values(JSON.parse(col.decks || '{}')) as any[]) {
       deckNames.set(Number(d.id), String(d.name || ''));
     }
   }
-  return { fieldNamesByModel, deckNames };
+  return { noteTypes, deckNames };
 }
 
 /**
@@ -541,10 +543,10 @@ export async function extractAnkiPackageAsync(
     let dbBytes = reader.readEntry(dbEntry);
     const isNewFormat = isZstd(dbBytes);
     if (isNewFormat) dbBytes = decompressZstd(dbBytes);
-    collection = await openCollectionDb(relaxAnkiCollations(dbBytes));
+    collection = await openCollectionDb(prepareAnkiCollection(dbBytes));
     const db = collection.db;
 
-    const { fieldNamesByModel, deckNames } = await readCollectionSchema(db);
+    const { noteTypes, deckNames } = await readCollectionSchema(db);
 
     // El mazo con más tarjetas (en mazos anidados, el padre suele estar vacío)
     const topDeck = await db.getFirstAsync<{ did: number }>(
@@ -555,13 +557,29 @@ export async function extractAnkiPackageAsync(
       Array.from(deckNames.values()).find((name) => name && name !== 'Default') ||
       'Mazo Anki';
 
-    const notes = await db.getAllAsync<{ mid: number; flds: string }>('SELECT mid, flds FROM notes');
-    const parsed = parseAnkiNotes(
-      notes.map((n) => ({ mid: Number(n.mid), flds: n.flds })),
-      fieldNamesByModel,
-      deckName,
-      preferredLanguage
+    const noteRows = await db.getAllAsync<{ id: number; mid: number; flds: string; tags: string }>(
+      'SELECT id, mid, flds, tags FROM notes'
     );
+    const notes: AnkiNote[] = noteRows.map((n) => ({ id: Number(n.id), mid: Number(n.mid), flds: n.flds, tags: n.tags }));
+    // Las tarjetas que existen (Anki ya resolvió qué plantillas generan tarjeta para cada nota)
+    const cardRows = await db.getAllAsync<{ nid: number; ord: number }>('SELECT nid, ord FROM cards ORDER BY nid, ord');
+    const cards: AnkiCard[] = cardRows.map((c) => ({ noteId: Number(c.nid), ord: Number(c.ord) }));
+    const cardOrdsByNote = new Map<number, number[]>();
+    for (const c of cards) cardOrdsByNote.set(c.noteId, [...(cardOrdsByNote.get(c.noteId) ?? []), c.ord]);
+
+    const fieldNamesByModel = new Map([...noteTypes].map(([id, t]) => [id, t.fieldNames]));
+    const parsed = parseAnkiNotes(notes, fieldNamesByModel, deckName, preferredLanguage, cardOrdsByNote);
+    const mode: AnkiPackageExtractResult['mode'] = parsed.vocabularyDetected ? 'vocabulary' : 'anki';
+    const { items, referencedMedia } =
+      mode === 'vocabulary' ? parsed : buildAnkiCardItems(cards, notes, noteTypes, deckName);
+
+    // Tipos de nota que se usan, y los archivos que pide su diseño (fuentes, CSS importado…)
+    const usedTypes: Record<string, AnkiNoteType> = {};
+    for (const note of notes) {
+      const type = noteTypes.get(note.mid);
+      if (type) usedTypes[String(note.mid)] = type;
+    }
+    const designFiles = new Set(Object.values(usedTypes).flatMap(noteTypeMediaFiles));
 
     // Índice de media: nombre real -> entrada del zip
     let mediaIndex = new Map<string, string>();
@@ -573,14 +591,15 @@ export async function extractAnkiPackageAsync(
         console.warn('[AnkiImporter] Error al leer el índice de media:', e);
       }
     }
+    const findEntry = (fileName: string) =>
+      reader.getEntry(mediaIndex.get(fileName) || mediaIndex.get(fileName.toLowerCase()) || fileName);
 
     const byFile = new Map<string, ZipEntry>();
     const missing: string[] = [];
     const counts: Record<MediaKind, number> = { audio: 0, video: 0, image: 0 };
     let totalBytes = 0;
-    for (const [fileName, kind] of parsed.referencedMedia) {
-      const zipKey = mediaIndex.get(fileName) || mediaIndex.get(fileName.toLowerCase()) || fileName;
-      const entry = reader.getEntry(zipKey);
+    for (const [fileName, kind] of referencedMedia) {
+      const entry = findEntry(fileName);
       if (entry) {
         byFile.set(fileName, entry);
         counts[kind]++;
@@ -589,13 +608,25 @@ export async function extractAnkiPackageAsync(
         missing.push(fileName);
       }
     }
+    const designFilesInZip: string[] = [];
+    for (const fileName of designFiles) {
+      const entry = findEntry(fileName);
+      if (!entry) continue;
+      designFilesInZip.push(fileName);
+      if (!byFile.has(fileName)) {
+        byFile.set(fileName, entry);
+        totalBytes += entry.size;
+      }
+    }
 
     return {
       deckName,
       languageCode: parsed.languageCode,
-      deckType: parsed.deckType,
-      items: parsed.items,
-      totalNotes: parsed.items.length,
+      deckType: mode === 'vocabulary' ? 'language' : 'custom',
+      mode,
+      items,
+      totalNotes: items.length,
+      noteTypes: usedTypes,
       mediaManifest: {
         byFile,
         zstd: isNewFormat,
@@ -604,6 +635,7 @@ export async function extractAnkiPackageAsync(
         imageCount: counts.image,
         totalBytes,
         missing,
+        designFiles: designFilesInZip,
       },
     };
   } finally {

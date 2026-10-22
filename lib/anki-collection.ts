@@ -7,9 +7,10 @@
  */
 
 import { decompress as zstdDecompress } from 'fzstd';
+import { AnkiNoteType, renderAnkiCard } from './anki-template';
 import { getKanjiEssentialReading } from './jlpt-data';
 import { getMediaKind, MEDIA_PLACEHOLDERS, MediaKind } from './media-types';
-import type { MediaItem } from './word-aux';
+import type { AnkiCardRef, MediaItem } from './word-aux';
 
 export interface ParsedVocabularyItem {
   text: string;
@@ -18,6 +19,8 @@ export interface ParsedVocabularyItem {
   level?: string;
   rawExtras?: Record<string, string>;
   media?: MediaItem[];
+  /** Nota y tarjeta de Anki de las que sale (para mostrarla con el diseño del mazo) */
+  anki?: AnkiCardRef;
 }
 
 /**
@@ -190,16 +193,15 @@ export function classifyField(name: string): FieldInfo {
     ...extra,
   });
 
+  const lang = Object.keys(LANGUAGES).find((l) => has(LANGUAGES[l]));
+
   if (has(IGNORED)) return info('ignored');
   if (isSentence) return info('sentence');
   if (has(ON_READING)) return info('on');
   if (has(KUN_READING)) return info('kun');
   if (has(LEVEL)) return info('level');
   if (has(READING)) return info('reading', { isFurigana: tokens.includes('furigana') });
-  if (has(MEANING)) {
-    const lang = Object.keys(LANGUAGES).find((l) => has(LANGUAGES[l]));
-    return info('meaning', { lang });
-  }
+  if (has(MEANING)) return info('meaning', { lang });
   if (has(WORD)) return info('word');
   return info('unknown');
 }
@@ -213,6 +215,11 @@ export interface FieldPlan {
   on: number;
   kun: number;
   level: number;
+  /**
+   * Los campos de palabra, lectura y significado se reconocieron por su nombre (no por descarte):
+   * es un mazo de vocabulario que Yomi puede corregir solo. Si no, se muestra como lo diseñó el mazo.
+   */
+  confident: boolean;
 }
 
 export function buildFieldPlan(fieldNames: string[], preferredLanguage?: string): FieldPlan {
@@ -229,7 +236,9 @@ export function buildFieldPlan(fieldNames: string[], preferredLanguage?: string)
 
   // Significado en el idioma del usuario, después sin idioma, en inglés y el resto
   const langRank = (lang?: string) => (lang === preferredLanguage ? 0 : !lang ? 1 : lang === 'en' ? 2 : 3);
-  let meaning = indicesOf('meaning').sort((a, b) => langRank(fields[a].lang) - langRank(fields[b].lang));
+  const byLanguage = (a: number, b: number) => langRank(fields[a].lang) - langRank(fields[b].lang);
+  let meaning = indicesOf('meaning').sort(byLanguage);
+  const confident = indicesOf('word').length > 0 && reading.length > 0 && meaning.length > 0;
   if (meaning.length === 0) meaning = unknown.filter((i) => !word.includes(i));
 
   return {
@@ -240,6 +249,7 @@ export function buildFieldPlan(fieldNames: string[], preferredLanguage?: string)
     on: indicesOf('on')[0] ?? -1,
     kun: indicesOf('kun')[0] ?? -1,
     level: indicesOf('level')[0] ?? -1,
+    confident,
   };
 }
 
@@ -300,12 +310,27 @@ export function decompressZstd(bytes: Uint8Array): Uint8Array {
 }
 
 /**
+ * Deja la copia de la colección lista para leerla con un SQLite que no es el de Anki. Se aplica sobre
+ * la copia que se lee al importar, nunca sobre el .apkg.
+ *
+ * - Modo de journal: el formato nuevo guarda la base en modo WAL (bytes 18-19 del encabezado = 2), y SQLite
+ *   no puede abrir en memoria (deserialize) una base WAL: toda consulta falla con "unable to open database
+ *   file". Se marca como rollback journal (1), que no cambia los datos.
+ * - Intercalación: ver relaxAnkiCollations.
+ */
+export function prepareAnkiCollection(db: Uint8Array): Uint8Array {
+  if (db[18] === 2) db[18] = 1;
+  if (db[19] === 2) db[19] = 1;
+  return relaxAnkiCollations(db);
+}
+
+/**
  * Las colecciones del formato nuevo declaran columnas con `COLLATE unicase`, una intercalación que sólo
  * existe dentro de Anki: cualquier otro SQLite falla al leer `fields` o `decks` ("no such collation sequence").
  * Se reemplaza en el esquema por `nocase` (incorporada en SQLite), que ocupa los mismos bytes, así que el
- * archivo sigue siendo válido. Se aplica sobre la copia que se lee al importar, nunca sobre el .apkg.
+ * archivo sigue siendo válido.
  */
-export function relaxAnkiCollations(db: Uint8Array): Uint8Array {
+function relaxAnkiCollations(db: Uint8Array): Uint8Array {
   const from = new TextEncoder().encode('COLLATE unicase');
   const to = new TextEncoder().encode('COLLATE nocase ');
   for (let i = 0; i <= db.length - from.length; i++) {
@@ -349,10 +374,8 @@ function skipProtoField(buf: Uint8Array, pos: number, wireType: number): number 
  * Dentro del zip, el archivo de cada entrada se llama como su posición ("0", "1"…).
  */
 function parseMediaEntries(buf: Uint8Array): Array<{ name: string; zipName: string }> {
-  const decoder = new TextDecoder('utf-8');
   const entries: Array<{ name: string; zipName: string }> = [];
-  let pos = 0;
-  while (pos < buf.length) {
+  for (let pos = 0; pos < buf.length; ) {
     const [key, afterKey] = readVarint(buf, pos);
     pos = afterKey;
     if (key >>> 3 !== 1 || (key & 7) !== 2) {
@@ -360,26 +383,9 @@ function parseMediaEntries(buf: Uint8Array): Array<{ name: string; zipName: stri
       continue;
     }
     const [len, start] = readVarint(buf, pos);
-    const end = start + len;
-    let name = '';
-    let legacyZipName: number | undefined;
-    for (let p = start; p < end; ) {
-      const [fieldKey, afterFieldKey] = readVarint(buf, p);
-      const field = Math.floor(fieldKey / 8);
-      const wireType = fieldKey & 7;
-      p = afterFieldKey;
-      if (field === 1 && wireType === 2) {
-        const [strLen, strStart] = readVarint(buf, p);
-        name = decoder.decode(buf.subarray(strStart, strStart + strLen));
-        p = strStart + strLen;
-      } else if (field === 255 && wireType === 0) {
-        [legacyZipName, p] = readVarint(buf, p);
-      } else {
-        p = skipProtoField(buf, p, wireType);
-      }
-    }
-    entries.push({ name, zipName: String(legacyZipName ?? entries.length) });
-    pos = end;
+    const entry = readProtoStrings(buf.subarray(start, start + len));
+    entries.push({ name: entry.strings.get(1) ?? '', zipName: String(entry.varints.get(255) ?? entries.length) });
+    pos = start + len;
   }
   return entries;
 }
@@ -408,19 +414,30 @@ export function decodeMediaIndex(bytes: Uint8Array): Map<string, string> {
 // ─── Notas ──────────────────────────────────────────────────────────────────────────────────────
 
 export interface AnkiNote {
+  /** notes.id */
+  id: number;
   /** id del tipo de nota (notes.mid) */
   mid: number;
   /** campos separados por \x1f, como vienen en notes.flds */
   flds: string;
+  /** etiquetas separadas por espacios (notes.tags) */
+  tags?: string;
 }
 
 export interface ParsedAnkiCollection {
   languageCode: string;
-  deckType: 'language' | 'custom';
+  /** Ítems de vocabulario (uno por nota). Sólo se usan si vocabularyDetected; si no, ver buildAnkiCardItems. */
   items: ParsedVocabularyItem[];
   /** Archivos que referencian las notas, con su tipo. */
   referencedMedia: Map<string, MediaKind>;
+  /**
+   * Mazo de vocabulario japonés o chino cuyo tipo de nota principal tiene palabra, lectura y significado
+   * reconocibles: se importa como mazo de idiomas. Si no, como personalizado con el diseño del mazo.
+   */
+  vocabularyDetected: boolean;
 }
+
+const splitTags = (tags?: string) => (tags || '').trim().split(/\s+/).filter(Boolean);
 
 /** Un mazo de vocabulario no tiene palabras de más de esto: es una nota de bienvenida o instrucciones. */
 const MAX_VOCAB_TEXT_LENGTH = 50;
@@ -434,7 +451,9 @@ export function parseAnkiNotes(
   notes: AnkiNote[],
   fieldNamesByModel: Map<number, string[]>,
   deckName: string,
-  preferredLanguage?: string
+  preferredLanguage?: string,
+  /** Tarjetas de cada nota (cards.ord): la primera es la que se usa para mostrar el dorso del mazo */
+  cardOrdsByNote?: Map<number, number[]>
 ): ParsedAnkiCollection {
   const plans = new Map<number, FieldPlan>();
   const planFor = (mid: number) => {
@@ -505,45 +524,172 @@ export function parseAnkiNotes(
       else hasChineseChars = true;
     }
 
-    items.push(
-      enrichVocabularyItem(
-        text,
-        reading,
-        splitMeanings.length > 0 ? splitMeanings : [meaning],
-        plan.level >= 0 ? clean[plan.level] : undefined,
-        {
-          ...(rawOn ? { onReading: rawOn } : {}),
-          ...(rawKun ? { kunReading: rawKun } : {}),
-        },
-        noteMedia
-      )
+    const item = enrichVocabularyItem(
+      text,
+      reading,
+      splitMeanings.length > 0 ? splitMeanings : [meaning],
+      plan.level >= 0 ? clean[plan.level] : undefined,
+      {
+        ...(rawOn ? { onReading: rawOn } : {}),
+        ...(rawKun ? { kunReading: rawKun } : {}),
+      },
+      noteMedia
     );
+    item.anki = {
+      noteId: note.id,
+      mid: note.mid,
+      ord: cardOrdsByNote?.get(note.id)?.[0] ?? 0,
+      fields: rawFields,
+      tags: splitTags(note.tags),
+    };
+    items.push(item);
   }
 
-  let languageCode: string;
-  let deckType: 'language' | 'custom' = 'language';
-  if (hasJapaneseChars || /jlpt|kanji|n5|n4|n3|n2|n1/i.test(deckName)) {
-    languageCode = 'ja-JP';
-  } else if (hasChineseChars || /hsk|hanzi|pinyin/i.test(deckName)) {
-    languageCode = 'zh-CN';
-  } else {
-    // Mazo genérico o personalizado (Preguntas y Respuestas, Medicina, Historia, etc.)
-    languageCode = 'es-ES';
-    deckType = 'custom';
-  }
+  // Idioma del contenido (también lo usan los mazos que no son de vocabulario: elige la forma de kanji/hanzi).
+  // Un mazo genérico (preguntas y respuestas, medicina, historia…) queda en español.
+  const looksJapanese = hasJapaneseChars || /jlpt|kanji|n5|n4|n3|n2|n1/i.test(deckName);
+  const looksChinese = !looksJapanese && (hasChineseChars || /hsk|hanzi|pinyin/i.test(deckName));
+  const languageCode = looksJapanese ? 'ja-JP' : looksChinese ? 'zh-CN' : 'es-ES';
 
-  if (deckType === 'custom') {
-    // La respuesta completa en el dorso, sin fragmentar por delimitadores de vocabulario
-    for (const item of items) {
-      item.reading = undefined;
-      if (item.meanings.length > 1) item.meanings = [item.meanings.join('; ')];
-    }
-    return { languageCode, deckType, items, referencedMedia };
-  }
+  // Vocabulario que Yomi puede corregir solo: japonés o chino, y el tipo de nota con más notas tiene
+  // palabra, lectura y significado reconocibles
+  const notesPerModel = new Map<number, number>();
+  for (const note of notes) notesPerModel.set(note.mid, (notesPerModel.get(note.mid) ?? 0) + 1);
+  const mainModel = [...notesPerModel.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+  const vocabularyDetected = (looksJapanese || looksChinese) && mainModel !== undefined && planFor(mainModel).confident;
 
   // Notas de bienvenida / instrucciones (p. ej. la primera de Kaishi): sin lectura, y con texto largo o sin significado
   const vocabItems = items.filter(
     (it) => it.reading || (it.text.length <= MAX_VOCAB_TEXT_LENGTH && it.meanings.some((m) => m.trim()))
   );
-  return { languageCode, deckType, items: vocabItems, referencedMedia };
+  return { languageCode, items: vocabItems, referencedMedia, vocabularyDetected };
+}
+
+// ─── Mazos con su propio diseño ────────────────────────────────────────────────────────────────
+
+export interface AnkiCard {
+  /** cards.nid */
+  noteId: number;
+  /** cards.ord: plantilla (o número de cloze - 1) */
+  ord: number;
+}
+
+/** Texto plano de un HTML de tarjeta: para la lista del mazo y la búsqueda. */
+function plainText(html: string): string {
+  return cleanHtmlAndAnkiTags(html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, ''))
+    .replace(/&#x([0-9a-f]+);/gi, (_m, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_m, dec: string) => String.fromCodePoint(Number(dec)))
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const SPECIAL_FIELDS = new Set(['FrontSide', 'Tags', 'Deck', 'Subdeck', 'Card', 'CardFlag', 'Type']);
+
+/** Campos que muestra una plantilla, en orden de aparición ({{Campo}} y {{filtro:Campo}}, sin condicionales). */
+function templateFieldOrder(template: string, fieldNames: string[]): number[] {
+  const order: number[] = [];
+  const withoutScripts = template.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<!--[\s\S]*?-->/g, '');
+  for (const m of withoutScripts.matchAll(/\{\{([^#^/!][^}]*)\}\}/g)) {
+    const name = m[1].split(':').pop()!.trim();
+    const index = fieldNames.indexOf(name);
+    if (!SPECIAL_FIELDS.has(name) && index >= 0 && !order.includes(index)) order.push(index);
+  }
+  return order;
+}
+
+const MAX_PLAIN_LENGTH = 300;
+
+/**
+ * Una tarjeta de Yomi por cada tarjeta de Anki (una nota con "reconocimiento" y "producción" da dos),
+ * para mazos que no son vocabulario claro: se muestran con el diseño del mazo (anki-template) y el usuario
+ * decide cuándo vuelven. El texto plano del frente y del dorso queda para la lista del mazo y la búsqueda.
+ */
+export function buildAnkiCardItems(
+  cards: AnkiCard[],
+  notes: AnkiNote[],
+  noteTypes: Map<number, AnkiNoteType>,
+  deckName: string
+): { items: ParsedVocabularyItem[]; referencedMedia: Map<string, MediaKind> } {
+  const notesById = new Map(notes.map((n) => [n.id, n]));
+  const items: ParsedVocabularyItem[] = [];
+  const referencedMedia = new Map<string, MediaKind>();
+
+  for (const card of cards) {
+    const note = notesById.get(card.noteId);
+    const noteType = note && noteTypes.get(note.mid);
+    if (!note || !noteType) continue;
+
+    const fields = (note.flds || '').split('\x1f');
+    const tags = splitTags(note.tags);
+    let rendered;
+    try {
+      rendered = renderAnkiCard({ noteType, fields, ord: card.ord, tags, deckName, mediaUrl: (name) => name });
+    } catch {
+      continue; // plantilla inexistente para esa tarjeta
+    }
+
+    const media = fields.flatMap((raw) => extractMediaFromField(raw, false, false));
+    for (const m of media) referencedMedia.set(m.file, m.kind);
+
+    // Etiqueta del frente: el primer campo con contenido que muestra (como identifica Anki a una nota);
+    // en cloze, el frente entero con el hueco. Si no hay texto, el tipo de media.
+    const fullQuestion = plainText(rendered.question);
+    const firstField = noteType.kind === 1
+      ? undefined
+      : templateFieldOrder(noteType.templates[card.ord]?.qfmt ?? '', noteType.fieldNames)
+          .map((i) => plainText(parseAnkiFuriganaSyntax(fields[i] ?? '').text))
+          .find(Boolean);
+    let question = firstField || fullQuestion;
+    let answer = plainText(rendered.answer);
+    if (answer.startsWith(fullQuestion)) answer = answer.slice(fullQuestion.length).trim();
+    if (!question) question = media[0] ? MEDIA_PLACEHOLDERS[media[0].kind] : '…';
+
+    items.push({
+      text: question.slice(0, MAX_PLAIN_LENGTH),
+      meanings: [answer.slice(0, MAX_PLAIN_LENGTH)],
+      media: media.length > 0 ? media : undefined,
+      anki: { noteId: note.id, mid: note.mid, ord: card.ord, fields, tags },
+    });
+  }
+  return { items, referencedMedia };
+}
+
+/**
+ * Configuración de un tipo de nota en el formato nuevo (tabla notetypes, protobuf NotetypeConfig):
+ * kind = 1 (0 estándar, 1 cloze), css = 3.
+ */
+export function decodeNotetypeConfig(config: Uint8Array): { kind: 0 | 1; css: string } {
+  const fields = readProtoStrings(config);
+  return { kind: fields.varints.get(1) === 1 ? 1 : 0, css: fields.strings.get(3) ?? '' };
+}
+
+/** Plantilla de tarjeta en el formato nuevo (tabla templates, protobuf CardTemplateConfig): q_format = 1, a_format = 2. */
+export function decodeTemplateConfig(config: Uint8Array): { qfmt: string; afmt: string } {
+  const fields = readProtoStrings(config);
+  return { qfmt: fields.strings.get(1) ?? '', afmt: fields.strings.get(2) ?? '' };
+}
+
+/** Primer valor de cada campo de nivel superior de un mensaje protobuf (texto o número). */
+function readProtoStrings(buf: Uint8Array): { strings: Map<number, string>; varints: Map<number, number> } {
+  const decoder = new TextDecoder('utf-8');
+  const strings = new Map<number, string>();
+  const varints = new Map<number, number>();
+  for (let pos = 0; pos < buf.length; ) {
+    const [key, afterKey] = readVarint(buf, pos);
+    const field = Math.floor(key / 8);
+    const wireType = key & 7;
+    pos = afterKey;
+    if (wireType === 2) {
+      const [len, start] = readVarint(buf, pos);
+      if (!strings.has(field)) strings.set(field, decoder.decode(buf.subarray(start, start + len)));
+      pos = start + len;
+    } else if (wireType === 0) {
+      const [value, next] = readVarint(buf, pos);
+      if (!varints.has(field)) varints.set(field, value);
+      pos = next;
+    } else {
+      pos = skipProtoField(buf, pos, wireType);
+    }
+  }
+  return { strings, varints };
 }

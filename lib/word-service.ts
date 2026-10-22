@@ -12,7 +12,7 @@ import { registerWordInDictionary } from './phonetic-dictionary';
 
 import * as crypto from 'expo-crypto';
 import { isMediaPlaceholder } from './media-service';
-import { parseAux, stringifyAux, WordAux, MediaItem } from './word-aux';
+import { AnkiCardRef, parseAux, stringifyAux, WordAux, MediaItem } from './word-aux';
 
 /**
  * Clave para detectar tarjetas repetidas al importar. Las tarjetas cuyo frente era sólo un archivo
@@ -20,6 +20,16 @@ import { parseAux, stringifyAux, WordAux, MediaItem } from './word-aux';
  */
 function duplicateKey(text: string, base: string, meaningsJson: string, firstMediaFile: () => string): string {
   return isMediaPlaceholder(text) ? `${base}__${firstMediaFile()}__${meaningsJson}` : base;
+}
+
+/**
+ * Guardado en lote dentro de una transacción: miles de INSERT se confirman juntos en el disco en lugar de uno
+ * por uno (importar un mazo grande pasa de minutos a segundos), y si algo falla no queda el lote a medias.
+ * No es exclusiva (la exclusiva usa otra conexión y Drizzle trabaja sobre la principal): durante una
+ * importación no se escribe nada más.
+ */
+async function inTransaction(work: () => Promise<void>): Promise<void> {
+  await db.$client.withTransactionAsync(work);
 }
 
 function generateUUID(): string {
@@ -756,6 +766,7 @@ export async function saveBatchWords(
     level?: string;
     rawExtras?: Record<string, string>;
     media?: MediaItem[];
+    anki?: AnkiCardRef;
   }>
 ): Promise<{ inserted: number; skipped: number }> {
   let inserted = 0;
@@ -775,48 +786,112 @@ export async function saveBatchWords(
     })
   );
 
-  for (const item of items) {
-    const cleanText = item.text.trim();
-    const cleanReading = (item.reading || '').trim();
-    if (!cleanText) continue;
+  await inTransaction(async () => {
+    for (const item of items) {
+      const cleanText = item.text.trim();
+      const cleanReading = (item.reading || '').trim();
+      if (!cleanText) continue;
 
-    const meaningsJson = JSON.stringify(item.meanings.length > 0 ? item.meanings : [cleanText]);
-    const key = duplicateKey(cleanText, `${cleanText}__${cleanReading.toLowerCase()}`, meaningsJson, () => item.media?.[0]?.file ?? '');
+      const meaningsJson = JSON.stringify(item.meanings.length > 0 ? item.meanings : [cleanText]);
+      const key = duplicateKey(cleanText, `${cleanText}__${cleanReading.toLowerCase()}`, meaningsJson, () => item.media?.[0]?.file ?? '');
 
-    if (existingSet.has(key)) {
-      skipped++;
-      continue;
+      if (existingSet.has(key)) {
+        skipped++;
+        continue;
+      }
+
+      const wordId = generateUUID();
+      const auxInfo = stringifyAux({
+        ...(item.level && { level: item.level.trim() }),
+        ...item.rawExtras,
+        ...(item.media && item.media.length > 0 && { media: item.media }),
+        ...(item.anki && { anki: item.anki }),
+      });
+
+      await db.insert(words).values({
+        id: wordId,
+        deckId,
+        simplified: cleanText,
+        traditional: cleanText,
+        pinyinDisplay: cleanReading,
+        pinyinNumeric: cleanReading.toLowerCase(),
+        meanings: meaningsJson,
+        auxiliaryInfo: auxInfo,
+        createdAt: new Date(),
+      });
+
+      const srsInsert = createNewSrsItem('word', wordId, {
+        displayText: cleanText,
+        displayReading: cleanReading,
+        displayMeaning: meaningsJson,
+      });
+
+      await db.insert(srsItems).values(srsInsert);
+      existingSet.add(key);
+      inserted++;
     }
+  });
 
-    const wordId = generateUUID();
-    const auxInfo = stringifyAux({
-      ...(item.level && { level: item.level.trim() }),
-      ...item.rawExtras,
-      ...(item.media && item.media.length > 0 && { media: item.media }),
-    });
+  return { inserted, skipped };
+}
 
-    await db.insert(words).values({
-      id: wordId,
-      deckId,
-      simplified: cleanText,
-      traditional: cleanText,
-      pinyinDisplay: cleanReading,
-      pinyinNumeric: cleanReading.toLowerCase(),
-      meanings: meaningsJson,
-      auxiliaryInfo: auxInfo,
-      createdAt: new Date(),
-    });
+/**
+ * Guarda tarjetas de un mazo de Anki que se muestra con su propio diseño (una por tarjeta de Anki).
+ * No se descartan por texto repetido, como en los mazos personalizados: dos notas distintas con el mismo
+ * frente son dos tarjetas. Sólo se omite la misma tarjeta de la misma nota (al reimportar el mazo).
+ */
+export async function saveBatchAnkiCards(
+  deckId: string,
+  items: Array<{ text: string; meanings: string[]; media?: MediaItem[]; anki?: AnkiCardRef }>
+): Promise<{ inserted: number; skipped: number }> {
+  let inserted = 0;
+  let skipped = 0;
 
-    const srsInsert = createNewSrsItem('word', wordId, {
-      displayText: cleanText,
-      displayReading: cleanReading,
-      displayMeaning: meaningsJson,
-    });
+  const cardKey = (ref: AnkiCardRef) => `${ref.noteId}:${ref.ord}`;
+  const existingRows = await db
+    .select({ aux: words.auxiliaryInfo })
+    .from(words)
+    .where(and(eq(words.deckId, deckId), like(words.auxiliaryInfo, '%"anki"%')));
+  const existing = new Set(
+    existingRows.flatMap((r) => {
+      const ref = parseAux(r.aux).anki;
+      return ref ? [cardKey(ref)] : [];
+    })
+  );
 
-    await db.insert(srsItems).values(srsInsert);
-    existingSet.add(key);
-    inserted++;
-  }
+  await inTransaction(async () => {
+    for (const item of items) {
+      if (!item.anki) continue;
+      const key = cardKey(item.anki);
+      if (existing.has(key)) {
+        skipped++;
+        continue;
+      }
+
+      const wordId = generateUUID();
+      const text = item.text.trim();
+      const meaningsJson = JSON.stringify(item.meanings);
+      await db.insert(words).values({
+        id: wordId,
+        deckId,
+        simplified: text,
+        traditional: text,
+        pinyinDisplay: '',
+        pinyinNumeric: '',
+        meanings: meaningsJson,
+        auxiliaryInfo: stringifyAux({
+          anki: item.anki,
+          ...(item.media && item.media.length > 0 && { media: item.media }),
+        }),
+        createdAt: new Date(),
+      });
+      await db.insert(srsItems).values(
+        createNewSrsItem('word', wordId, { displayText: text, displayReading: '', displayMeaning: meaningsJson })
+      );
+      existing.add(key);
+      inserted++;
+    }
+  });
 
   return { inserted, skipped };
 }

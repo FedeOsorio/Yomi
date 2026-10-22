@@ -7,7 +7,7 @@ import { CardVideo } from '../media/CardVideo';
 import { CardImage } from '../media/CardImage';
 import { detectTextLanguage, formatJapaneseReading, toNormalizedHiragana } from '../../../lib/japanese-utils';
 import { DueCardWithContext } from '../../../lib/srs-engine';
-import { parseAux } from '../../../lib/word-aux';
+import { hasAnkiCardRef, parseAux } from '../../../lib/word-aux';
 import { Spacing, Typography } from '../../constants/theme';
 import { useTranslation } from '../../i18n';
 import { CardEvaluation, StudyMethod } from '../../stores/reviewStore';
@@ -100,6 +100,7 @@ export function ReviewCard({
   const isJapanese = lang.startsWith('ja');
 
   const aux = useMemo(() => parseAux(currentCard.auxiliaryInfo), [currentCard.auxiliaryInfo]);
+  const fromAnkiDeck = hasAnkiCardRef(currentCard.auxiliaryInfo);
   const kanjiReadings = aux.kanjiReadings;
   const frontVideos = useMemo(() => getCardMediaUris(aux, 'video', 'front'), [aux]);
   const backVideos = useMemo(() => getCardMediaUris(aux, 'video', 'back'), [aux]);
@@ -313,8 +314,9 @@ export function ReviewCard({
                 {meaningsList.join(', ')}
               </Text>
 
-              {/* Botón de audio de la oración si existe */}
-              {sentenceAudio && (
+              {/* Media complementaria: sólo si la tarjeta no viene de Anki (si viene, el dorso del mazo
+                  se muestra debajo con su oración, imagen y audios) */}
+              {!fromAnkiDeck && sentenceAudio && (
                 <TouchableOpacity
                   style={[styles.sentenceAudioBtn, { backgroundColor: colors.surface }]}
                   activeOpacity={0.7}
@@ -322,14 +324,12 @@ export function ReviewCard({
                 >
                   <Ionicons name="volume-medium" size={15} color={colors.primary} />
                   <Text style={[styles.sentenceAudioBtnText, { color: colors.primary }]}>
-                    Audio de ejemplo
+                    {t('wordDetail.sentenceAudio')}
                   </Text>
                 </TouchableOpacity>
               )}
-
-              {/* Media complementaria en dorso de tarjeta de idioma */}
-              {backImages.length > 0 && <CardImage uri={backImages[0]} />}
-              {isChecked && backVideos.length > 0 && <CardVideo uri={backVideos[0]} />}
+              {!fromAnkiDeck && backImages.length > 0 && <CardImage uri={backImages[0]} />}
+              {!fromAnkiDeck && isChecked && backVideos.length > 0 && <CardVideo uri={backVideos[0]} />}
             </View>
           </>
         )}

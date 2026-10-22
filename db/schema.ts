@@ -26,6 +26,8 @@ export const decks = sqliteTable('decks', {
   type: text('type', { enum: ['language', 'custom'] }).notNull().default('language'),
   folderId: text('folder_id').references(() => folders.id, { onDelete: 'set null' }),
   mediaSource: text('media_source'),
+  // Tipos de nota de un mazo importado de Anki (plantillas, CSS, campos), JSON: { [mid]: AnkiNoteType }
+  ankiNoteTypes: text('anki_note_types'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
 

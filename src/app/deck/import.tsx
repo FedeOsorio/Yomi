@@ -31,6 +31,7 @@ import {
   parseVocabularyFile,
   extractAnkiPackageAsync,
   AnkiMediaManifest,
+  AnkiPackageExtractResult,
   ParseResult,
 } from '../../../lib/anki-importer';
 import { importAnkiDeckAsync } from '../../../lib/anki-import-service';
@@ -45,6 +46,18 @@ import {
 import { saveBatchWords, saveBatchCustomCards } from '../../../lib/word-service';
 import { notifyDataChanged } from '../../../lib/backup-service';
 import { getCurrentUserLanguage, useTranslation } from '../../i18n';
+
+/**
+ * Un .apkg sólo se agrega a un mazo del mismo tipo: vocabulario (corregido por Yomi) a un mazo de idiomas del
+ * mismo idioma; tarjetas con el diseño del mazo a uno personalizado. Mezclarlos se vería y repasaría mal.
+ */
+function isApkgCompatibleWithDeck(
+  deck: DeckWithStats | undefined,
+  apkg: Pick<AnkiPackageExtractResult, 'mode' | 'languageCode'>
+): boolean {
+  if (!deck) return true;
+  return apkg.mode === 'anki' ? deck.type === 'custom' : deck.type !== 'custom' && deck.languageCode === apkg.languageCode;
+}
 
 export default function ImportDeckScreen() {
   const { colors } = useTheme();
@@ -80,6 +93,8 @@ export default function ImportDeckScreen() {
   const [ankiFileUri, setAnkiFileUri] = useState<string | null>(null);
   const [ankiFileName, setAnkiFileName] = useState<string>('');
   const [ankiMediaManifest, setAnkiMediaManifest] = useState<AnkiMediaManifest | null>(null);
+  // Cómo se importa el .apkg (vocabulario corregido por Yomi o tarjetas con el diseño del mazo) y su diseño
+  const [ankiImport, setAnkiImport] = useState<Pick<AnkiPackageExtractResult, 'mode' | 'noteTypes' | 'languageCode'> | null>(null);
   const [importProgress, setImportProgress] = useState<{ done: number; total: number; text: string } | null>(null);
 
   const cachedAnkiUriRef = useRef<string | null>(null);
@@ -206,8 +221,13 @@ export default function ImportDeckScreen() {
           return;
         }
 
-        if (!newDeckName || targetMode === 'new') {
+        const switchToNewDeck = targetMode === 'existing' && !isApkgCompatibleWithDeck(selectedDeck, result);
+        if (!newDeckName || targetMode === 'new' || switchToNewDeck) {
           setNewDeckName(result.deckName || filename.replace(/\.apkg$/i, ''));
+        }
+        if (switchToNewDeck) {
+          setTargetMode('new');
+          Alert.alert(t('common.notice'), t('importDeck.apkgNewDeckNotice'));
         }
         if (result.languageCode) {
           setSelectedLang(result.languageCode);
@@ -219,6 +239,7 @@ export default function ImportDeckScreen() {
         setAnkiFileUri(file.uri);
         setAnkiFileName(filename);
         setAnkiMediaManifest(result.mediaManifest || null);
+        setAnkiImport({ mode: result.mode, noteTypes: result.noteTypes, languageCode: result.languageCode });
 
         setParseResult({
           delimiter: 'Anki (.apkg)',
@@ -245,6 +266,7 @@ export default function ImportDeckScreen() {
         }
         setAnkiFileUri(null);
         setAnkiMediaManifest(null);
+        setAnkiImport(null);
         const content = await FileSystem.readAsStringAsync(file.uri);
         // Limpiar archivo no-apkg de caché tras leerlo
         deleteFileQuietly(file.uri);
@@ -348,6 +370,10 @@ export default function ImportDeckScreen() {
         Alert.alert(t('common.attention'), t('importDeck.alertSelectDeck'));
         return;
       }
+      if (ankiFileUri && ankiImport && !isApkgCompatibleWithDeck(selectedDeck, ankiImport)) {
+        Alert.alert(t('common.attention'), t('importDeck.alertApkgDeckMismatch'));
+        return;
+      }
     }
 
     setIsProcessing(true);
@@ -408,6 +434,9 @@ export default function ImportDeckScreen() {
             fileUri: ankiFileUri,
             fileName: ankiFileName || 'anki_deck.apkg',
             items: parseResult.items,
+            mode: ankiImport?.mode,
+            noteTypes: ankiImport?.noteTypes,
+            languageCode: ankiImport?.languageCode,
             manifest: ankiMediaManifest,
             getDeckId: ensureTargetDeckId,
             onProgress: showProgress,

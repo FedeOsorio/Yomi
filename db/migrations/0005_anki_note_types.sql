@@ -1,0 +1,1 @@
+ALTER TABLE `decks` ADD `anki_note_types` text;

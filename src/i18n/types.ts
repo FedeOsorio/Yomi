@@ -215,6 +215,8 @@ export interface TranslationSchema {
     laterSub: string;
     nextDay: string;
     nextDaySub: string;
+    learned: string;
+    learnedSub: string;
     never: string;
     neverSub: string;
     markIncorrect: string;
@@ -248,6 +250,8 @@ export interface TranslationSchema {
     micNotStartedMsg: string;
   };
   wordDetail: {
+    cardTitle: string;
+    sentenceAudio: string;
     title: string;
     strokeOrder: string;
     essentialReadings: string;
@@ -551,6 +555,8 @@ export interface TranslationSchema {
     mediaImportedCount: string;
     mediaSkippedCount: string;
     alertInvalidApkgFormat: string;
+    apkgNewDeckNotice: string;
+    alertApkgDeckMismatch: string;
     mediaSummaryTitle: string;
     mediaAudioCount: string;
     mediaVideoCount: string;

@@ -17,12 +17,14 @@ import { detectTextLanguage, getEffectiveCardLanguage } from '../../../lib/japan
 import { calculateChineseAccuracyScore } from '../../../lib/pinyin-utils';
 import { JLPT_KANJI_READINGS } from '../../../lib/jlpt-data';
 import { singleKanjiReadings } from '../../../lib/voice-match';
-import { parseAux } from '../../../lib/word-aux';
+import { hasAnkiCardRef, parseAux } from '../../../lib/word-aux';
 import {
   calculateReviewRating,
   checkMeaningMatch,
   checkReadingMatch,
+  nextLearnedInterval,
   removeCardFromReview,
+  rescheduleCardLearned,
   rescheduleCardNextDay,
 } from '../../../lib/srs-engine';
 import { useTheme } from '../../../providers/ThemeProvider';
@@ -30,6 +32,7 @@ import { ConjugationPracticeModal } from '../../components/ConjugationPracticeMo
 import { DeckPicker } from '../../components/review/DeckPicker';
 import { CustomCardAction, ReviewBottomBar } from '../../components/review/ReviewBottomBar';
 import { ReviewCard } from '../../components/review/ReviewCard';
+import { AnkiCardView } from '../../components/anki/AnkiCardView';
 import { ReviewMethodModal } from '../../components/review/ReviewMethodModal';
 import { SessionSummaryView } from '../../components/review/SessionSummaryView';
 import { VoiceMicControl } from '../../components/review/VoiceMicControl';
@@ -168,7 +171,7 @@ export default function ReviewScreen() {
   useEffect(() => {
     if (!currentCard || isChecked || sessionCompleted) return;
     const isCustom = currentCard.deckType === 'custom' || currentCard.languageCode === 'custom' || currentCard.languageCode === 'es-ES';
-    if (!isCustom) return;
+    if (!isCustom || hasAnkiCardRef(currentCard.auxiliaryInfo)) return;
     const timer = setTimeout(() => speakCard(currentCard, detectTextLanguage(currentCard.displayText), { side: 'front' }), 300);
     return () => clearTimeout(timer);
   }, [currentCard?.id, isChecked, sessionCompleted]);
@@ -180,11 +183,14 @@ export default function ReviewScreen() {
     speakCard(currentCard, getEffectiveCardLanguage(currentCard), { reading: currentCard.displayReading, side: 'back' });
   };
 
-  /** Muestra el dorso con la evaluación y lee la palabra al terminar el giro. */
+  /**
+   * Muestra el dorso con la evaluación y lee la palabra al terminar el giro. En tarjetas de un mazo de Anki
+   * no: suenan los audios del dorso del mazo, que se muestra debajo como contexto.
+   */
   const revealAnswer = (result: CardEvaluation) => {
     setEvaluation(result);
     setIsChecked(true);
-    flip.showBack(320, speakCurrentCard);
+    flip.showBack(320, currentCard && hasAnkiCardRef(currentCard.auxiliaryInfo) ? undefined : speakCurrentCard);
   };
 
   const handleCheck = () => {
@@ -267,13 +273,16 @@ export default function ReviewScreen() {
     setTimeout(async () => {
       try {
         if (action === 'soon') {
-          reinsertCurrentCardAhead(5, 10); // entre 5 y 10 tarjetas más adelante
+          reinsertCurrentCardAhead(10, 20); // entre 10 y 20 tarjetas más adelante, al azar
           advanceCard(false);
         } else if (action === 'later') {
           reinsertCurrentCardAtEnd();
           advanceCard(false);
         } else if (action === 'next_day') {
           await rescheduleCardNextDay(cardId);
+          advanceCard(true);
+        } else if (action === 'learned') {
+          await rescheduleCardLearned(cardId);
           advanceCard(true);
         } else {
           await removeCardFromReview(cardId);
@@ -376,6 +385,61 @@ export default function ReviewScreen() {
   const accent = isCustomCard ? '#10B981' : colors.primary;
   const isVoice = studyMethod === 'voice';
 
+  const yomiCard = (
+    <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+      {isVoice && <VoiceTranscriptArea card={currentCard} isChecked={isChecked} feedback={voice.feedback} colors={colors} />}
+
+      <ReviewCard
+        card={currentCard}
+        lang={lang}
+        studyMethod={studyMethod}
+        isChecked={isChecked}
+        isCustomCard={isCustomCard}
+        evaluation={evaluation}
+        meaningsList={meaningsList}
+        colors={colors}
+        frontStyle={flip.frontStyle}
+        backStyle={flip.backStyle}
+        onSubmitText={handleCheck}
+      />
+
+      {/* Debajo de la tarjeta: micrófono antes de responder; precisión (chino) después */}
+      {isVoice && (
+        <View style={styles.voiceFloatingContainer}>
+          {!isChecked ? (
+            <VoiceMicControl
+              isListening={isListening}
+              speechStatus={speechStatus}
+              busyLabel={voice.setupLabel}
+              voiceProgressAnim={voice.progressAnim}
+              micPulseAnim={voice.pulseAnim}
+              colors={colors}
+              onPress={() => voice.toggleMic(currentCard, lang)}
+            />
+          ) : (
+            evaluation?.voiceScore && (
+              <VoiceScoreBadge score={evaluation.voiceScore.score} label={evaluation.voiceScore.label} danger={colors.danger} />
+            )
+          )}
+        </View>
+      )}
+
+      {/* Dorso del mazo de Anki (oración, imagen, audios…) como contexto, se acierte o no */}
+      {isChecked && !isCustomCard && hasAnkiCardRef(currentCard.auxiliaryInfo) && (
+        <View style={styles.deckContext}>
+          <AnkiCardView
+            key={`context-${currentCard.id}`}
+            deckId={currentCard.deckId}
+            auxiliaryInfo={currentCard.auxiliaryInfo}
+            side="answer"
+            autoHeight
+            onAutoplayDone={isVoice ? voice.deckAudioDone : undefined}
+          />
+        </View>
+      )}
+    </ScrollView>
+  );
+
   return (
     <KeyboardAvoidingView
       style={[styles.container, { backgroundColor: colors.background }]}
@@ -407,44 +471,17 @@ export default function ReviewScreen() {
         onTouchEnd={() => isVoice && isChecked && autoAdvance.resume()}
         onTouchCancel={() => isVoice && isChecked && autoAdvance.resume()}
       >
-        <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-          {isVoice && <VoiceTranscriptArea card={currentCard} isChecked={isChecked} feedback={voice.feedback} colors={colors} />}
-
-          <ReviewCard
-            card={currentCard}
-            lang={lang}
-            studyMethod={studyMethod}
-            isChecked={isChecked}
-            isCustomCard={isCustomCard}
-            evaluation={evaluation}
-            meaningsList={meaningsList}
-            colors={colors}
-            frontStyle={flip.frontStyle}
-            backStyle={flip.backStyle}
-            onSubmitText={handleCheck}
+        {isCustomCard && hasAnkiCardRef(currentCard.auxiliaryInfo) ? (
+          <AnkiCardView
+            key={currentCard.id}
+            deckId={currentCard.deckId}
+            auxiliaryInfo={currentCard.auxiliaryInfo}
+            side={isChecked ? 'answer' : 'question'}
+            fallback={yomiCard}
           />
-
-          {/* Debajo de la tarjeta: micrófono antes de responder; precisión (chino) después */}
-          {isVoice && (
-            <View style={styles.voiceFloatingContainer}>
-              {!isChecked ? (
-                <VoiceMicControl
-                  isListening={isListening}
-                  speechStatus={speechStatus}
-                  busyLabel={voice.setupLabel}
-                  voiceProgressAnim={voice.progressAnim}
-                  micPulseAnim={voice.pulseAnim}
-                  colors={colors}
-                  onPress={() => voice.toggleMic(currentCard, lang)}
-                />
-              ) : (
-                evaluation?.voiceScore && (
-                  <VoiceScoreBadge score={evaluation.voiceScore.score} label={evaluation.voiceScore.label} danger={colors.danger} />
-                )
-              )}
-            </View>
-          )}
-        </ScrollView>
+        ) : (
+          yomiCard
+        )}
       </View>
 
       {/* Cuenta regresiva hasta la siguiente tarjeta (modo voz, con la respuesta a la vista) */}
@@ -466,6 +503,7 @@ export default function ReviewScreen() {
         colors={colors}
         onShowCustomAnswer={handleShowCustomAnswer}
         onCustomAction={handleCustomCardAction}
+        learnedDays={nextLearnedInterval(currentCard.scheduledDays)}
         onVoiceGiveUp={() => voice.evaluate(currentCard, false)}
         onMarkIncorrect={voice.markIncorrect}
         onVoiceNext={voice.advance}
@@ -479,6 +517,11 @@ export default function ReviewScreen() {
 }
 
 const styles = StyleSheet.create({
+  deckContext: {
+    marginTop: Spacing.md,
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
   container: {
     flex: 1,
   },

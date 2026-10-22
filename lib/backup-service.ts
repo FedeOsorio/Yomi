@@ -7,6 +7,7 @@ import { Share, Platform } from 'react-native';
 import { getStorageItem, setStorageItem } from './storage-service';
 import { createNewSrsItem } from './srs-engine';
 import { backfillMissingReadings, rescueTrashedMedia, runDataRepair } from './data-repair';
+import { clearDeckAnkiDesignCache } from './deck-service';
 
 export const BACKUP_STORAGE_KEY = 'yomi_last_backup_timestamp';
 
@@ -47,6 +48,8 @@ export interface YomiDeckBackupItem {
   type?: 'language' | 'custom';
   folderId?: string | null;
   mediaSource?: string | null;
+  /** Diseño de un mazo importado de Anki (JSON de AnkiDeckDesign) */
+  ankiNoteTypes?: string | null;
   createdAt: string;
 }
 
@@ -149,6 +152,7 @@ export async function createFullBackupPackage(): Promise<YomiFullBackupPackage> 
     type: (d.type as 'language' | 'custom') || 'language',
     folderId: d.folderId || null,
     mediaSource: d.mediaSource || null,
+    ankiNoteTypes: d.ankiNoteTypes || null,
     createdAt: d.createdAt instanceof Date ? d.createdAt.toISOString() : new Date(d.createdAt).toISOString(),
   }));
 
@@ -495,6 +499,7 @@ export async function restoreBackupPackage(
     const deckType: 'language' | 'custom' = d.type || (d.languageCode === 'es-ES' ? 'custom' : 'language');
     const folderId = d.folderId || null;
     const mediaSource = d.mediaSource || null;
+    const ankiNoteTypes = d.ankiNoteTypes || null;
     if (mode === 'merge') {
       const existing = await db.select().from(decks).where(eq(decks.id, d.id)).limit(1);
       if (existing.length > 0) {
@@ -505,6 +510,7 @@ export async function restoreBackupPackage(
             type: deckType,
             ...(folderId !== undefined ? { folderId } : {}),
             ...(d.mediaSource ? { mediaSource: d.mediaSource } : {}),
+            ...(d.ankiNoteTypes ? { ankiNoteTypes: d.ankiNoteTypes } : {}),
           })
           .where(eq(decks.id, d.id));
         continue;
@@ -518,6 +524,7 @@ export async function restoreBackupPackage(
         type: deckType,
         folderId,
         mediaSource,
+        ankiNoteTypes,
         createdAt: new Date(d.createdAt),
       });
     } catch {
@@ -529,6 +536,7 @@ export async function restoreBackupPackage(
         type: deckType,
         folderId: null,
         mediaSource,
+        ankiNoteTypes,
         createdAt: new Date(d.createdAt),
       });
     }
@@ -643,6 +651,7 @@ export async function restoreBackupPackage(
 
   // Rescatar de la papelera (media/.trash/) cualquier archivo multimedia que vuelva a necesitarse
   await rescueTrashedMedia();
+  clearDeckAnkiDesignCache();
 
   // Una copia vieja puede traer datos que ya habíamos reparado: volver a repararlos
   await runDataRepair(true);

@@ -176,7 +176,7 @@ function parseTrashName(name: string): { trashedAt: number; fileName: string } |
   return match ? { trashedAt: Number(match[1]), fileName: match[2] } : null;
 }
 
-/** Nombres de archivo de `media/` que usa alguna palabra. */
+/** Nombres de archivo de `media/` que usa alguna palabra o el diseño de algún mazo de Anki (fuentes, CSS). */
 async function getReferencedMediaFiles(): Promise<Set<string>> {
   const rows = await db
     .select({ aux: words.auxiliaryInfo })
@@ -188,6 +188,17 @@ async function getReferencedMediaFiles(): Promise<Set<string>> {
     for (const m of parseAux(row.aux).media ?? []) {
       if (m.path) referenced.add(mediaFileName(m.path));
     }
+  }
+
+  const designs = await db
+    .select({ design: decks.ankiNoteTypes })
+    .from(decks)
+    .where(sql`${decks.ankiNoteTypes} IS NOT NULL`);
+  for (const row of designs) {
+    try {
+      const files: Record<string, string> = JSON.parse(row.design!).files ?? {};
+      for (const path of Object.values(files)) referenced.add(mediaFileName(path));
+    } catch {}
   }
   return referenced;
 }

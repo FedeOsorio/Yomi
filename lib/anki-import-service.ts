@@ -10,10 +10,11 @@ import { db } from '../db';
 import { words } from '../db/schema';
 import { AnkiMediaManifest, extractAnkiPackageAsync, importAnkiMediaAsync, ParsedVocabularyItem } from './anki-importer';
 import { cleanOrphanMedia } from './data-repair';
-import { setDeckMediaSource } from './deck-service';
+import type { AnkiNoteType } from './anki-template';
+import { addDeckAnkiDesign, getDeckAnkiDesign, setDeckMediaSource } from './deck-service';
 import { listMediaFiles, mediaFileName } from './media-service';
 import { MediaItem, parseAux } from './word-aux';
-import { saveBatchWords, updateWordAux } from './word-service';
+import { saveBatchAnkiCards, saveBatchWords, updateWordAux } from './word-service';
 
 export interface AnkiDeckImportResult {
   deckId: string;
@@ -26,11 +27,15 @@ export interface AnkiDeckImportResult {
 /**
  * Importa las tarjetas de un .apkg ya analizado con extractAnkiPackageAsync, junto con su media.
  * La media se extrae ANTES de crear el mazo (getDeckId), para no dejar un mazo vacío si la extracción falla.
+ * Guarda también el diseño del mazo (plantillas, CSS y archivos que pide), para mostrar sus tarjetas como en Anki.
  */
 export async function importAnkiDeckAsync({
   fileUri,
   fileName,
   items,
+  mode = 'vocabulary',
+  noteTypes,
+  languageCode,
   manifest,
   getDeckId,
   onProgress,
@@ -39,6 +44,11 @@ export async function importAnkiDeckAsync({
   /** Nombre del .apkg, para pedirlo al recuperar la media. */
   fileName: string;
   items: ParsedVocabularyItem[];
+  /** 'anki': una tarjeta por tarjeta de Anki, mostrada con el diseño del mazo (ver extractAnkiPackageAsync) */
+  mode?: 'vocabulary' | 'anki';
+  noteTypes?: Record<string, AnkiNoteType>;
+  /** Idioma del contenido detectado al importar (se guarda con el diseño del mazo) */
+  languageCode?: string;
   manifest?: AnkiMediaManifest | null;
   getDeckId: () => Promise<string>;
   onProgress?: (done: number, total: number) => void;
@@ -46,6 +56,7 @@ export async function importAnkiDeckAsync({
   try {
     let mediaSaved = 0;
     let mediaFailed = 0;
+    let mediaPaths = new Map<string, string>();
 
     if (manifest && manifest.byFile.size > 0) {
       const res = await importAnkiMediaAsync(fileUri, Array.from(manifest.byFile.keys()), manifest, onProgress);
@@ -59,6 +70,7 @@ export async function importAnkiDeckAsync({
       }
       mediaSaved = res.written + res.reused;
       mediaFailed = res.failed.length;
+      mediaPaths = res.paths;
     }
 
     const deckId = await getDeckId();
@@ -70,7 +82,19 @@ export async function importAnkiDeckAsync({
       }).catch((err) => console.warn('[AnkiImport] Error guardando mediaSource:', err));
     }
 
-    const { inserted, skipped } = await saveBatchWords(deckId, items);
+    if (noteTypes && Object.keys(noteTypes).length > 0) {
+      const files: Record<string, string> = {};
+      for (const name of manifest?.designFiles ?? []) {
+        const path = mediaPaths.get(name);
+        if (path) files[name] = path;
+      }
+      await addDeckAnkiDesign(deckId, { noteTypes, files, language: languageCode }).catch((err) =>
+        console.warn('[AnkiImport] Error guardando el diseño del mazo:', err)
+      );
+    }
+
+    const { inserted, skipped } =
+      mode === 'anki' ? await saveBatchAnkiCards(deckId, items) : await saveBatchWords(deckId, items);
     return { deckId, inserted, skipped, mediaSaved, mediaFailed };
   } catch (err) {
     // Lo que se llegó a extraer quedó sin palabras que lo usen: a la papelera
@@ -121,6 +145,14 @@ export async function recoverDeckMediaAsync(deckId: string, fileUri: string): Pr
       toExtract.add(m.file);
       if (m.path) preferredPaths.set(m.file, m.path);
     }
+  }
+
+  // Archivos del diseño del mazo (CSS importado, imágenes de las plantillas), en la ruta que ya tenían
+  const design = await getDeckAnkiDesign(deckId);
+  for (const [name, path] of Object.entries(design?.files ?? {})) {
+    if (onDisk.has(mediaFileName(path)) || !mediaManifest.byFile.has(name) || toExtract.has(name)) continue;
+    toExtract.add(name);
+    preferredPaths.set(name, path);
   }
   if (toExtract.size === 0) return { status: 'noMatchingMedia' };
 

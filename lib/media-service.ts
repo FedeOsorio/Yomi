@@ -214,6 +214,24 @@ export async function playMediaAudio(uri: string, opts?: SpeakOptions): Promise<
 }
 
 /**
+ * Reproduce varios audios uno detrás de otro (los de un lado de una tarjeta de Anki).
+ * Si algo detiene el audio (stopMediaAudio, otra reproducción), la secuencia se corta y onComplete no se llama.
+ */
+export function playMediaSequence(uris: string[], onComplete?: () => void): void {
+  const playAt = (index: number) => {
+    if (index >= uris.length) {
+      onComplete?.();
+      return;
+    }
+    const next = () => playAt(index + 1);
+    playMediaAudio(uris[index], { onDone: next, onError: next }).then((started) => {
+      if (!started) next();
+    });
+  };
+  playAt(0);
+}
+
+/**
  * Detiene inmediatamente cualquier reproducción de audio multimedia activa y libera el reproductor.
  */
 export function stopMediaAudio(): void {

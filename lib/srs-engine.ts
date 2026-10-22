@@ -317,6 +317,34 @@ export async function rescheduleCardNextDay(cardId: string): Promise<void> {
 }
 
 /**
+ * Días hasta el próximo repaso con "Aprendida" (mazos personalizados): siempre un día más que la vez
+ * anterior (2, 3, 4…), nunca menos de 2 ni saltos largos. Sólo "Aprendida" lee y escribe este contador.
+ */
+export function nextLearnedInterval(previousDays: number | null | undefined): number {
+  return Math.max(2, (previousDays || 0) + 1);
+}
+
+/** Opción "Aprendida" para mazos personalizados. Devuelve los días hasta el próximo repaso. */
+export async function rescheduleCardLearned(cardId: string): Promise<number> {
+  const rows = await db
+    .select({ scheduledDays: srsItems.scheduledDays })
+    .from(srsItems)
+    .where(eq(srsItems.id, cardId))
+    .limit(1);
+  const days = nextLearnedInterval(rows[0]?.scheduledDays);
+
+  const due = new Date();
+  due.setDate(due.getDate() + days);
+  due.setHours(4, 0, 0, 0);
+
+  await db
+    .update(srsItems)
+    .set({ due, scheduledDays: days, lastReview: new Date() })
+    .where(eq(srsItems.id, cardId));
+  return days;
+}
+
+/**
  * Elimina la tarjeta del ciclo de repaso SRS (opción "Nunca" para mazos personalizados).
  */
 export async function removeCardFromReview(cardId: string): Promise<void> {

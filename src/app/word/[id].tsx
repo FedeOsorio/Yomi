@@ -24,6 +24,7 @@ import { preloadAudioService, speakCard, speakText, stopSpeech } from '../../../
 import { getCardMediaUris, getCardSentenceAudio } from '../../../lib/media-service';
 import { CardImage } from '../../components/media/CardImage';
 import { CardVideo } from '../../components/media/CardVideo';
+import { AnkiCardView } from '../../components/anki/AnkiCardView';
 import { getQuickHskLevel } from '../../../lib/hsk-data';
 import { cleanAndFormatMeanings, extractKanjis, parseFurigana } from '../../../lib/japanese-search';
 import { classifyJapaneseWord, formatJapaneseReading, toNormalizedHiragana } from '../../../lib/japanese-utils';
@@ -516,12 +517,15 @@ export default function WordDetailScreen() {
     ? formatJapaneseReading(rawReading.replace(/\s*\([^)]*\)/g, '').trim())
     : rawReading;
 
+  // Sin hooks: esta parte corre después de los return de carga, y un hook acá cambiaría la cantidad
+  // de hooks entre renders (React cierra la pantalla). Son pocas comprobaciones de archivos por tarjeta.
   const parsedAux = parseAux(word.auxiliaryInfo);
-  const frontVideos = useMemo(() => getCardMediaUris(parsedAux, 'video', 'front'), [parsedAux]);
-  const frontImages = useMemo(() => getCardMediaUris(parsedAux, 'image', 'front'), [parsedAux]);
-  const backVideos = useMemo(() => getCardMediaUris(parsedAux, 'video', 'back'), [parsedAux]);
-  const backImages = useMemo(() => getCardMediaUris(parsedAux, 'image', 'back'), [parsedAux]);
-  const sentenceAudio = useMemo(() => getCardSentenceAudio(parsedAux), [parsedAux]);
+  const isAnkiDesignCard = isCustomDeck && Boolean(parsedAux.anki);
+  const frontVideos = getCardMediaUris(parsedAux, 'video', 'front');
+  const frontImages = getCardMediaUris(parsedAux, 'image', 'front');
+  const backVideos = getCardMediaUris(parsedAux, 'video', 'back');
+  const backImages = getCardMediaUris(parsedAux, 'image', 'back');
+  const sentenceAudio = getCardSentenceAudio(parsedAux);
   const isFrontPlaceholderOnly =
     (frontVideos.length > 0 || frontImages.length > 0) &&
     /^\[(Video|Imagen|Audio)\]$/i.test((word.simplified || '').trim());
@@ -664,7 +668,7 @@ export default function WordDetailScreen() {
           <Text style={[styles.brandText, { color: colors.primary }]}>Yomi</Text>
           <Text style={[styles.brandSep, { color: colors.textMuted }]}> • </Text>
           <Text style={[styles.deckName, { color: colors.text }]} numberOfLines={1}>
-            {isCustomDeck ? t('customCard.editCard') : t('wordDetail.title')}
+            {isAnkiDesignCard ? t('wordDetail.cardTitle') : isCustomDeck ? t('customCard.editCard') : t('wordDetail.title')}
           </Text>
           {currentIndex >= 0 && siblingIds.length > 1 && (
             <Text style={[styles.positionText, { color: colors.textMuted }]}>
@@ -681,7 +685,13 @@ export default function WordDetailScreen() {
       <GestureDetector gesture={swipeGesture}>
       <Animated.View style={[styles.swipeContainer, swipeAnimatedStyle]}>
       <ScrollView ref={scrollRef} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Tarjeta Principal de la Palabra */}
+        {/* Tarjeta de un mazo de Anki: con el diseño del mazo (el dorso incluye el frente, como en Anki) */}
+        {isAnkiDesignCard ? (
+          <View style={[styles.ankiCardBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <AnkiCardView deckId={word.deckId} auxiliaryInfo={word.auxiliaryInfo} side="answer" autoplay={false} />
+          </View>
+        ) : (
+        /* Tarjeta Principal de la Palabra */
         <View style={[styles.mainCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
 
 
@@ -1055,12 +1065,13 @@ export default function WordDetailScreen() {
               >
                 <Ionicons name="volume-medium" size={16} color={colors.primary} />
                 <Text style={[styles.sentenceAudioBtnText, { color: colors.primary }]}>
-                  Audio de ejemplo
+                  {t('wordDetail.sentenceAudio')}
                 </Text>
               </TouchableOpacity>
             )}
           </View>
         </View>
+        )}
 
         {/* Sección condicional: Trazado para idiomas ideográficos (Chino/Japonés) */}
         {isIdeographic && (
@@ -1458,6 +1469,13 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: Spacing.md,
     paddingBottom: 60,
+  },
+  ankiCardBox: {
+    height: 560,
+    borderRadius: 20,
+    overflow: 'hidden',
+    marginBottom: Spacing.md,
+    borderWidth: 1,
   },
   mainCard: {
     borderRadius: 20,

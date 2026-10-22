@@ -6,6 +6,7 @@ import m0001 from './0001_last_joshua_kane.sql';
 import m0002 from './0002_bored_dazzler.sql';
 import m0003 from './0003_nested_folders.sql';
 import m0004 from './0004_young_cammi.sql';
+import m0005 from './0005_anki_note_types.sql';
 
   export default {
     journal,
@@ -14,7 +15,8 @@ import m0004 from './0004_young_cammi.sql';
 m0001,
 m0002,
 m0003,
-m0004
+m0004,
+m0005
     }
   }
   

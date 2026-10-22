@@ -26,8 +26,23 @@ export interface WordAux {
   /** Archivos multimedia asociados a la tarjeta (audio, video, imagen). */
   media?: MediaItem[];
 
+  /** Tarjeta importada de Anki: con esto el visor la dibuja con el diseño del mazo (ver anki-template). */
+  anki?: AnkiCardRef;
+
   /** Campos extra que trae un mazo importado de Anki: se conservan tal cual. */
   [extra: string]: unknown;
+}
+
+export interface AnkiCardRef {
+  /** id de la nota en Anki (para no duplicar al reimportar) */
+  noteId: number;
+  /** tipo de nota (clave de decks.ankiNoteTypes) */
+  mid: number;
+  /** plantilla (o número de cloze - 1) de la tarjeta */
+  ord: number;
+  /** campos originales de la nota, con su HTML */
+  fields: string[];
+  tags?: string[];
 }
 
 export interface MediaItem {
@@ -37,6 +52,11 @@ export interface MediaItem {
   side: 'front' | 'back';
   role?: 'prompt' | 'word' | 'sentence';
   missing?: boolean;                // Marcado si nunca vino en el .apkg original
+}
+
+/** La palabra viene de una nota de Anki (se puede dibujar con el diseño del mazo). Sin parsear el JSON. */
+export function hasAnkiCardRef(raw?: string | null): boolean {
+  return Boolean(raw?.includes('"anki":'));
 }
 
 /** Lee el JSON de una palabra. Nunca lanza: si está vacío o roto devuelve {}. */
