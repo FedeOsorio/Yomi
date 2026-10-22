@@ -16,7 +16,7 @@ export interface Folder {
   createdAt: Date;
 }
 
-export interface DeckWithStats {
+export interface DeckWithWordCount {
   id: string;
   name: string;
   languageCode: string;
@@ -24,6 +24,9 @@ export interface DeckWithStats {
   folderId?: string | null;
   createdAt: Date;
   wordCount: number;
+}
+
+export interface DeckWithStats extends DeckWithWordCount {
   activeCardsCount: number;
   dueCount: number;
 }
@@ -251,24 +254,67 @@ export async function getDefaultDeckId(): Promise<string> {
   return id;
 }
 
-export async function getDecksWithStats(): Promise<DeckWithStats[]> {
+/**
+ * Consulta ultrarrápida para pantallas que solo necesitan el listado de mazos y su conteo de palabras
+ * (Inicio/Home, Carpetas, Selector en Búsqueda, etc.). Utiliza un index-only scan sobre idx_words_deck
+ * sin tocar srs_items ni realizar joins complejos con COUNT(DISTINCT).
+ */
+export async function getDecksWithWordCount(): Promise<DeckWithWordCount[]> {
   const allDecks = await db.select().from(decks);
-  // Los conteos los hace SQLite en una sola consulta (antes se traían todas las tarjetas a JavaScript)
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  const counts = await db
+  const wordCounts = await db
     .select({
       deckId: words.deckId,
-      wordCount: sql<number>`count(distinct ${words.id})`,
-      activeCardsCount: sql<number>`count(distinct case when ${srsItems.id} is not null then ${words.id} end)`,
-      dueCount: sql<number>`count(distinct case when ${srsItems.due} <= ${nowSeconds} then ${words.id} end)`,
+      wordCount: sql<number>`count(*)`,
     })
     .from(words)
-    .leftJoin(srsItems, and(eq(srsItems.itemId, words.id), eq(srsItems.itemType, 'word')))
     .groupBy(words.deckId);
-  const countsByDeck = new Map(counts.map((c) => [c.deckId, c]));
+  const countsByDeck = new Map(wordCounts.map((c) => [c.deckId, Number(c.wordCount)]));
+
+  return allDecks.map((deck) => ({
+    id: deck.id,
+    name: deck.name,
+    languageCode: deck.languageCode,
+    type: (deck.type as 'language' | 'custom') || 'language',
+    folderId: deck.folderId || null,
+    createdAt: deck.createdAt,
+    wordCount: countsByDeck.get(deck.id) ?? 0,
+  }));
+}
+
+/**
+ * Consulta completa con estadísticas de repaso (activeCardsCount y dueCount).
+ * Optimizada para separar el conteo de palabras del conteo de SRS, evitando un LEFT JOIN
+ * masivo con COUNT(DISTINCT) que degradaba el rendimiento con miles de tarjetas.
+ */
+export async function getDecksWithStats(): Promise<DeckWithStats[]> {
+  const allDecks = await db.select().from(decks);
+  const nowSeconds = Math.floor(Date.now() / 1000);
+
+  // 1. Conteo directo de palabras por mazo (index-only scan rápido)
+  const wordCounts = await db
+    .select({
+      deckId: words.deckId,
+      wordCount: sql<number>`count(*)`,
+    })
+    .from(words)
+    .groupBy(words.deckId);
+  const wordCountsByDeck = new Map(wordCounts.map((c) => [c.deckId, Number(c.wordCount)]));
+
+  // 2. Conteo de tarjetas SRS activas y pendientes (solo sobre srsItems asociados a palabras)
+  const srsCounts = await db
+    .select({
+      deckId: words.deckId,
+      activeCardsCount: sql<number>`count(*)`,
+      dueCount: sql<number>`count(case when ${srsItems.due} <= ${nowSeconds} then 1 end)`,
+    })
+    .from(srsItems)
+    .innerJoin(words, eq(srsItems.itemId, words.id))
+    .where(eq(srsItems.itemType, 'word'))
+    .groupBy(words.deckId);
+  const srsCountsByDeck = new Map(srsCounts.map((c) => [c.deckId, c]));
 
   return allDecks.map((deck) => {
-    const c = countsByDeck.get(deck.id);
+    const srs = srsCountsByDeck.get(deck.id);
     return {
       id: deck.id,
       name: deck.name,
@@ -276,9 +322,9 @@ export async function getDecksWithStats(): Promise<DeckWithStats[]> {
       type: (deck.type as 'language' | 'custom') || 'language',
       folderId: deck.folderId || null,
       createdAt: deck.createdAt,
-      wordCount: c?.wordCount ?? 0,
-      activeCardsCount: c?.activeCardsCount ?? 0,
-      dueCount: c?.dueCount ?? 0,
+      wordCount: wordCountsByDeck.get(deck.id) ?? 0,
+      activeCardsCount: Number(srs?.activeCardsCount ?? 0),
+      dueCount: Number(srs?.dueCount ?? 0),
     };
   });
 }

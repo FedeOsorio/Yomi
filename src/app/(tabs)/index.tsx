@@ -29,12 +29,12 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  getDecksWithStats,
+  getDecksWithWordCount,
   createDeck,
   deleteDeck,
   getFolders,
   Folder,
-  DeckWithStats,
+  DeckWithWordCount,
   SUPPORTED_LANGUAGES,
   ALL_LANGUAGES,
 } from '../../../lib/deck-service';
@@ -52,7 +52,7 @@ export default function HomeScreen() {
   const { t } = useTranslation();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const [decks, setDecks] = useState<DeckWithStats[]>([]);
+  const [decks, setDecks] = useState<DeckWithWordCount[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
   // Carpeta abierta (null = Inicio, donde se ven todos los mazos)
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
@@ -107,7 +107,7 @@ export default function HomeScreen() {
   const fabBottomPosition = tabBottomMargin + 60 + 16;
 
   const fetchDecks = async () => {
-    const [d, f] = await Promise.all([getDecksWithStats(), getFolders()]);
+    const [d, f] = await Promise.all([getDecksWithWordCount(), getFolders()]);
     setDecks(d);
     setFolders(f);
   };
@@ -232,7 +232,7 @@ export default function HomeScreen() {
     );
   };
 
-  const handleDeckLongPress = (item: DeckWithStats) => {
+  const handleDeckLongPress = (item: DeckWithWordCount) => {
     Alert.alert(
       item.name,
       t('decks.deckOptions'),

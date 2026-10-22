@@ -5,7 +5,7 @@ import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View
 import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { notifyDataChanged, onDataChanged } from '../../lib/backup-service';
-import { DeckWithStats, Folder, getDecksWithStats, getFolders, reorderFolders } from '../../lib/deck-service';
+import { DeckWithWordCount, Folder, getDecksWithWordCount, getFolders, reorderFolders } from '../../lib/deck-service';
 import { countDecksRecursive, flattenFolderTree, getChildFolders } from '../../lib/folder-tree';
 import { useTheme } from '../../providers/ThemeProvider';
 import { useFolderManager } from '../hooks/useFolderManager';
@@ -21,13 +21,13 @@ export default function FoldersScreen() {
   const router = useRouter();
 
   const [folders, setFolders] = useState<Folder[]>([]);
-  const [decks, setDecks] = useState<DeckWithStats[]>([]);
+  const [decks, setDecks] = useState<DeckWithWordCount[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const folderManager = useFolderManager(folders);
 
   const loadData = useCallback(async () => {
     try {
-      const [fList, dList] = await Promise.all([getFolders(), getDecksWithStats()]);
+      const [fList, dList] = await Promise.all([getFolders(), getDecksWithWordCount()]);
       setFolders(fList);
       setDecks(dList);
     } catch (e) {

@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { speakText } from '../../lib/audio-service';
-import { ALL_LANGUAGES, DeckWithStats, getDecksWithStats } from '../../lib/deck-service';
+import { ALL_LANGUAGES, DeckWithWordCount, getDecksWithWordCount } from '../../lib/deck-service';
 import { getQuickHskLevel } from '../../lib/hsk-data';
 import { JapaneseEntry, resolveJapaneseReading, searchJapanese, translateBatchToLanguage, translateToSpanish } from '../../lib/japanese-search';
 import { KanjiInfo, searchKanji } from '../../lib/kanji-search';
@@ -33,9 +33,9 @@ export default function SearchScreen() {
   const params = useLocalSearchParams<{ deckId?: string }>();
   const router = useRouter();
 
-  const [decks, setDecks] = useState<DeckWithStats[]>([]);
+  const [decks, setDecks] = useState<DeckWithWordCount[]>([]);
   const [selectedDeckId, setSelectedDeckId] = useState<string>(params.deckId || '');
-  const [currentDeck, setCurrentDeck] = useState<DeckWithStats | null>(null);
+  const [currentDeck, setCurrentDeck] = useState<DeckWithWordCount | null>(null);
   const [deckModalVisible, setDeckModalVisible] = useState(false);
 
   const [query, setQuery] = useState('');
@@ -64,7 +64,7 @@ export default function SearchScreen() {
   // Cargar mazos
   useEffect(() => {
     const loadDecks = async () => {
-      const allDecks = await getDecksWithStats();
+      const allDecks = await getDecksWithWordCount();
       setDecks(allDecks);
       if (allDecks.length > 0) {
         const targetId = params.deckId || allDecks[0].id;
@@ -76,7 +76,7 @@ export default function SearchScreen() {
     loadDecks();
   }, [params.deckId]);
 
-  const handleSelectDeck = (deck: DeckWithStats) => {
+  const handleSelectDeck = (deck: DeckWithWordCount) => {
     setSelectedDeckId(deck.id);
     setCurrentDeck(deck);
     setQuery('');

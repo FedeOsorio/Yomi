@@ -21,9 +21,9 @@ import { Spacing, Shadows } from '../../constants/theme';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import {
-  getDecksWithStats,
+  getDecksWithWordCount,
   createDeck,
-  DeckWithStats,
+  DeckWithWordCount,
   SUPPORTED_LANGUAGES,
   ALL_LANGUAGES,
 } from '../../../lib/deck-service';
@@ -52,7 +52,7 @@ import { getCurrentUserLanguage, useTranslation } from '../../i18n';
  * mismo idioma; tarjetas con el diseño del mazo a uno personalizado. Mezclarlos se vería y repasaría mal.
  */
 function isApkgCompatibleWithDeck(
-  deck: DeckWithStats | undefined,
+  deck: DeckWithWordCount | undefined,
   apkg: Pick<AnkiPackageExtractResult, 'mode' | 'languageCode'>
 ): boolean {
   if (!deck) return true;
@@ -67,7 +67,7 @@ export default function ImportDeckScreen() {
   const router = useRouter();
 
   // Estados de mazos
-  const [decks, setDecks] = useState<DeckWithStats[]>([]);
+  const [decks, setDecks] = useState<DeckWithWordCount[]>([]);
   const [selectedDeckId, setSelectedDeckId] = useState<string>(params.deckId || '');
   const [targetMode, setTargetMode] = useState<'existing' | 'new'>(params.deckId ? 'existing' : 'new');
   const [newDeckName, setNewDeckName] = useState('');
@@ -126,7 +126,7 @@ export default function ImportDeckScreen() {
 
   const fetchDecks = async () => {
     try {
-      const allDecks = await getDecksWithStats();
+      const allDecks = await getDecksWithWordCount();
       setDecks(allDecks);
       if (params.deckId) {
         setSelectedDeckId(params.deckId);
@@ -146,7 +146,7 @@ export default function ImportDeckScreen() {
     }
   };
 
-  const handleSelectDeck = (deck: DeckWithStats) => {
+  const handleSelectDeck = (deck: DeckWithWordCount) => {
     setSelectedDeckId(deck.id);
     if (deck.type === 'custom') {
       setImportedDeckType('custom');
