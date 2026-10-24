@@ -766,7 +766,6 @@ export async function saveBatchWords(
     level?: string;
     rawExtras?: Record<string, string>;
     media?: MediaItem[];
-    anki?: AnkiCardRef;
   }>
 ): Promise<{ inserted: number; skipped: number }> {
   let inserted = 0;
@@ -805,7 +804,6 @@ export async function saveBatchWords(
         ...(item.level && { level: item.level.trim() }),
         ...item.rawExtras,
         ...(item.media && item.media.length > 0 && { media: item.media }),
-        ...(item.anki && { anki: item.anki }),
       });
 
       await db.insert(words).values({

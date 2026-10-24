@@ -5,6 +5,7 @@ import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import { renderAnkiCard, wrapCardHtml } from '../../../lib/anki-template';
 import { AnkiDeckDesign, getDeckAnkiDesign } from '../../../lib/deck-service';
 import {
+  CARD_PAGE_PREFIX,
   deleteFileQuietly,
   getMediaDir,
   mediaPath,
@@ -77,7 +78,7 @@ export function AnkiCardView({
   // La página empieza siempre con el frente (y el dorso se agrega después, como en Anki)
   useEffect(() => {
     if (!card) return;
-    const file = new File(getMediaDir(), `.anki-card-${Date.now()}-${Math.random().toString(36).slice(2)}.html`);
+    const file = new File(getMediaDir(), `${CARD_PAGE_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2)}.html`);
     file.write(
       wrapCardHtml(card.question, card, {
         nightMode: isDark,

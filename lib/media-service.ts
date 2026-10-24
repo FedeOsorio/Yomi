@@ -65,6 +65,26 @@ export function listMediaFiles(): Set<string> {
 }
 
 /** Borra un archivo si existe, sin lanzar (copias temporales en caché). */
+/** Prefijo de las páginas temporales del visor de tarjetas de Anki (ver AnkiCardView). */
+export const CARD_PAGE_PREFIX = '.anki-card-';
+
+/**
+ * Borra las páginas temporales del visor que quedaron si la app se cerró de golpe con una tarjeta abierta
+ * (normalmente el visor borra la suya al cerrarse). Se llama al abrir la app, cuando ninguna está en uso.
+ */
+export function cleanLeftoverCardPages(): void {
+  const dir = new Directory(Paths.document, MEDIA_DIR);
+  let removed = 0;
+  for (const name of listMediaFiles()) {
+    if (!name.startsWith(CARD_PAGE_PREFIX)) continue;
+    try {
+      new File(dir, name).delete();
+      removed++;
+    } catch {}
+  }
+  if (removed > 0) invalidateMediaFilesCache();
+}
+
 export function deleteFileQuietly(uri: string | null | undefined): void {
   if (!uri) return;
   try {

@@ -1,6 +1,7 @@
 /**
  * Análisis de una colección de Anki ya leída (notas + nombres de campos): decide qué campo es la palabra,
- * la lectura y el significado de cada tipo de nota, y arma los ítems de vocabulario con sus referencias de media.
+ * la lectura y el significado de cada tipo de nota, y arma los ítems de vocabulario (solo texto: un mazo con media
+ * no es de idioma, va a personalizado con su diseño).
  *
  * No depende de módulos nativos (ni SQLite ni sistema de archivos), así que se puede probar en Node
  * con mazos reales. La lectura del .apkg (zip, SQLite, zstd) está en anki-importer.
@@ -80,8 +81,7 @@ export function enrichVocabularyItem(
   reading: string,
   meanings: string[],
   level?: string,
-  extras?: Record<string, string>,
-  media?: MediaItem[]
+  extras?: Record<string, string>
 ): ParsedVocabularyItem {
   const cleanMain = mainText.trim();
   const isSingleKanji = cleanMain.length === 1 && /[一-龯]/.test(cleanMain);
@@ -117,7 +117,6 @@ export function enrichVocabularyItem(
     meanings,
     level: level || undefined,
     rawExtras: Object.keys(rawExtras).length > 0 ? rawExtras : undefined,
-    media: media && media.length > 0 ? media : undefined,
   };
 }
 
@@ -257,13 +256,12 @@ export function buildFieldPlan(fieldNames: string[], preferredLanguage?: string)
 
 /**
  * Extrae referencias a archivos multimedia (audio, video, imagen) desde el contenido crudo
- * de un campo HTML de Anki antes de remover las etiquetas.
+ * de un campo HTML de Anki antes de remover las etiquetas. Dónde se muestran lo decide el diseño del mazo.
  */
-export function extractMediaFromField(rawField: string, isSentence: boolean, isFront: boolean): MediaItem[] {
+export function extractMediaFromField(rawField: string): MediaItem[] {
   if (!rawField) return [];
   const results: MediaItem[] = [];
   const seen = new Set<string>();
-  const role: MediaItem['role'] = isSentence ? 'sentence' : isFront ? 'prompt' : 'word';
 
   const addMediaFile = (rawName: string) => {
     if (!rawName) return;
@@ -285,7 +283,7 @@ export function extractMediaFromField(rawField: string, isSentence: boolean, isF
     const kind = getMediaKind(clean);
     if (!kind) return;
 
-    results.push({ file: clean, kind, side: isFront ? 'front' : 'back', role });
+    results.push({ file: clean, kind, side: 'back', role: 'word' });
   };
 
   // 1. [sound:archivo.mp3]
@@ -451,9 +449,7 @@ export function parseAnkiNotes(
   notes: AnkiNote[],
   fieldNamesByModel: Map<number, string[]>,
   deckName: string,
-  preferredLanguage?: string,
-  /** Tarjetas de cada nota (cards.ord): la primera es la que se usa para mostrar el dorso del mazo */
-  cardOrdsByNote?: Map<number, number[]>
+  preferredLanguage?: string
 ): ParsedAnkiCollection {
   const plans = new Map<number, FieldPlan>();
   const planFor = (mid: number) => {
@@ -478,15 +474,10 @@ export function parseAnkiNotes(
 
     const wordIdx = firstWithContent(plan.word);
 
-    // Media de todos los campos, antes de que los tags se pierdan
-    const noteMedia = rawFields.flatMap((raw, i) =>
-      extractMediaFromField(raw, plan.fields[i]?.isSentence ?? false, i === (wordIdx >= 0 ? wordIdx : plan.word[0]))
-    );
-    for (const m of noteMedia) referencedMedia.set(m.file, m.kind);
+    // Media de la nota (antes de que se pierdan las etiquetas): con media, el mazo no es de idioma
+    for (const m of rawFields.flatMap((raw) => extractMediaFromField(raw))) referencedMedia.set(m.file, m.kind);
 
     let text = wordIdx >= 0 ? clean[wordIdx] : '';
-    const firstFrontMedia = noteMedia.find((m) => m.side === 'front');
-    if (!text && firstFrontMedia) text = MEDIA_PLACEHOLDERS[firstFrontMedia.kind];
     if (!text) continue;
 
     let reading = '';
@@ -532,16 +523,8 @@ export function parseAnkiNotes(
       {
         ...(rawOn ? { onReading: rawOn } : {}),
         ...(rawKun ? { kunReading: rawKun } : {}),
-      },
-      noteMedia
+      }
     );
-    item.anki = {
-      noteId: note.id,
-      mid: note.mid,
-      ord: cardOrdsByNote?.get(note.id)?.[0] ?? 0,
-      fields: rawFields,
-      tags: splitTags(note.tags),
-    };
     items.push(item);
   }
 
@@ -673,7 +656,7 @@ export function buildAnkiCardItems(
       continue; // plantilla inexistente para esa tarjeta
     }
 
-    const media = fields.flatMap((raw) => extractMediaFromField(raw, false, false));
+    const media = fields.flatMap((raw) => extractMediaFromField(raw));
     for (const m of media) referencedMedia.set(m.file, m.kind);
 
     // Etiqueta del frente: el primer campo con contenido que muestra (como identifica Anki a una nota);

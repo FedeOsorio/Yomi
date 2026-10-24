@@ -570,8 +570,6 @@ export async function extractAnkiPackageAsync(
     // Las tarjetas que existen (Anki ya resolvió qué plantillas generan tarjeta para cada nota)
     const cardRows = await db.getAllAsync<{ nid: number; ord: number }>('SELECT nid, ord FROM cards ORDER BY nid, ord');
     const cards: AnkiCard[] = cardRows.map((c) => ({ noteId: Number(c.nid), ord: Number(c.ord) }));
-    const cardOrdsByNote = new Map<number, number[]>();
-    for (const c of cards) cardOrdsByNote.set(c.noteId, [...(cardOrdsByNote.get(c.noteId) ?? []), c.ord]);
 
     // Tipos de nota que se usan, y los archivos que pide su diseño (fuentes, CSS importado…)
     const usedTypes: Record<string, AnkiNoteType> = {};
@@ -587,7 +585,7 @@ export async function extractAnkiPackageAsync(
       type.templates.some((template) => /<script\b/i.test(template.qfmt + template.afmt))
     );
     const fieldNamesByModel = new Map([...noteTypes].map(([id, t]) => [id, t.fieldNames]));
-    const parsed = parseAnkiNotes(notes, fieldNamesByModel, deckName, preferredLanguage, cardOrdsByNote);
+    const parsed = parseAnkiNotes(notes, fieldNamesByModel, deckName, preferredLanguage);
     // Un mazo de idioma es solo la estructura de Yomi (su tarjeta, su voz): si el mazo trae media (audios,
     // imágenes, videos) va a personalizado, donde se ve con su diseño
     const hasMedia = parsed.referencedMedia.size > 0;

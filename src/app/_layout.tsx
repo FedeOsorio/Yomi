@@ -9,6 +9,7 @@ import { enableFreeze } from 'react-native-screens';
 import { OTAUpdateOverlay } from '../components/OTAUpdateOverlay';
 import { ImportProgressOverlay } from '../components/ImportProgressOverlay';
 import { useIncomingFileHandler } from '../../lib/incoming-file-service';
+import { cleanLeftoverCardPages } from '../../lib/media-service';
 import { useInAppUpdates } from '../hooks/useInAppUpdates';
 import { useGoogleDriveStore } from '../stores/googleDriveStore';
 import { useTranslation } from '../i18n';
@@ -50,6 +51,9 @@ export default function RootLayout() {
     // Inicializar store de Google Drive silenciosamente
     useGoogleDriveStore.getState().init();
 
+    // Páginas del visor de tarjetas que quedaron de una vez que la app se cerró de golpe (después de arrancar)
+    const cleanupId = requestIdleCallback(cleanLeftoverCardPages);
+
     // Comprobar respaldo silencioso al pasar a segundo plano o volver
     const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
       if (nextState === 'background' || nextState === 'active') {
@@ -59,6 +63,7 @@ export default function RootLayout() {
 
     return () => {
       subscription.remove();
+      cancelIdleCallback(cleanupId);
     };
   }, []);
 

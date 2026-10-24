@@ -88,7 +88,7 @@ export async function importAnkiDeckAsync({
       }).catch((err) => console.warn('[AnkiImport] Error guardando mediaSource:', err));
     }
 
-    if (noteTypes && Object.keys(noteTypes).length > 0) {
+    if (mode === 'anki' && noteTypes && Object.keys(noteTypes).length > 0) {
       const files: Record<string, string> = {};
       for (const name of manifest?.designFiles ?? []) {
         const path = mediaPaths.get(name);
