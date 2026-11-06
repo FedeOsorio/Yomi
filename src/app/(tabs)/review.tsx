@@ -2,7 +2,6 @@ import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Animated,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -10,6 +9,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Rating } from 'ts-fsrs';
 import { speakCard, stopSpeech } from '../../../lib/audio-service';
@@ -426,8 +426,8 @@ export default function ReviewScreen() {
               isListening={isListening}
               speechStatus={speechStatus}
               busyLabel={voice.setupLabel}
-              voiceProgressAnim={voice.progressAnim}
-              micPulseAnim={voice.pulseAnim}
+              micProgress={voice.micProgress}
+              micPulse={voice.micPulse}
               colors={colors}
               onPress={() => voice.toggleMic(currentCard, lang)}
             />
@@ -490,7 +490,7 @@ export default function ReviewScreen() {
       {isVoice && isChecked && (
         <View style={styles.flipCountdownContainer}>
           <Animated.View
-            style={[styles.flipCountdownBar, { backgroundColor: colors.primary, transform: [{ scaleX: autoAdvance.progress }] }]}
+            style={[styles.flipCountdownBar, { backgroundColor: colors.primary }, autoAdvance.barStyle]}
           />
         </View>
       )}

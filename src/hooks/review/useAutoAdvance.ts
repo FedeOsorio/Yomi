@@ -1,65 +1,70 @@
-import { useRef } from 'react';
-import { Animated, Easing } from 'react-native';
+import { useCallback, useRef } from 'react';
+import { cancelAnimation, Easing, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
+
+/** Al reanudar, la cuenta nunca queda con menos de esto: si no, pasaría de tarjeta apenas se suelta. */
+const MIN_REMAINING_MS = 500;
 
 /**
- * Cuenta regresiva que pasa sola a la siguiente tarjeta (modo voz), con barra de progreso
- * y posibilidad de pausarla mientras el usuario toca la pantalla.
+ * Cuenta regresiva que pasa sola a la siguiente tarjeta (modo voz), con barra de progreso y posibilidad de
+ * pausarla mientras el usuario toca la pantalla. Es una sola animación de Reanimated: cuando se completa,
+ * avisa; pausarla es detenerla (no hay temporizadores aparte que mantener sincronizados).
  */
 export function useAutoAdvance() {
-  const progress = useRef(new Animated.Value(1)).current;
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const progress = useSharedValue(0);
   const onElapsed = useRef<() => void>(() => {});
-  const startedAt = useRef(0);
-  const duration = useRef(0);
-  const remaining = useRef(0);
+  const total = useRef(0);
+  const running = useRef(false);
   const paused = useRef(false);
 
-  const clearTimer = () => {
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = null;
-  };
+  const elapsed = useCallback(() => {
+    running.current = false;
+    onElapsed.current();
+  }, []);
 
-  const run = (ms: number) => {
-    startedAt.current = Date.now();
-    duration.current = ms;
-    Animated.timing(progress, { toValue: 1, duration: ms, easing: Easing.linear, useNativeDriver: true }).start();
-    timer.current = setTimeout(() => onElapsed.current(), ms);
+  const run = (from: number, minMs = 0) => {
+    progress.value = from;
+    progress.value = withTiming(
+      1,
+      { duration: Math.max((1 - from) * total.current, minMs), easing: Easing.linear },
+      (finished) => {
+        'worklet';
+        if (finished) scheduleOnRN(elapsed);
+      }
+    );
   };
 
   /** Arranca la cuenta desde cero; al terminar llama a `callback`. */
   const start = (ms: number, callback: () => void) => {
-    clearTimer();
-    progress.stopAnimation();
-    progress.setValue(0);
     onElapsed.current = callback;
-    remaining.current = ms;
+    total.current = ms;
+    running.current = true;
     paused.current = false;
-    run(ms);
+    run(0);
   };
 
   const pause = () => {
-    if (paused.current || !timer.current) return;
+    if (paused.current || !running.current) return;
     paused.current = true;
-    clearTimer();
-    progress.stopAnimation((value) => {
-      remaining.current = Math.max(duration.current - (Date.now() - startedAt.current), 500);
-      progress.setValue(value);
-    });
+    cancelAnimation(progress);
   };
 
   const resume = () => {
     if (!paused.current) return;
     paused.current = false;
-    run(remaining.current);
+    run(progress.value, MIN_REMAINING_MS);
   };
 
   /** Cancela la cuenta y vacía la barra. */
   const cancel = () => {
-    clearTimer();
+    running.current = false;
     paused.current = false;
-    progress.stopAnimation();
-    progress.setValue(0);
+    cancelAnimation(progress);
+    progress.value = 0;
   };
 
-  return { progress, start, pause, resume, cancel };
+  /** Estilo de la barra de la cuenta (se llena de izquierda a derecha). */
+  const barStyle = useAnimatedStyle(() => ({ transform: [{ scaleX: progress.value }] }));
+
+  return { barStyle, start, pause, resume, cancel };
 }

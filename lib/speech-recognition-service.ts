@@ -149,6 +149,10 @@ class SpeechRecognitionService {
     const lang = languageCode.includes('-') ? languageCode : NATIVE_LANG_MAP[base] ?? languageCode;
 
     this.engine = 'native';
+    // El reconocedor del teléfono, después de cualquier error, termina de cerrarse y recién ahí manda "end".
+    // onEnd se avisa una sola vez y solo con "end": avisarlo también con el error ("no oí nada") hacía que el
+    // micrófono se reabriera dos veces, la primera antes de que el anterior se cerrara, y quedaba trabado
+    let ended = false;
     this.nativeSubs = [
       ExpoSpeechRecognitionModule.addListener('start', () => live() && callbacks.onStart?.()),
       ExpoSpeechRecognitionModule.addListener('result', (e) => {
@@ -159,14 +163,13 @@ class SpeechRecognitionService {
       }),
       ExpoSpeechRecognitionModule.addListener('error', (e) => {
         if (!live() || e.error === 'aborted') return;
-        if (e.error === 'no-speech' || e.error === 'speech-timeout') {
-          callbacks.onEnd?.();
-        } else {
-          callbacks.onError?.(e.message || e.error || 'Error de reconocimiento');
-        }
+        // Silencio: no es un error para el usuario; el "end" que sigue avisa que se cerró
+        if (e.error === 'no-speech' || e.error === 'speech-timeout') return;
+        callbacks.onError?.(e.message || e.error || 'Error de reconocimiento');
       }),
       ExpoSpeechRecognitionModule.addListener('end', () => {
-        if (!live()) return;
+        if (!live() || ended) return;
+        ended = true;
         this.engine = null;
         callbacks.onEnd?.();
       }),

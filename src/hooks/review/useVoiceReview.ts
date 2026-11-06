@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Animated, Easing } from 'react-native';
+import { Alert } from 'react-native';
+import { cancelAnimation, Easing, useSharedValue, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
 import { Rating } from 'ts-fsrs';
 import { speakCard, stopSpeech } from '../../../lib/audio-service';
 import { getEffectiveCardLanguage } from '../../../lib/japanese-utils';
@@ -62,8 +64,9 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
   const [modelRequiredLang, setModelRequiredLang] = useState<string | null>(null);
 
   // Barra de 15 s alrededor del micrófono y "respiración" del botón mientras escucha
-  const progressAnim = useRef(new Animated.Value(0)).current;
-  const pulseAnim = useRef(new Animated.Value(1)).current;
+  // (Reanimated: corren en el hilo de la interfaz, no se traban si la app está ocupada)
+  const micProgress = useSharedValue(0);
+  const micPulse = useSharedValue(1);
 
   // true cuando la tarjeta actual ya se evaluó: descarta resultados tardíos del reconocedor
   const isCardEvaluated = useRef(false);
@@ -91,14 +94,13 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
 
   useEffect(() => {
     if (!isListening) {
-      pulseAnim.setValue(1);
+      cancelAnimation(micPulse);
+      micPulse.value = 1;
       return;
     }
-    const pulse = (toValue: number) =>
-      Animated.timing(pulseAnim, { toValue, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true });
-    const animation = Animated.loop(Animated.sequence([pulse(1.07), pulse(1)]));
-    animation.start();
-    return () => animation.stop();
+    const breathe = (toValue: number) => withTiming(toValue, { duration: 900, easing: Easing.inOut(Easing.ease) });
+    micPulse.value = withRepeat(withSequence(breathe(1.07), breathe(1)), -1);
+    return () => cancelAnimation(micPulse);
   }, [isListening]);
 
   const flushPendingReview = () => {
@@ -155,7 +157,7 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
   /** Evalúa la tarjeta (acierto o fallo), la gira y deja la respuesta pendiente de guardar. */
   const evaluate = (card: DueCardWithContext, isSuccess: boolean, matchedReading?: string) => {
     isCardEvaluated.current = true;
-    progressAnim.stopAnimation();
+    cancelAnimation(micProgress);
     setFeedback(null);
     attempts.current = { cardId: '', count: 0 }; // la próxima vez que aparezca empieza de cero
 
@@ -233,8 +235,8 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
     if (!resume) {
       stopSpeech();
       autoAdvance.cancel();
-      progressAnim.stopAnimation();
-      progressAnim.setValue(0);
+      cancelAnimation(micProgress);
+      micProgress.value = 0;
       flip.reset();
     }
 
@@ -251,23 +253,31 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
     }
 
     let timerStarted = false;
+    // Se acabó el tiempo de la tarjeta (lo avisa la animación del anillo al completarse)
+    const onTimeUp = () => {
+      if (!isStale()) evaluate(card, false);
+    };
     const runTimer = (from: number) => {
-      progressAnim.setValue(from);
-      Animated.timing(progressAnim, {
-        toValue: 1,
-        duration: Math.max(0, (1 - from) * VOICE_TIMEOUT_SECONDS * 1000),
-        easing: Easing.linear,
-        useNativeDriver: false,
-      }).start(({ finished }) => {
-        if (finished && !isStale()) evaluate(card, false);
-      });
+      micProgress.value = from;
+      micProgress.value = withTiming(
+        1,
+        { duration: Math.max(0, (1 - from) * VOICE_TIMEOUT_SECONDS * 1000), easing: Easing.linear },
+        (finished) => {
+          'worklet';
+          if (finished) scheduleOnRN(onTimeUp);
+        }
+      );
     };
     const startTimeout = () => {
       if (timerStarted || isStale()) return;
       timerStarted = true;
       // Al reabrir, el tiempo sigue desde donde iba
-      if (resume) progressAnim.stopAnimation((value) => runTimer(value));
-      else runTimer(0);
+      if (resume) {
+        cancelAnimation(micProgress);
+        runTimer(micProgress.value);
+      } else {
+        runTimer(0);
+      }
     };
 
     console.log('[ReviewVoice] Escuchando tarjeta:', card.displayText);
@@ -353,7 +363,7 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
           reportedError = err;
           setIsListening(false);
           setSpeechStatus('idle');
-          progressAnim.stopAnimation();
+          cancelAnimation(micProgress);
           if (err === MODEL_NOT_DOWNLOADED) {
             setModelRequiredLang(listenLang);
             return;
@@ -361,7 +371,8 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
           Alert.alert(t('review.micErrorTitle'), err || t('review.micErrorDefault'));
         },
         onEnd: () => {
-          if (isStale() || isCardEvaluated.current) return;
+          // Después de un error real (ya avisado) no se reabre solo: con un error que se repite sería un bucle
+          if (isStale() || isCardEvaluated.current || reportedError) return;
           // El reconocedor del teléfono se cierra solo tras un silencio o una frase: mientras quede tiempo e
           // intentos, se reabre (sin reiniciar el tiempo) para que el micrófono no se apague con el reloj corriendo
           if (attempts.current.count < MAX_VOICE_ATTEMPTS && !store().isChecked) {
@@ -391,7 +402,7 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
       speechService.stop();
       setIsListening(false);
       setSpeechStatus('idle');
-      progressAnim.stopAnimation();
+      cancelAnimation(micProgress);
     } else {
       startListening(card, lang);
     }
@@ -442,7 +453,7 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
     autoAdvance.cancel();
     setIsListening(false);
     setSpeechStatus('idle');
-    progressAnim.setValue(0);
+    micProgress.value = 0;
   };
 
   /** La pantalla pierde el foco: guardar lo pendiente y cortar el micrófono. */
@@ -471,8 +482,8 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
     autoAdvance.cancel();
     isCardEvaluated.current = true;
     speechService.invalidate();
-    progressAnim.stopAnimation();
-    progressAnim.setValue(0);
+    cancelAnimation(micProgress);
+    micProgress.value = 0;
     flip.reset();
     speechService.abort().catch(() => {});
     setSpeechTranscript('');
@@ -481,8 +492,8 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
   return {
     setupLabel,
     feedback,
-    progressAnim,
-    pulseAnim,
+    micProgress,
+    micPulse,
     showModelRequired: modelRequiredLang !== null,
     modelRequiredLang,
     closeModelRequired: () => setModelRequiredLang(null),

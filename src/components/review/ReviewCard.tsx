@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { Animated, ScrollView, StyleProp, StyleSheet, Text, TextStyle, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleProp, StyleSheet, Text, TextStyle, TouchableOpacity, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { speakCard } from '../../../lib/audio-service';
 import { getCardMediaUris, isMediaPlaceholder } from '../../../lib/media-service';
 import { CardVideo } from '../media/CardVideo';

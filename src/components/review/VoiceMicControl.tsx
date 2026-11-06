@@ -1,5 +1,6 @@
 import { memo } from 'react';
-import { ActivityIndicator, Animated, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import Animated, { SharedValue, useAnimatedProps, useAnimatedStyle } from 'react-native-reanimated';
 import Svg, { Circle } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
 import { Spacing } from '../../constants/theme';
@@ -14,8 +15,10 @@ export interface VoiceMicControlProps {
   speechStatus: 'idle' | 'starting' | 'listening' | 'evaluating' | 'correct' | 'incorrect';
   /** Si hay texto, el motor se está preparando (descarga/carga del modelo) y el botón queda bloqueado. */
   busyLabel?: string | null;
-  voiceProgressAnim: Animated.Value;
-  micPulseAnim: Animated.Value;
+  /** Tiempo usado de la tarjeta, de 0 a 1 (el anillo se va completando) */
+  micProgress: SharedValue<number>;
+  /** "Respiración" del botón mientras escucha */
+  micPulse: SharedValue<number>;
   colors: {
     primary: string;
     primaryHover?: string;
@@ -30,12 +33,14 @@ export const VoiceMicControl = memo(function VoiceMicControl({
   isListening,
   speechStatus,
   busyLabel = null,
-  voiceProgressAnim,
-  micPulseAnim,
+  micProgress,
+  micPulse,
   colors,
   onPress,
 }: VoiceMicControlProps) {
   const { t } = useTranslation();
+  const ringProps = useAnimatedProps(() => ({ strokeDashoffset: CIRCUMFERENCE * (1 - micProgress.value) }));
+  const auraStyle = useAnimatedStyle(() => ({ transform: [{ scale: micPulse.value }] }));
   const isStarting = speechStatus === 'starting';
   const isButtonDisabled = isStarting || Boolean(busyLabel);
 
@@ -60,10 +65,7 @@ export const VoiceMicControl = memo(function VoiceMicControl({
             stroke={colors.primary}
             strokeWidth="4.5"
             strokeDasharray={`${CIRCUMFERENCE}`}
-            strokeDashoffset={voiceProgressAnim.interpolate({
-              inputRange: [0, 1],
-              outputRange: [CIRCUMFERENCE, 0],
-            })}
+            animatedProps={ringProps}
             strokeLinecap="round"
             fill="none"
             transform="rotate(-90 53 53)"
@@ -74,10 +76,8 @@ export const VoiceMicControl = memo(function VoiceMicControl({
         <Animated.View
           style={[
             styles.micFloatingAura,
-            {
-              backgroundColor: isListening ? colors.primary + '16' : 'transparent',
-              transform: [{ scale: micPulseAnim }],
-            },
+            { backgroundColor: isListening ? colors.primary + '16' : 'transparent' },
+            auraStyle,
           ]}
         >
           <TouchableOpacity
