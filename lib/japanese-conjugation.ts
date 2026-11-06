@@ -173,3 +173,30 @@ export function conjugateByType(text: string, type: string, form: ConjugationFor
   }
   return null;
 }
+
+/**
+ * Formas equivalentes que también valen como respuesta (misma forma, otra manera de decirla):
+ * じゃ = では, じゃありません = じゃないです = ではありません, くないです = くありません, y en verbos
+ * なくて = ないで. Sirve para la lectura y para la escritura (las terminaciones van en kana).
+ */
+export function equivalentConjugations(text: string): string[] {
+  const out = new Set([text]);
+  const groups = [
+    ['じゃありません', 'じゃないです', 'ではありません', 'ではないです'],
+    ['じゃなかった', 'ではなかった'],
+    ['じゃなくて', 'ではなくて'],
+    ['じゃない', 'ではない'],
+    ['くないです', 'くありません'],
+    ['くなかったです', 'くありませんでした'],
+  ];
+  for (const group of groups) {
+    const ending = group.find((g) => text.endsWith(g));
+    if (!ending) continue;
+    const stem = text.slice(0, -ending.length);
+    group.forEach((g) => out.add(stem + g));
+    break;
+  }
+  // Solo verbos (食べなくて = 食べないで): en adjetivos くないで / じゃないで no es la forma -te
+  if (/なくて$/.test(text) && !/(く|じゃ|では)なくて$/.test(text)) out.add(text.replace(/なくて$/, 'ないで'));
+  return [...out];
+}

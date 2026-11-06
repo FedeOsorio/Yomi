@@ -1,8 +1,30 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import Animated, {
+  cancelAnimation,
+  Easing,
+  SharedValue,
+  useAnimatedProps,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import Svg, { ClipPath, Defs, G, Path, Text as SvgText } from 'react-native-svg';
 import { getStorageItem, setStorageItem } from '../../../lib/storage-service';
 import { useTranslation } from '../../i18n';
+
+const AnimatedPath = Animated.createAnimatedComponent(Path);
+const AnimatedSvgText = Animated.createAnimatedComponent(SvgText);
+
+/** Tiempo de dibujo de cada trazo. */
+const STROKE_MS = 500;
+
+interface StrokeData {
+  paths: string[];
+  clipPaths: string[];
+  texts: { text: string; x: string; y: string }[];
+  viewBox: string;
+  strokeType: 'kanjivg' | 'animcjk';
+}
 
 export function getKanjiHex(char: string): string {
   if (!char) return '';
@@ -55,20 +77,72 @@ function extractKanjiVgPaths(xmlText: string): { paths: string[]; texts: { text:
   return { paths, texts };
 }
 
-// Calcula la longitud euclidiana acumulada de un path compuesto por segmentos (M x y L x y...)
-function getPolylineLength(d: string): number {
-  if (!d) return 1000;
-  const nums = d.match(/[-+]?[0-9]*\.?[0-9]+/g);
-  if (!nums || nums.length < 4) return 1000;
+/**
+ * Largo aproximado de un trazo SVG (rectas y curvas de Bézier, absolutas o relativas), para que la animación
+ * lo dibuje a velocidad pareja. Cada curva se estima como el promedio entre la cuerda y el polígono de control.
+ */
+function estimatePathLength(d: string): number {
+  const tokens = d.match(/[a-zA-Z]|[-+]?(?:\d*\.\d+|\d+)(?:e[-+]?\d+)?/g) ?? [];
+  let i = 0;
+  let cmd = '';
+  let x = 0, y = 0, startX = 0, startY = 0, ctrlX = 0, ctrlY = 0;
   let total = 0;
-  for (let i = 2; i < nums.length; i += 2) {
-    const x1 = parseFloat(nums[i - 2]);
-    const y1 = parseFloat(nums[i - 1]);
-    const x2 = parseFloat(nums[i]);
-    const y2 = parseFloat(nums[i + 1]);
-    total += Math.hypot(x2 - x1, y2 - y1);
+  const num = () => parseFloat(tokens[i++]);
+  const line = (ex: number, ey: number) => {
+    total += Math.hypot(ex - x, ey - y);
+    x = ctrlX = ex;
+    y = ctrlY = ey;
+  };
+  const cubic = (x1: number, y1: number, x2: number, y2: number, ex: number, ey: number) => {
+    const chord = Math.hypot(ex - x, ey - y);
+    const net = Math.hypot(x1 - x, y1 - y) + Math.hypot(x2 - x1, y2 - y1) + Math.hypot(ex - x2, ey - y2);
+    total += (chord + net) / 2;
+    ctrlX = x2;
+    ctrlY = y2;
+    x = ex;
+    y = ey;
+  };
+
+  while (i < tokens.length) {
+    const before = i;
+    if (/^[a-zA-Z]$/.test(tokens[i])) cmd = tokens[i++];
+    const rel = cmd === cmd.toLowerCase();
+    const ox = rel ? x : 0;
+    const oy = rel ? y : 0;
+    switch (cmd.toUpperCase()) {
+      case 'M':
+        x = ctrlX = startX = num() + ox;
+        y = ctrlY = startY = num() + oy;
+        cmd = rel ? 'l' : 'L'; // los pares que siguen a un M son rectas
+        break;
+      case 'L':
+        line(num() + ox, num() + oy);
+        break;
+      case 'H':
+        line(num() + ox, y);
+        break;
+      case 'V':
+        line(x, num() + oy);
+        break;
+      case 'C':
+        cubic(num() + ox, num() + oy, num() + ox, num() + oy, num() + ox, num() + oy);
+        break;
+      case 'S':
+        cubic(2 * x - ctrlX, 2 * y - ctrlY, num() + ox, num() + oy, num() + ox, num() + oy);
+        break;
+      case 'Q':
+      case 'T':
+        // Poco comunes en estos archivos: se toma la recta hasta el punto final
+        if (cmd.toUpperCase() === 'Q') i += 2;
+        line(num() + ox, num() + oy);
+        break;
+      case 'Z':
+        line(startX, startY);
+        break;
+    }
+    if (i === before) i++; // nada consumido (comando desconocido): seguir
   }
-  return Math.max(total, 100);
+  return Number.isFinite(total) && total > 0 ? total : 1000;
 }
 
 // Extrae los paths de AnimCJK (parsimonhi/animCJK) basado en la estructura REAL del SVG:
@@ -116,16 +190,7 @@ function extractAnimCjkPaths(xmlText: string): { paths: string[]; clipPaths: str
   };
 }
 
-export async function fetchAndParseStrokeSvg(
-  char: string,
-  isChinese: boolean = false
-): Promise<{
-  paths: string[];
-  clipPaths: string[];
-  texts: { text: string; x: string; y: string }[];
-  viewBox: string;
-  strokeType: 'kanjivg' | 'animcjk';
-}> {
+export async function fetchAndParseStrokeSvg(char: string, isChinese: boolean = false): Promise<StrokeData> {
   if (!char) return { paths: [], clipPaths: [], texts: [], viewBox: '0 0 109 109', strokeType: 'kanjivg' };
   const hex4 = char.charCodeAt(0).toString(16).toLowerCase();
   const hex5 = hex4.padStart(5, '0');
@@ -196,23 +261,78 @@ export async function fetchAndParseStrokeSvg(
   return { paths: [], clipPaths: [], texts: [], viewBox: '0 0 109 109', strokeType: 'kanjivg' };
 }
 
-export async function preloadStrokeSvg(char: string, isChinese: boolean = false): Promise<void> {
-  const hexCode = getKanjiHex(char);
-  const cacheKey = `yomi_stroke_${isChinese ? 'hanzi' : 'kanji'}_v14_${hexCode}`;
+/** Trazos del carácter: de la copia guardada o, la primera vez, de internet (y se guardan). null si no hay. */
+async function loadStrokes(char: string, isChinese: boolean): Promise<StrokeData | null> {
+  const cacheKey = `yomi_stroke_${isChinese ? 'hanzi' : 'kanji'}_v14_${getKanjiHex(char)}`;
   try {
     const cached = await getStorageItem(cacheKey);
-    if (!cached) {
-      const { paths, clipPaths, texts, viewBox, strokeType } = await fetchAndParseStrokeSvg(char, isChinese);
-      if (paths.length > 0) {
-        await setStorageItem(cacheKey, JSON.stringify({ paths, clipPaths, texts, viewBox, strokeType }));
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (parsed && Array.isArray(parsed.paths) && parsed.paths.length > 0) {
+        return {
+          paths: parsed.paths,
+          clipPaths: parsed.clipPaths || [],
+          texts: parsed.texts || [],
+          viewBox: parsed.viewBox || '0 0 109 109',
+          strokeType: parsed.strokeType || (isChinese ? 'animcjk' : 'kanjivg'),
+        };
       }
     }
   } catch (e) {}
+
+  const data = await fetchAndParseStrokeSvg(char, isChinese);
+  if (data.paths.length === 0) return null;
+  setStorageItem(cacheKey, JSON.stringify(data)).catch(() => {});
+  return data;
 }
 
-function autoDetectViewBox(paths: string[], defaultViewBox: string): string {
-  if (defaultViewBox && defaultViewBox.trim().length > 0) return defaultViewBox;
-  return '0 0 109 109';
+/** Baja y guarda los trazos en segundo plano, para que se dibujen al instante al tocar el kanji. */
+export async function preloadStrokeSvg(char: string, isChinese: boolean = false): Promise<void> {
+  await loadStrokes(char, isChinese).catch(() => null);
+}
+
+interface StrokePathProps {
+  d: string;
+  index: number;
+  length: number;
+  progress: SharedValue<number>;
+  color: string;
+  width: number;
+  clipId?: string;
+}
+
+/** Un trazo: se dibuja cuando `progress` pasa por su número (0→1 el primero, 1→2 el segundo…). */
+function StrokePath({ d, index, length, progress, color, width, clipId }: StrokePathProps) {
+  const animatedProps = useAnimatedProps(() => {
+    const p = Math.min(Math.max(progress.value - index, 0), 1);
+    return { strokeDashoffset: length * (1 - p), opacity: p > 0 ? 1 : 0 };
+  });
+  return (
+    <AnimatedPath
+      d={d}
+      clipPath={clipId ? `url(#${clipId})` : undefined}
+      stroke={color}
+      strokeWidth={width}
+      fill="none"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeDasharray={length}
+      animatedProps={animatedProps}
+    />
+  );
+}
+
+/** Número de orden de un trazo (KanjiVG): aparece cuando empieza ese trazo. */
+function StrokeNumber({ label, index, progress, color }: { label: { text: string; x: string; y: string }; index: number; progress: SharedValue<number>; color: string }) {
+  const animatedProps = useAnimatedProps(() => ({ opacity: progress.value > index ? 1 : 0 }));
+  const posX = parseFloat(label.x);
+  const posY = parseFloat(label.y);
+  if (isNaN(posX) || isNaN(posY)) return null;
+  return (
+    <AnimatedSvgText x={posX} y={posY} fill={color} fontSize={7.5} fontWeight="bold" animatedProps={animatedProps}>
+      {label.text}
+    </AnimatedSvgText>
+  );
 }
 
 export interface KanjiStrokeViewerProps {
@@ -220,229 +340,115 @@ export interface KanjiStrokeViewerProps {
   primaryColor: string;
   textMutedColor: string;
   isChinese?: boolean;
+  /** Lado del dibujo, en puntos. */
+  size?: number;
 }
 
-export function KanjiStrokeViewer({
-  char,
-  primaryColor,
-  textMutedColor,
-  isChinese = false,
-}: KanjiStrokeViewerProps) {
+/**
+ * Dibuja un kanji/hanzi trazo por trazo, una vez, sobre el carácter en gris (así se ve lo que falta).
+ * La animación corre en el hilo de la interfaz (Reanimated): no vuelve a dibujar la pantalla en cada cuadro.
+ */
+export function KanjiStrokeViewer({ char, primaryColor, textMutedColor, isChinese = false, size = 160 }: KanjiStrokeViewerProps) {
   const { t } = useTranslation();
-  const [svgPaths, setSvgPaths] = useState<string[]>([]);
-  const [svgClipPaths, setSvgClipPaths] = useState<string[]>([]);
-  const [kanjiTexts, setKanjiTexts] = useState<{ text: string; x: string; y: string }[]>([]);
-  const [svgViewBox, setSvgViewBox] = useState<string>('0 0 109 109');
-  const [svgStrokeType, setSvgStrokeType] = useState<'kanjivg' | 'animcjk'>(isChinese ? 'animcjk' : 'kanjivg');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
-  const [activeStrokeIndex, setActiveStrokeIndex] = useState(0);
-  const [strokeProgress, setStrokeProgress] = useState(0);
-
-  const hexCode = getKanjiHex(char);
+  const [data, setData] = useState<StrokeData | null>(null);
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const progress = useSharedValue(0);
 
   useEffect(() => {
-    let isMounted = true;
-    async function loadSvg() {
-      setLoading(true);
-      setError(false);
-      const cacheKey = `yomi_stroke_${isChinese ? 'hanzi' : 'kanji'}_v14_${hexCode}`;
-      try {
-        const cached = await getStorageItem(cacheKey);
-        if (cached) {
-          const parsed = JSON.parse(cached);
-          if (parsed && Array.isArray(parsed.paths) && parsed.paths.length > 0) {
-            if (isMounted) {
-              const detectedBox = autoDetectViewBox(parsed.paths, parsed.viewBox);
-              setSvgPaths(parsed.paths);
-              setSvgClipPaths(parsed.clipPaths || []);
-              setKanjiTexts(parsed.texts || []);
-              setSvgViewBox(detectedBox);
-              setSvgStrokeType(parsed.strokeType || (isChinese ? 'animcjk' : 'kanjivg'));
-              setActiveStrokeIndex(0);
-              setStrokeProgress(0);
-              setLoading(false);
-            }
-            return;
-          }
-        }
-      } catch (e) {}
-
-      const { paths, clipPaths, texts, viewBox, strokeType } = await fetchAndParseStrokeSvg(char, isChinese);
-
-      if (isMounted) {
-        if (paths.length > 0) {
-          const detectedBox = autoDetectViewBox(paths, viewBox);
-          setSvgPaths(paths);
-          setSvgClipPaths(clipPaths);
-          setKanjiTexts(texts);
-          setSvgViewBox(detectedBox);
-          setSvgStrokeType(strokeType);
-          setActiveStrokeIndex(0);
-          setStrokeProgress(0);
-          setStorageItem(cacheKey, JSON.stringify({ paths, clipPaths, texts, viewBox: detectedBox, strokeType }));
-        } else {
-          setError(true);
-        }
-        setLoading(false);
-      }
-    }
-    loadSvg();
+    let alive = true;
+    setStatus('loading');
+    loadStrokes(char, isChinese).then((loaded) => {
+      if (!alive) return;
+      setData(loaded);
+      setStatus(loaded ? 'ready' : 'error');
+    });
     return () => {
-      isMounted = false;
+      alive = false;
     };
-  }, [char, hexCode, isChinese]);
+  }, [char, isChinese]);
 
-  // Animación 60 FPS: strokeProgress 0→1 por cada trazo, luego avanza al siguiente
   useEffect(() => {
-    if (svgPaths.length === 0) return;
-    let animFrame: number;
-    let startTime: number | null = null;
-    const durationPerStroke = svgStrokeType === 'animcjk' ? 850 : 1050;
-    const pauseAtEnd = 1500;
-    const totalAnimationTime = svgPaths.length * durationPerStroke + pauseAtEnd;
+    if (!data) return;
+    progress.value = 0;
+    progress.value = withTiming(data.paths.length, { duration: data.paths.length * STROKE_MS, easing: Easing.linear });
+    return () => cancelAnimation(progress);
+  }, [data]);
 
-    function animate(time: number) {
-      if (!startTime) startTime = time;
-      let elapsed = time - startTime;
+  const isAnimCjk = data?.strokeType === 'animcjk';
+  const lengths = useMemo(
+    () => (data ? data.paths.map((d) => Math.ceil(estimatePathLength(d) * 1.1)) : []),
+    [data]
+  );
 
-      if (elapsed >= totalAnimationTime) {
-        startTime = time;
-        elapsed = 0;
-      }
-
-      if (elapsed < svgPaths.length * durationPerStroke) {
-        const strokeIdx = Math.floor(elapsed / durationPerStroke);
-        const progress = (elapsed % durationPerStroke) / durationPerStroke;
-        setActiveStrokeIndex(strokeIdx);
-        setStrokeProgress(progress);
-      } else {
-        setActiveStrokeIndex(svgPaths.length - 1);
-        setStrokeProgress(1);
-      }
-
-      animFrame = requestAnimationFrame(animate);
-    }
-
-    animFrame = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(animFrame);
-  }, [svgPaths.length, svgStrokeType]);
-
-  if (loading) {
+  if (status === 'loading') {
     return (
-      <View style={styles.animatorContainer}>
-        <ActivityIndicator size="large" color={primaryColor} />
-        <Text style={[styles.animatorSub, { color: textMutedColor }]}>
-          {t('wordDetail.loadingStroke', { char })}
-        </Text>
+      <View style={[styles.box, { width: size, height: size }]}>
+        <ActivityIndicator size="small" color={primaryColor} />
       </View>
     );
   }
 
-  if (error || svgPaths.length === 0) {
+  if (status === 'error' || !data) {
     return (
-      <View style={styles.animatorContainer}>
-        <Text style={styles.animatorError}>{t('wordDetail.strokeUnavailable')}</Text>
+      <View style={[styles.box, { width: size, height: size }]}>
+        <Text style={styles.error}>{t('wordDetail.strokeUnavailable')}</Text>
       </View>
     );
   }
 
-  const isAnimCjk = svgStrokeType === 'animcjk';
+  const guideColor = textMutedColor + '40';
 
   return (
-    <View style={styles.animatorContainer}>
-      <View style={styles.animatorCanvasBox}>
-        <Svg width={190} height={190} viewBox={svgViewBox}>
-          {isAnimCjk && (
-            <Defs>
-              {svgClipPaths.map((cp, idx) => (
-                <ClipPath key={idx} id={`acp_${idx}`}>
-                  <Path d={cp} />
-                </ClipPath>
+    <View style={[styles.box, { width: size, height: size }]}>
+      <Svg width={size} height={size} viewBox={data.viewBox}>
+        {isAnimCjk && (
+          <Defs>
+            {data.clipPaths.map((cp, idx) => (
+              <ClipPath key={idx} id={`acp_${idx}`}>
+                <Path d={cp} />
+              </ClipPath>
+            ))}
+          </Defs>
+        )}
+        {/* El carácter completo en gris, de guía */}
+        <G>
+          {isAnimCjk
+            ? data.clipPaths.map((cp, idx) => <Path key={idx} d={cp} fill={guideColor} />)
+            : data.paths.map((d, idx) => (
+                <Path key={idx} d={d} stroke={guideColor} strokeWidth={4} fill="none" strokeLinecap="round" strokeLinejoin="round" />
               ))}
-            </Defs>
-          )}
-          <G>
-            {svgPaths.map((dStr, idx) => {
-              if (idx > activeStrokeIndex) return null;
-              const isCurrent = idx === activeStrokeIndex;
-              const strokeLen = isAnimCjk ? Math.round(getPolylineLength(dStr) * 1.1) : 600;
-              const dashoffset = isCurrent ? strokeLen * (1 - strokeProgress) : 0;
-
-              if (isAnimCjk) {
-                return (
-                  <Path
-                    key={idx}
-                    d={dStr}
-                    clipPath={`url(#acp_${idx})`}
-                    stroke={primaryColor}
-                    strokeWidth={96}
-                    fill="none"
-                    strokeLinecap="round"
-                    strokeDasharray={strokeLen}
-                    strokeDashoffset={dashoffset}
-                  />
-                );
-              }
-
-              return (
-                <Path
-                  key={idx}
-                  d={dStr}
-                  stroke={primaryColor}
-                  strokeWidth={4}
-                  fill="none"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeDasharray={strokeLen}
-                  strokeDashoffset={dashoffset}
-                />
-              );
-            })}
-            {!isAnimCjk &&
-              kanjiTexts.slice(0, activeStrokeIndex + 1).map((t, idx) => {
-                const posX = parseFloat(t.x);
-                const posY = parseFloat(t.y);
-                if (isNaN(posX) || isNaN(posY)) return null;
-                return (
-                  <SvgText
-                    key={idx}
-                    x={posX}
-                    y={posY}
-                    fill={textMutedColor}
-                    fontSize={7.5}
-                    fontWeight="bold"
-                  >
-                    {t.text}
-                  </SvgText>
-                );
-              })}
-          </G>
-        </Svg>
-      </View>
+        </G>
+        <G>
+          {data.paths.map((d, idx) => (
+            <StrokePath
+              key={idx}
+              d={d}
+              index={idx}
+              length={lengths[idx]}
+              progress={progress}
+              color={primaryColor}
+              width={isAnimCjk ? 96 : 4}
+              clipId={isAnimCjk ? `acp_${idx}` : undefined}
+            />
+          ))}
+          {!isAnimCjk &&
+            data.texts.map((label, idx) => (
+              <StrokeNumber key={idx} label={label} index={idx} progress={progress} color={textMutedColor} />
+            ))}
+        </G>
+      </Svg>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  animatorContainer: {
-    width: '100%',
-    height: 240,
+  box: {
     justifyContent: 'center',
     alignItems: 'center',
   },
-  animatorCanvasBox: {
-    width: 220,
-    height: 220,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  animatorSub: {
-    fontSize: 12,
-    marginTop: 10,
-  },
-  animatorError: {
+  error: {
     fontSize: 12,
     color: '#EF4444',
+    textAlign: 'center',
   },
 });

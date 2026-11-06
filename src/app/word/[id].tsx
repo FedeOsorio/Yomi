@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
+  Pressable,
   StyleSheet,
   Text,
   TextInput,
@@ -14,7 +15,7 @@ import {
   View,
 } from 'react-native';
 import { Gesture, GestureDetector, ScrollView } from 'react-native-gesture-handler';
-import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, { FadeIn, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { scheduleOnRN } from 'react-native-worklets';
 import { State } from 'ts-fsrs';
@@ -55,6 +56,12 @@ import { useSingleNavigation } from '../../hooks/useSingleNavigation';
 const SWIPE_DISTANCE = 80;
 const SWIPE_VELOCITY = 700;
 
+/** El carácter, si la palabra es un único kanji/hanzi: solo esas se dibujan trazo por trazo. */
+function singleKanjiOf(text: string): string | null {
+  const chars = Array.from(text.trim());
+  return chars.length === 1 && extractKanjis(chars[0]).length === 1 ? chars[0] : null;
+}
+
 export default function WordDetailScreen() {
   const { colors } = useTheme();
   const { t } = useTranslation();
@@ -65,7 +72,8 @@ export default function WordDetailScreen() {
   const nav = useSingleNavigation();
   const [data, setData] = useState<WordDetailWithRelations | null>(null);
   const [loading, setLoading] = useState(true);
-  const [selectedKanji, setSelectedKanji] = useState<string | null>(null);
+  // Kanji que se está dibujando trazo por trazo en el título (solo palabras de un único kanji)
+  const [strokeChar, setStrokeChar] = useState<string | null>(null);
   const [asyncCompounds, setAsyncCompounds] = useState<CompoundWord[]>([]);
   const [compoundsLoading, setCompoundsLoading] = useState(false);
   const [selectedMeanings, setSelectedMeanings] = useState<string[]>([]);
@@ -164,7 +172,7 @@ export default function WordDetailScreen() {
     if (typeof id === 'string') {
       // Al deslizar entre palabras se mantiene la pantalla montada (sin spinner de pantalla completa)
       if (!data) setLoading(true);
-      setSelectedKanji(null);
+      setStrokeChar(null);
       setEditingMeaning(null);
       setIsEditingReading(false);
       const res = await getWordDetailWithRelations(id);
@@ -403,14 +411,12 @@ export default function WordDetailScreen() {
     };
   }, [data]);
 
-  // Precarga asíncrona en segundo plano de trazados de Kanji / Hanzi para apertura instantánea sin loading
+  // Precarga en segundo plano de los trazos de un kanji aislado, para que se dibujen al instante al tocarlo
   useEffect(() => {
     if (!data) return;
-    const kanjis = extractKanjis(data.word.simplified);
-    const isCh = (data.deck?.languageCode || 'zh-CN').startsWith('zh');
-    kanjis.forEach((char) => {
-      preloadStrokeSvg(char, isCh);
-    });
+    const char = singleKanjiOf(data.word.simplified);
+    const langCode = data.deck?.languageCode || 'zh-CN';
+    if (char && (langCode.startsWith('ja') || langCode.startsWith('zh'))) preloadStrokeSvg(char, langCode.startsWith('zh'));
   }, [data]);
 
   // Precarga automática del motor de audio (TTS) al entrar a la pantalla y liberación al salir
@@ -661,6 +667,10 @@ export default function WordDetailScreen() {
   const srsStateInfo = getSrsStateLabel(srsItem?.state);
   const furiganaPairs = parseFurigana(word.simplified, furiganaReading);
   const kanjisList = extractKanjis(word.simplified);
+  // Kanji aislado: tocarlo (o el pincel) lo dibuja trazo por trazo en el mismo lugar; otro toque lo devuelve
+  const singleKanji = isIdeographic ? singleKanjiOf(word.simplified) : null;
+  const showStrokes = singleKanji !== null && strokeChar === singleKanji;
+  const toggleStrokes = () => setStrokeChar(showStrokes ? null : singleKanji);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top + 4 }]}>
@@ -743,7 +753,24 @@ export default function WordDetailScreen() {
 
                 {!isFrontPlaceholderOnly && (
                   <>
-                    <View style={styles.rubyContainer}>
+                    {showStrokes && singleKanji ? (
+                      <Animated.View entering={FadeIn.duration(200)}>
+                        <Pressable onPress={toggleStrokes} accessibilityLabel={t('wordDetail.drawStrokes')}>
+                          <KanjiStrokeViewer
+                            char={singleKanji}
+                            primaryColor={colors.primary}
+                            textMutedColor={colors.textMuted}
+                            isChinese={isChinese}
+                          />
+                        </Pressable>
+                      </Animated.View>
+                    ) : (
+                    <Pressable
+                      style={styles.rubyContainer}
+                      onPress={toggleStrokes}
+                      disabled={!singleKanji}
+                      accessibilityLabel={singleKanji ? t('wordDetail.drawStrokes') : undefined}
+                    >
                       {furiganaPairs.map((pair, idx) => {
                         const textLen = word.simplified.length;
                         const fontSize = textLen > 12 ? 20 : textLen > 8 ? 24 : textLen > 5 ? 28 : 32;
@@ -767,7 +794,8 @@ export default function WordDetailScreen() {
                           </View>
                         );
                       })}
-                    </View>
+                    </Pressable>
+                    )}
 
                     <View style={styles.readingRowContainer}>
                       {cleanReading && cleanReading !== word.simplified ? (
@@ -778,26 +806,45 @@ export default function WordDetailScreen() {
                         <View style={{ flex: 1 }} />
                       )}
 
-                      {!isCustomDeck && (
-                        <TouchableOpacity
-                          style={styles.smallAudioBtn}
-                          activeOpacity={0.6}
-                          onPress={handlePlayAudio}
-                          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                          accessibilityLabel={t('wordDetail.reading')}
-                        >
-                          {!isAudioReady ? (
-                            <ActivityIndicator size="small" color={colors.primary} />
-                          ) : (
-                            <Ionicons
-                              name={isPlayingAudio ? 'volume-high' : 'volume-medium'}
-                              size={18}
-                              color={colors.primary}
-                            />
-                          )}
-                        </TouchableOpacity>
-                      )}
+                      <View style={styles.titleActions}>
+                        {singleKanji && (
+                          <TouchableOpacity
+                            style={[styles.smallAudioBtn, showStrokes && { backgroundColor: colors.primary + '20' }]}
+                            activeOpacity={0.6}
+                            onPress={toggleStrokes}
+                            hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+                            accessibilityLabel={t('wordDetail.drawStrokes')}
+                          >
+                            <Ionicons name="brush-outline" size={17} color={colors.primary} />
+                          </TouchableOpacity>
+                        )}
+                        {!isCustomDeck && (
+                          <TouchableOpacity
+                            style={styles.smallAudioBtn}
+                            activeOpacity={0.6}
+                            onPress={handlePlayAudio}
+                            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                            accessibilityLabel={t('wordDetail.reading')}
+                          >
+                            {!isAudioReady ? (
+                              <ActivityIndicator size="small" color={colors.primary} />
+                            ) : (
+                              <Ionicons
+                                name={isPlayingAudio ? 'volume-high' : 'volume-medium'}
+                                size={18}
+                                color={colors.primary}
+                              />
+                            )}
+                          </TouchableOpacity>
+                        )}
+                      </View>
                     </View>
+
+                    {isChinese && word.traditional && word.traditional !== word.simplified ? (
+                      <Text style={[styles.traditionalText, { color: colors.textMuted }]}>
+                        {t('wordDetail.traditional', { char: word.traditional })}
+                      </Text>
+                    ) : null}
                   </>
                 )}
 
@@ -1079,28 +1126,9 @@ export default function WordDetailScreen() {
         </View>
         )}
 
-        {/* Sección condicional: Trazado para idiomas ideográficos (Chino/Japonés) */}
-        {isIdeographic && (
+        {/* Desglose de una palabra con kanji: cada uno con su lectura y su nivel (un kanji aislado ya está en el título) */}
+        {isIdeographic && !singleKanji && kanjisList.length > 0 && (
           <View style={[styles.sectionCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <View style={styles.sectionHeaderRow}>
-              <Text style={[styles.sectionTitle, { color: colors.text, marginLeft: 0 }]}>{t('wordDetail.strokeAndChars')}</Text>
-            </View>
-
-            <View style={[styles.strokeBox, { backgroundColor: colors.surfaceHighlight }]}>
-              <Text
-                style={[styles.strokeCharPreview, { color: colors.primary }]}
-                numberOfLines={1}
-                adjustsFontSizeToFit={true}
-              >
-                {word.simplified}
-              </Text>
-              <Text style={[styles.strokeTip, { color: colors.textMuted }]}>
-                {t('wordDetail.totalCharacters', { count: word.simplified.length })} {word.traditional && word.traditional !== word.simplified ? `| ${t('wordDetail.traditional', { char: word.traditional })}` : ''}
-              </Text>
-            </View>
-
-            {/* Desglose individual de cada Kanji con su propia Badge de Nivel JLPT */}
-            {kanjisList.length > 0 && (
               <View style={styles.kanjiBreakdownContainer}>
                 <Text style={[styles.kanjiBreakdownLabel, { color: colors.textMuted }]}>
                   {isChinese ? t('wordDetail.hanziBreakdown', { count: kanjisList.length }) : t('wordDetail.kanjiBreakdown', { count: kanjisList.length })}
@@ -1115,11 +1143,9 @@ export default function WordDetailScreen() {
                   const charFurigana = pairMatch?.furigana;
 
                   return (
-                    <TouchableOpacity
+                    <View
                       key={char}
                       style={[styles.kanjiCard, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}
-                      activeOpacity={0.7}
-                      onPress={() => setSelectedKanji(char)}
                     >
                       <View style={styles.kanjiCardLeft}>
                         <View style={styles.kanjiCharWithFurigana}>
@@ -1145,16 +1171,10 @@ export default function WordDetailScreen() {
                           )}
                         </View>
                       </View>
-
-                      <View style={[styles.kanjiActionBtn, { backgroundColor: colors.primary }]}>
-                        <Ionicons name="play" size={14} color="#FFF" style={{ marginRight: 4 }} />
-                        <Text style={styles.kanjiActionBtnText}>{t('wordDetail.viewStroke')}</Text>
-                      </View>
-                    </TouchableOpacity>
+                    </View>
                   );
                 })}
               </View>
-            )}
           </View>
         )}
 
@@ -1232,55 +1252,6 @@ export default function WordDetailScreen() {
       </ScrollView>
       </Animated.View>
       </GestureDetector>
-
-      {/* Modal de Animación de Trazado de Kanji Paso a Paso */}
-      <Modal
-        visible={!!selectedKanji}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setSelectedKanji(null)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <View style={styles.modalHeader}>
-              <View style={styles.modalHeaderTitleRow}>
-                <Text style={[styles.modalTitle, { color: colors.text }]}>
-                  {isChinese ? `Hanzi ${selectedKanji}` : `Kanji ${selectedKanji}`}
-                </Text>
-                {selectedKanji && (isChinese ? getQuickHskLevel(selectedKanji) : getKanjiJlptLevel(selectedKanji)) ? (
-                  <View style={styles.levelBadge}>
-                    <Text style={[styles.levelBadgeText, { color: colors.primary }]}>
-                      {isChinese ? `HSK ${getQuickHskLevel(selectedKanji)}` : `JLPT ${getKanjiJlptLevel(selectedKanji)}`}
-                    </Text>
-                  </View>
-                ) : null}
-              </View>
-
-              <TouchableOpacity onPress={() => setSelectedKanji(null)} style={styles.modalCloseBtn}>
-                <Ionicons name="close" size={22} color={colors.text} />
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.modalBody}>
-              {selectedKanji ? (
-                <KanjiStrokeViewer
-                  char={selectedKanji}
-                  primaryColor={colors.primary}
-                  textMutedColor={colors.textMuted}
-                  isChinese={isChinese}
-                />
-              ) : null}
-            </View>
-
-            <TouchableOpacity
-              style={[styles.modalCloseFullBtn, { backgroundColor: colors.primary }]}
-              onPress={() => setSelectedKanji(null)}
-            >
-              <Text style={styles.modalCloseFullBtnText}>{t('wordDetail.closeWindow')}</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
 
       {/* Modal interactivo para editar significado */}
       <Modal
@@ -1533,8 +1504,18 @@ const styles = StyleSheet.create({
   },
   smallAudioBtn: {
     padding: 4,
+    borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  titleActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  traditionalText: {
+    fontSize: 13,
+    marginTop: 2,
   },
   topBadgesRow: {
     flexDirection: 'row',
@@ -1552,18 +1533,6 @@ const styles = StyleSheet.create({
   },
   categoryBadgeText: {
     fontSize: 10,
-    fontWeight: '700',
-  },
-  levelBadge: {
-    backgroundColor: 'rgba(59, 130, 246, 0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(59, 130, 246, 0.4)',
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  levelBadgeText: {
-    fontSize: 11,
     fontWeight: '700',
   },
   mainCharIdeographic: {
@@ -1776,27 +1745,7 @@ const styles = StyleSheet.create({
     ...Typography.bodySmall,
     marginBottom: Spacing.sm,
   },
-  strokeBox: {
-    borderRadius: 12,
-    padding: Spacing.md,
-    alignItems: 'center',
-    marginTop: Spacing.xs,
-    width: '100%',
-  },
-  strokeCharPreview: {
-    fontSize: 44,
-    fontWeight: '300',
-    marginVertical: Spacing.xs,
-    textAlign: 'center',
-    width: '100%',
-  },
-  strokeTip: {
-    ...Typography.bodySmall,
-    fontSize: 12,
-  },
-  kanjiBreakdownContainer: {
-    marginTop: Spacing.md,
-  },
+  kanjiBreakdownContainer: {},
   kanjiBreakdownLabel: {
     fontSize: 13,
     fontWeight: '600',
@@ -1851,18 +1800,6 @@ const styles = StyleSheet.create({
   },
   kanjiNoLevel: {
     fontSize: 11,
-  },
-  kanjiActionBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 10,
-  },
-  kanjiActionBtnText: {
-    color: '#FFF',
-    fontSize: 12,
-    fontWeight: 'bold',
   },
   compoundItem: {
     borderRadius: 12,
@@ -1955,45 +1892,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: Spacing.md,
   },
-  modalCard: {
-    width: '100%',
-    maxWidth: 380,
-    borderRadius: 20,
-    padding: Spacing.lg,
-    borderWidth: 1,
-    ...Shadows.card,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: Spacing.md,
-  },
-  modalHeaderTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginRight: Spacing.xs,
-  },
   modalCloseBtn: {
     padding: Spacing.xs,
-  },
-  modalBody: {
-    alignItems: 'center',
-    marginBottom: Spacing.md,
-  },
-  modalCloseFullBtn: {
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  modalCloseFullBtnText: {
-    color: '#FFF',
-    fontWeight: 'bold',
-    fontSize: 14,
   },
   metaSubtitlesContainer: {
     flexDirection: 'row',

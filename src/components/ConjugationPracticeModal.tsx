@@ -2,8 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Animated,
-  Easing,
+  Alert,
   FlatList,
   Modal,
   Pressable,
@@ -14,18 +13,40 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import Animated, {
+  cancelAnimation,
+  Easing,
+  FadeInDown,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withRepeat,
+  withSequence,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { preloadAudioService, speakText } from '../../lib/audio-service';
+import { scheduleOnRN } from 'react-native-worklets';
+import { preloadAudioService, speakText, stopSpeech } from '../../lib/audio-service';
+import { equivalentConjugations } from '../../lib/japanese-conjugation';
 import { parseFurigana } from '../../lib/japanese-search';
 import {
   conjugateJapanese,
-  expandKanjiToHiraganaCandidates,
   JapaneseConjugationForm,
   romajiToHiragana,
-  toNormalizedHiragana,
+  romajiToHiraganaAsYouType,
 } from '../../lib/japanese-utils';
+import {
+  initialPracticeFlow,
+  micLooksOn,
+  PRACTICE_ANSWER_MS,
+  PracticeEffect,
+  PracticeEvent,
+  PracticeFlowState,
+  stepPracticeFlow,
+} from '../../lib/practice-flow';
 import { MODEL_NOT_DOWNLOADED } from '../../lib/sherpa-service';
 import { speechService } from '../../lib/speech-recognition-service';
+import { matchesConjugationAnswer } from '../../lib/voice-match';
 import { VoiceModelRequiredModal } from './review/VoiceModelRequiredModal';
 import {
   ConjugableWord,
@@ -39,6 +60,10 @@ import { useTheme } from '../../providers/ThemeProvider';
 import { Shadows, Spacing } from '../constants/theme';
 import { useTranslation } from '../i18n';
 import { useSingleNavigation } from '../hooks/useSingleNavigation';
+
+/** Mantener apretado el micrófono: la barra empieza a llenarse a los 200 ms y tarda 550 ms más. */
+const HOLD_DELAY_MS = 200;
+const HOLD_FILL_MS = 550;
 
 interface ConjugationPracticeModalProps {
   visible: boolean;
@@ -283,17 +308,12 @@ export function ConjugationPracticeModal({
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedForm, setSelectedForm] = useState<ConjugationFilterForm>('all');
 
-  // Input y estado de respuesta
+  // Lo escrito (o lo que se oyó por voz)
   const [textInput, setTextInput] = useState('');
-  const [isListening, setIsListening] = useState(false);
-  const [spokenTranscript, setSpokenTranscript] = useState('');
-  const [hasEvaluated, setHasEvaluated] = useState(false);
-  const [isCorrect, setIsCorrect] = useState<boolean | null>(null);
 
   // Estadísticas de la sesión
   const [correctCount, setCorrectCount] = useState(0);
   const [totalAttempted, setTotalAttempted] = useState(0);
-  const [isFinished, setIsFinished] = useState(false);
 
   // Modales de administración del mazo de conjugaciones
   const [optionsMenuVisible, setOptionsMenuVisible] = useState(false);
@@ -302,38 +322,53 @@ export function ConjugationPracticeModal({
   const [availableWordsToAdd, setAvailableWordsToAdd] = useState<ConjugableWord[]>([]);
   const [loadingManagement, setLoadingManagement] = useState(false);
 
-  // Refs para evitar problemas de stale closures en modo automático / callbacks asíncronos
+  // Refs para leer la cola y la tarjeta actual desde los avisos del micrófono y las animaciones
   const queueRef = useRef<PracticeQueueItem[]>([]);
   queueRef.current = queue;
   const currentIndexRef = useRef(0);
   currentIndexRef.current = currentIndex;
-  const hasEvaluatedRef = useRef(false);
-  hasEvaluatedRef.current = hasEvaluated;
 
-  // Modo continuo / automático por voz
-  const [autoVoiceMode, setAutoVoiceMode] = useState(false);
-  const autoVoiceModeRef = useRef(false);
-  const justTriggeredHoldRef = useRef(false);
-  const holdProgress = useRef(new Animated.Value(0)).current;
-  const holdTimeoutRef = useRef<any>(null);
-  const autoNextProgress = useRef(new Animated.Value(0)).current;
-  const cardTransitionAnim = useRef(new Animated.Value(1)).current;
-  const feedbackAnim = useRef(new Animated.Value(0)).current;
-  const isTransitioningRef = useRef(false);
+  // Recorrido de la práctica (lib/practice-flow.ts): decide cuándo abrir el micrófono, evaluar y pasar de tarjeta
+  const flow = useRef<PracticeFlowState>(initialPracticeFlow);
+  const [flowView, setFlowView] = useState<PracticeFlowState>(initialPracticeFlow);
+  const hasEvaluated = flowView.result !== null;
+  const isCorrect = flowView.result === 'correct';
+  const isFinished = flowView.phase === 'finished';
+  const micOn = micLooksOn(flowView);
+  // Cierre del micrófono en curso: la voz de Yomi espera a que termine (Android no comparte el audio)
+  const micClosing = useRef<Promise<unknown>>(Promise.resolve());
 
-  // Timer para pasaje automático entre tarjetas estilo SRS
-  const autoNextTimerRef = useRef<any>(null);
+  // Animaciones (Reanimated): carga al mantener el micrófono, barra de 7 s, cambio de tarjeta y el micrófono
+  // que "respira" mientras escucha (como en el repaso). Las barras se llenan con scaleX: no recalculan el diseño
+  const holdProgress = useSharedValue(0);
+  const autoNextProgress = useSharedValue(0);
+  const cardOpacity = useSharedValue(1);
+  const micPulse = useSharedValue(1);
+  const holdStyle = useAnimatedStyle(() => ({ transform: [{ scaleX: holdProgress.value }] }));
+  const autoNextStyle = useAnimatedStyle(() => ({ transform: [{ scaleX: autoNextProgress.value }] }));
+  const cardStyle = useAnimatedStyle(() => ({ opacity: cardOpacity.value }));
+  const micPulseStyle = useAnimatedStyle(() => ({ transform: [{ scale: micPulse.value }] }));
+
+  const isListening = flowView.phase === 'listening';
+  useEffect(() => {
+    if (!isListening) {
+      cancelAnimation(micPulse);
+      micPulse.value = withTiming(1, { duration: 150 });
+      return;
+    }
+    const breathe = (toValue: number) => withTiming(toValue, { duration: 900, easing: Easing.inOut(Easing.ease) });
+    micPulse.value = withRepeat(withSequence(breathe(1.025), breathe(1)), -1);
+    return () => cancelAnimation(micPulse);
+  }, [isListening]);
 
   useEffect(() => {
     return () => {
-      if (autoNextTimerRef.current) {
-        clearTimeout(autoNextTimerRef.current);
-      }
-      if (holdTimeoutRef.current) {
-        clearTimeout(holdTimeoutRef.current);
-      }
-      autoNextProgress.stopAnimation();
-      speechService.stop();
+      flow.current = initialPracticeFlow;
+      cancelAnimation(autoNextProgress);
+      cancelAnimation(cardOpacity);
+      speechService.invalidate();
+      speechService.abort().catch(() => {});
+      stopSpeech();
     };
   }, []);
 
@@ -384,10 +419,10 @@ export function ConjugationPracticeModal({
       const initialQueue = buildQueue(items, selectedForm);
       setQueue(initialQueue);
       setCurrentIndex(0);
+      currentIndexRef.current = 0;
       setCorrectCount(0);
       setTotalAttempted(0);
-      setIsFinished(false);
-      resetCardState();
+      restartCards();
     } catch (e) {
       console.warn('Error cargando verbos conjugables:', e);
     } finally {
@@ -439,8 +474,7 @@ export function ConjugationPracticeModal({
     setQueue(newQueue);
     setCurrentIndex(0);
     currentIndexRef.current = 0;
-    setIsFinished(false);
-    resetCardState();
+    restartCards();
   };
 
   const handleDisableCurrentForm = async () => {
@@ -500,38 +534,6 @@ export function ConjugationPracticeModal({
     }
   };
 
-  const resetCardState = () => {
-    if (autoNextTimerRef.current) {
-      clearTimeout(autoNextTimerRef.current);
-      autoNextTimerRef.current = null;
-    }
-    autoNextProgress.stopAnimation();
-    autoNextProgress.setValue(0);
-    feedbackAnim.stopAnimation();
-    feedbackAnim.setValue(0);
-    setTextInput('');
-    setSpokenTranscript('');
-    setHasEvaluated(false);
-    hasEvaluatedRef.current = false;
-    setIsCorrect(null);
-    speechService.stop();
-    setIsListening(false);
-  };
-
-  const resetSession = () => {
-    resetCardState();
-    autoVoiceModeRef.current = false;
-    setAutoVoiceMode(false);
-    setRawWords([]);
-    setQueue([]);
-    queueRef.current = [];
-    setCurrentIndex(0);
-    currentIndexRef.current = 0;
-    setCorrectCount(0);
-    setTotalAttempted(0);
-    setIsFinished(false);
-  };
-
   const currentItem = queue[currentIndex];
   const currentWord = currentItem?.word;
   const currentForm = currentItem?.form || 'te';
@@ -541,395 +543,197 @@ export function ConjugationPracticeModal({
     ? conjugateJapanese(currentWord.kanji, currentWord.reading, currentWord.category, currentForm)
     : { kanji: '', reading: '' };
 
-  // Detener la barra ascendente y cancelar el timer automático al tocar la pantalla
-  const stopAutoAdvanceTimer = () => {
-    if (autoNextTimerRef.current) {
-      clearTimeout(autoNextTimerRef.current);
-      autoNextTimerRef.current = null;
-      autoNextProgress.stopAnimation();
-    }
+  /** Forma esperada de la tarjeta en pantalla (leída de los refs: la usan avisos que llegan después). */
+  const activeExpected = () => {
+    const item = queueRef.current[currentIndexRef.current];
+    if (!item) return null;
+    const { kanji, reading } = conjugateJapanese(item.word.kanji, item.word.reading, item.word.category, item.form);
+    return { item, kanji, reading };
   };
 
-  // Timer para pasaje automático estilo repaso SRS (7.0s) con barra ascendente
-  const startAutoNextTimer = () => {
-    if (autoNextTimerRef.current) clearTimeout(autoNextTimerRef.current);
-    autoNextProgress.setValue(0);
-    Animated.timing(autoNextProgress, {
-      toValue: 1,
-      duration: 7000,
-      easing: Easing.linear,
-      useNativeDriver: false,
-    }).start();
-
-    autoNextTimerRef.current = setTimeout(() => {
-      handleNextWord();
-    }, 7000);
-  };
-
-  // Evaluación de la respuesta
-  const evaluateAnswer = (answer: string, alternatives?: string[]) => {
-    if (!answer || !answer.trim() || hasEvaluatedRef.current) return;
-
-    // Obtener la palabra actual y forma esperada directamente desde los refs para evitar stale closures
-    const currentQueue = queueRef.current;
-    const currentIdx = currentIndexRef.current;
-    const activeItem = currentQueue[currentIdx];
-    if (!activeItem) return;
-
-    const activeWord = activeItem.word;
-    const activeForm = activeItem.form;
-    const expected = conjugateJapanese(
-      activeWord.kanji,
-      activeWord.reading,
-      activeWord.category,
-      activeForm
+  /** ¿La respuesta (dicha o escrita) es la forma esperada o una equivalente (じゃない = ではない…)? */
+  const isRightAnswer = (answer: string) => {
+    const expected = activeExpected();
+    if (!expected) return false;
+    return matchesConjugationAnswer(
+      { written: equivalentConjugations(expected.kanji), readings: equivalentConjugations(expected.reading) },
+      answer
     );
+  };
 
-    // Detener el micrófono inmediatamente si estaba activo
-    if (isListening || speechService.isListening()) {
-      speechService.stop().catch(() => {});
-    }
-    setIsListening(false);
+  // ───────────── Recorrido ─────────────
 
-    const cleanAnswer = answer.trim();
-    const rawHypotheses = [cleanAnswer, ...(alternatives || []).map((a) => a.trim())].filter(Boolean);
+  function dispatch(event: PracticeEvent) {
+    const { state, effects } = stepPracticeFlow(flow.current, event);
+    if (state === flow.current) return;
+    flow.current = state;
+    setFlowView(state);
+    effects.forEach(run);
+  }
 
-    const validCandidates = new Set<string>();
-    for (const hypo of rawHypotheses) {
-      validCandidates.add(hypo);
-      const romConverted = romajiToHiragana(hypo);
-      if (romConverted) validCandidates.add(romConverted);
-      const norm = toNormalizedHiragana(hypo);
-      if (norm) validCandidates.add(norm);
+  /** Tarjetas nuevas en pantalla (carga, cambio de forma, cerrar): todo a reposo. */
+  const restartCards = () => {
+    cancelAnimation(cardOpacity);
+    cardOpacity.value = 1;
+    dispatch({ type: 'cardShown' });
+  };
 
-      // Descomponer kanjis y homófonos acústicos de Google STT (ej. 揚がって / 挙がって -> あがって)
-      const expandedCandidates = expandKanjiToHiraganaCandidates(hypo);
-      for (const cand of expandedCandidates) {
-        validCandidates.add(cand);
+  function run(effect: PracticeEffect) {
+    switch (effect.type) {
+      case 'openMic':
+        listen(effect.session);
+        break;
+      case 'closeMic':
+        speechService.invalidate();
+        micClosing.current = speechService.abort().catch(() => {});
+        break;
+      case 'record':
+        record(effect.correct);
+        break;
+      case 'speak': {
+        const expected = activeExpected();
+        if (expected) micClosing.current.then(() => speakText(expected.kanji, 'ja-JP', expected.reading));
+        break;
       }
+      case 'stopSpeech':
+        stopSpeech();
+        break;
+      case 'startCountdown': {
+        const { turn } = effect;
+        autoNextProgress.value = 0;
+        autoNextProgress.value = withTiming(1, { duration: PRACTICE_ANSWER_MS, easing: Easing.linear }, (finished) => {
+          'worklet';
+          if (finished) scheduleOnRN(dispatch, { type: 'countdownDone', turn });
+        });
+        break;
+      }
+      case 'cancelCountdown':
+        // La barra queda donde estaba, para que se vea que se detuvo
+        cancelAnimation(autoNextProgress);
+        break;
+      case 'advance': {
+        const { turn } = effect;
+        const hasNext = currentIndexRef.current + 1 < queueRef.current.length;
+        if (!hasNext) {
+          dispatch({ type: 'advanced', turn, hasNext });
+          break;
+        }
+        cardOpacity.value = withTiming(0, { duration: 140, easing: Easing.out(Easing.quad) }, () => {
+          'worklet';
+          scheduleOnRN(dispatch, { type: 'advanced', turn, hasNext });
+        });
+        break;
+      }
+      case 'nextCard': {
+        const nextIdx = currentIndexRef.current + 1;
+        currentIndexRef.current = nextIdx;
+        setCurrentIndex(nextIdx);
+        cardOpacity.value = withTiming(1, { duration: 140, easing: Easing.in(Easing.quad) });
+        break;
+      }
+      case 'resetCard':
+        setTextInput('');
+        cancelAnimation(autoNextProgress);
+        autoNextProgress.value = 0;
+        break;
     }
+  }
 
-    const normalizedAnswer = toNormalizedHiragana(cleanAnswer);
-    const normalizedExpected = toNormalizedHiragana(expected.reading);
-
-    const validTargets = new Set<string>();
-    validTargets.add(expected.kanji);
-    validTargets.add(expected.reading);
-    validTargets.add(normalizedExpected);
-
-    // Variaciones comunes aceptadas:
-    // 1. 〜なくて <-> 〜ないで
-    if (normalizedExpected.endsWith('なくて')) {
-      validTargets.add(normalizedExpected.replace(/なくて$/, 'ないで'));
-    }
-    if (normalizedExpected.endsWith('ないで')) {
-      validTargets.add(normalizedExpected.replace(/ないで$/, 'なくて'));
-    }
-
-    // 2. 〜じゃない <-> 〜ではない
-    if (normalizedExpected.endsWith('じゃない')) {
-      validTargets.add(normalizedExpected.replace(/じゃない$/, 'ではない'));
-    }
-    if (normalizedExpected.endsWith('ではない')) {
-      validTargets.add(normalizedExpected.replace(/ではない$/, 'じゃない'));
-    }
-
-    // 3. 〜じゃなかった <-> 〜ではなかった
-    if (normalizedExpected.endsWith('じゃなかった')) {
-      validTargets.add(normalizedExpected.replace(/じゃなかった$/, 'ではなかった'));
-    }
-    if (normalizedExpected.endsWith('ではなかった')) {
-      validTargets.add(normalizedExpected.replace(/ではなかった$/, 'じゃなかった'));
-    }
-
-    // 4. 〜じゃなくて <-> 〜ではなくて
-    if (normalizedExpected.endsWith('じゃなくて')) {
-      validTargets.add(normalizedExpected.replace(/じゃなくて$/, 'ではなくて'));
-    }
-    if (normalizedExpected.endsWith('ではなくて')) {
-      validTargets.add(normalizedExpected.replace(/ではなくて$/, 'じゃなくて'));
-    }
-
-    // 5. 〜じゃありません <-> 〜じゃないです <-> 〜ではありません
-    if (normalizedExpected.endsWith('じゃありません')) {
-      validTargets.add(normalizedExpected.replace(/じゃありません$/, 'じゃないです'));
-      validTargets.add(normalizedExpected.replace(/じゃありません$/, 'ではありません'));
-    }
-    if (normalizedExpected.endsWith('じゃないです')) {
-      validTargets.add(normalizedExpected.replace(/じゃないです$/, 'じゃありません'));
-      validTargets.add(normalizedExpected.replace(/じゃないです$/, 'ではありません'));
-    }
-
-    // 6. 〜くないです <-> 〜くありません
-    if (normalizedExpected.endsWith('くないです')) {
-      validTargets.add(normalizedExpected.replace(/くないです$/, 'くありません'));
-    }
-    if (normalizedExpected.endsWith('くありません')) {
-      validTargets.add(normalizedExpected.replace(/くありません$/, 'くないです'));
-    }
-
-    // 7. 〜くなかったです <-> 〜くありませんでした
-    if (normalizedExpected.endsWith('くなかったです')) {
-      validTargets.add(normalizedExpected.replace(/くなかったです$/, 'くありませんでした'));
-    }
-
-    // Validación estricta de la palabra completa conjugada (sin aceptar sufijos parciales como 'kimashita' para 'kikimashita')
-    const match = Array.from(validTargets).some(
-      (target) => validCandidates.has(target) || validCandidates.has(toNormalizedHiragana(target))
-    );
-
-    setIsCorrect(match);
-    setHasEvaluated(true);
-    hasEvaluatedRef.current = true;
+  /** Registra el resultado: puntaje de la sesión y racha de la forma (de ella dependen las pistas). */
+  function record(correct: boolean) {
+    const expected = activeExpected();
+    if (!expected) return;
+    const { word, form } = expected.item;
     setTotalAttempted((prev) => prev + 1);
-
-    // Actualizar racha progresiva individual (streak)
-    const currentStreak = activeWord.conjugationStreaks?.[activeForm] || 0;
-    const nextStreak = match ? currentStreak + 1 : 0;
-    if (!activeWord.conjugationStreaks) {
-      activeWord.conjugationStreaks = {};
-    }
-    activeWord.conjugationStreaks[activeForm] = nextStreak;
-    updateWordConjugationStreak(activeWord.id, activeForm, nextStreak).catch((err) => {
+    if (correct) setCorrectCount((prev) => prev + 1);
+    const nextStreak = correct ? (word.conjugationStreaks?.[form] || 0) + 1 : 0;
+    word.conjugationStreaks = { ...word.conjugationStreaks, [form]: nextStreak };
+    updateWordConjugationStreak(word.id, form, nextStreak).catch((err) => {
       console.warn('Error al persistir streak de conjugación:', err);
     });
+  }
 
-    if (match) {
-      setCorrectCount((prev) => prev + 1);
-      // Si el micrófono estaba activo, esperar un tick de 60ms para que Android libere el AudioFocus nativo
-      if (isListening || speechService.isListening()) {
-        setTimeout(() => {
-          speakText(expected.kanji, 'ja-JP', expected.reading);
-        }, 60);
-      } else {
-        speakText(expected.kanji, 'ja-JP', expected.reading);
-      }
-    }
+  /** Abre el micrófono (apertura `session`) y le avisa al recorrido lo que pasa. */
+  async function listen(session: number) {
+    const expected = activeExpected();
+    if (!expected) return;
+    const isCurrent = () => flow.current.session === session;
+    let reportedError = false;
 
-    // Animación suave de entrada del feedback sin saltos
-    feedbackAnim.setValue(0);
-    Animated.timing(feedbackAnim, {
-      toValue: 1,
-      duration: 200,
-      easing: Easing.out(Easing.quad),
-      useNativeDriver: true,
-    }).start();
-
-    // Iniciar pasaje automático de tarjeta tras evaluar
-    startAutoNextTimer();
-  };
-
-  // Manejador del Input de texto con conversión automática Romaji -> Hiragana
-  const handleTextChange = (text: string) => {
-    const converted = romajiToHiragana(text);
-    setTextInput(converted);
-  };
-
-  const handleSubmitText = () => {
-    if (!textInput.trim() || hasEvaluatedRef.current) return;
-    evaluateAnswer(textInput);
-  };
-
-  // Control de reconocimiento por voz
-  const startListening = async () => {
-    if (hasEvaluatedRef.current) return;
-    setSpokenTranscript('');
-    setIsListening(true);
-    try {
-      await speechService.stop();
-    } catch { }
-
-    const activeItem = queueRef.current[currentIndexRef.current];
-    let contextualStrings: string[] | undefined;
-    let expectedKanji = '';
-    let expectedReading = '';
-
-    if (activeItem) {
-      const { word, form } = activeItem;
-      const expected = conjugateJapanese(word.kanji, word.reading, word.category, form);
-      expectedKanji = expected.kanji;
-      expectedReading = expected.reading;
-      contextualStrings = [expected.kanji, expected.reading, word.kanji, word.reading].filter(Boolean);
-    }
-
+    speechService.invalidate();
     const started = await speechService.start(
       'ja-JP',
       {
-        onStart: () => setIsListening(true),
-        onResult: (transcript, isFinal) => {
-          if (hasEvaluatedRef.current) return;
-          if (!transcript || transcript === '[unk]') return;
-          const hira = romajiToHiragana(transcript);
-          setTextInput(hira);
-          setSpokenTranscript(transcript);
-
-          const normHira = toNormalizedHiragana(hira);
-          const expNorm = toNormalizedHiragana(expectedReading || expectedKanji);
-          const isImmediateMatch = Boolean(expNorm && normHira === expNorm) || Boolean(expectedKanji && transcript.trim() === expectedKanji);
-
-          if ((isImmediateMatch || isFinal) && transcript.trim()) {
-            speechService.stop();
-            setIsListening(false);
-            evaluateAnswer(transcript);
-          }
+        onStart: () => dispatch({ type: 'micStarted', session }),
+        onResult: (transcript, isFinal, alternatives = []) => {
+          if (!isCurrent() || !transcript || transcript === '[unk]') return;
+          setTextInput(romajiToHiragana(transcript));
+          const match = [transcript, ...alternatives].some(isRightAnswer);
+          dispatch({ type: 'heard', session, match, final: isFinal });
         },
         onError: (err) => {
-          if (err === MODEL_NOT_DOWNLOADED) {
-            // Sin modelo offline no tiene sentido reintentar en bucle
-            autoVoiceModeRef.current = false;
-            setAutoVoiceMode(false);
-            setIsListening(false);
-            setShowModelRequired(true);
-            return;
-          }
-          // En modo automático, si el servicio da timeout o error antes de responder, reconectar automáticamente
-          if (autoVoiceModeRef.current && !hasEvaluatedRef.current) {
-            setTimeout(() => {
-              if (autoVoiceModeRef.current && !hasEvaluatedRef.current) {
-                startListening();
-              }
-            }, 300);
-          } else {
-            setIsListening(false);
-          }
+          if (!isCurrent()) return;
+          reportedError = true;
+          if (err === MODEL_NOT_DOWNLOADED) setShowModelRequired(true);
+          else Alert.alert(t('review.micErrorTitle'), err || t('review.micErrorDefault'));
+          dispatch({ type: 'micError', session });
         },
-        onEnd: () => {
-          // En modo automático, si finaliza por silencio antes de responder, reconectar automáticamente
-          if (autoVoiceModeRef.current && !hasEvaluatedRef.current) {
-            setTimeout(() => {
-              if (autoVoiceModeRef.current && !hasEvaluatedRef.current) {
-                startListening();
-              }
-            }, 200);
-          } else {
-            setIsListening(false);
-          }
-        },
+        onEnd: () => dispatch({ type: 'micClosed', session }),
       },
-      {
-        contextualStrings,
-        continuous: true,
-      }
+      // Pista solo la forma esperada: la forma de diccionario inclinaría al modelo hacia una respuesta mal
+      { contextualStrings: [expected.kanji, expected.reading].filter(Boolean), continuous: true }
     );
 
-    if (started) {
-      setIsListening(true);
-    } else {
-      if (!autoVoiceModeRef.current) {
-        setIsListening(false);
-      }
+    const stillWanted = flow.current.phase === 'starting' || flow.current.phase === 'listening';
+    if (!started && isCurrent() && stillWanted) {
+      if (!reportedError) Alert.alert(t('review.micNotStartedTitle'), t('review.micNotStartedMsg'));
+      dispatch({ type: 'micNotStarted', session });
     }
+  }
+
+  // ───────────── Respuesta escrita ─────────────
+
+  // Romaji → hiragana mientras se escribe (la sílaba sin terminar queda en romaji: kan → かn → かな)
+  const handleTextChange = (text: string) => setTextInput(romajiToHiraganaAsYouType(text));
+
+  const handleSubmitText = () => {
+    const answer = romajiToHiragana(textInput.trim());
+    if (!answer || hasEvaluated) return;
+    setTextInput(answer);
+    dispatch({ type: 'textSubmitted', correct: isRightAnswer(answer) });
   };
 
-  const toggleVoiceListening = async () => {
-    // Si acaba de activarse por pulsación larga, ignorar el evento onPress disparado al soltar el dedo
-    if (justTriggeredHoldRef.current) {
-      justTriggeredHoldRef.current = false;
-      return;
-    }
-
-    // Si está escuchando o el modo automático está activo, tocar el botón apaga ambos inmediatamente
-    if (isListening || autoVoiceModeRef.current) {
-      autoVoiceModeRef.current = false;
-      setAutoVoiceMode(false);
-      await speechService.stop();
-      setIsListening(false);
-      return;
-    }
-    startListening();
-  };
+  // ───────────── Botón del micrófono ─────────────
+  // Toque: abre o apaga. Mantenerlo apretado (la barra se llena): modo automático, se abre solo en cada tarjeta.
 
   const handleVoicePressIn = () => {
-    if (hasEvaluatedRef.current || autoVoiceModeRef.current) return;
-    if (holdTimeoutRef.current) clearTimeout(holdTimeoutRef.current);
-
-    // Esperar 200ms antes de disparar la animación de carga para no afectar toques simples
-    holdTimeoutRef.current = setTimeout(() => {
-      Animated.timing(holdProgress, {
-        toValue: 1,
-        duration: 550,
-        easing: Easing.linear,
-        useNativeDriver: false,
-      }).start(({ finished }) => {
-        if (finished) {
-          justTriggeredHoldRef.current = true;
-          autoVoiceModeRef.current = true;
-          setAutoVoiceMode(true);
-          setIsListening(true);
-          startListening();
-          Animated.timing(holdProgress, {
-            toValue: 0,
-            duration: 250,
-            useNativeDriver: false,
-          }).start();
-          setTimeout(() => {
-            justTriggeredHoldRef.current = false;
-          }, 400);
-        }
-      });
-    }, 200);
+    if (flow.current.auto) return;
+    // Los primeros 200 ms no se ve nada: así un toque simple no muestra la barra
+    holdProgress.value = 0;
+    holdProgress.value = withDelay(HOLD_DELAY_MS, withTiming(1, { duration: HOLD_FILL_MS, easing: Easing.linear }));
   };
 
   const handleVoicePressOut = () => {
-    if (holdTimeoutRef.current) {
-      clearTimeout(holdTimeoutRef.current);
-      holdTimeoutRef.current = null;
-    }
-    holdProgress.stopAnimation();
-    Animated.timing(holdProgress, {
-      toValue: 0,
-      duration: 150,
-      useNativeDriver: false,
-    }).start();
+    cancelAnimation(holdProgress);
+    holdProgress.value = withTiming(0, { duration: 150 });
   };
 
-  const handleNextWord = () => {
-    if (isTransitioningRef.current) return;
-    if (autoNextTimerRef.current) {
-      clearTimeout(autoNextTimerRef.current);
-      autoNextTimerRef.current = null;
-    }
-    autoNextProgress.stopAnimation();
-    autoNextProgress.setValue(0);
-    speechService.stop();
-    setIsListening(false);
+  const handleVoiceLongPress = () => {
+    holdProgress.value = withTiming(0, { duration: 250 });
+    dispatch({ type: 'holdCompleted' });
+  };
 
-    if (currentIndexRef.current + 1 < queueRef.current.length) {
-      const nextIdx = currentIndexRef.current + 1;
-      isTransitioningRef.current = true;
+  const handleNextWord = () => dispatch({ type: 'nextPressed' });
 
-      // Transición fluida entre palabras: Fade-out breve (140ms)
-      Animated.timing(cardTransitionAnim, {
-        toValue: 0,
-        duration: 140,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
-      }).start(() => {
-        // En opacidad 0, cambiar la palabra y limpiar estados sin saltos visibles
-        currentIndexRef.current = nextIdx;
-        setCurrentIndex(nextIdx);
-        resetCardState();
-
-        // Fade-in de la nueva palabra (140ms)
-        Animated.timing(cardTransitionAnim, {
-          toValue: 1,
-          duration: 140,
-          easing: Easing.in(Easing.quad),
-          useNativeDriver: true,
-        }).start(() => {
-          isTransitioningRef.current = false;
-          // Si el modo automático de voz está activo, comenzar a escuchar inmediatamente en la siguiente tarjeta
-          if (autoVoiceModeRef.current) {
-            setIsListening(true);
-            setTimeout(() => {
-              startListening();
-            }, 100);
-          }
-        });
-      });
-    } else {
-      setIsFinished(true);
-    }
+  const resetSession = () => {
+    restartCards();
+    setRawWords([]);
+    setQueue([]);
+    queueRef.current = [];
+    setCurrentIndex(0);
+    currentIndexRef.current = 0;
+    setCorrectCount(0);
+    setTotalAttempted(0);
   };
 
   const currentTargetDetails = getPromptDetailsForForm(currentWord, currentForm);
@@ -941,17 +745,7 @@ export function ConjugationPracticeModal({
     <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
       <View
         style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top + 4 }]}
-        onStartShouldSetResponderCapture={() => {
-          if (hasEvaluated && autoNextTimerRef.current) {
-            stopAutoAdvanceTimer();
-          }
-          return false;
-        }}
-        onTouchStart={() => {
-          if (hasEvaluated && autoNextTimerRef.current) {
-            stopAutoAdvanceTimer();
-          }
-        }}
+        onTouchStart={() => dispatch({ type: 'touched' })}
       >
         {/* Header superior de práctica */}
         <View style={[styles.headerRow, { borderBottomColor: colors.border }]}>
@@ -1069,7 +863,7 @@ export function ConjugationPracticeModal({
             </View>
 
             {/* Contenedor Animado de Transición Suave entre Palabras */}
-            <Animated.View style={{ opacity: cardTransitionAnim, width: '100%' }}>
+            <Animated.View style={[{ width: '100%' }, cardStyle]}>
               {/* Tarjeta Principal */}
               <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                 {/* Badges y Audio */}
@@ -1153,80 +947,59 @@ export function ConjugationPracticeModal({
                   </View>
 
                   {/* Botón de Voz con soporte de Modo Automático */}
-                  <TouchableOpacity
-                    style={[
+                  <Animated.View style={micPulseStyle}>
+                  <Pressable
+                    style={({ pressed }) => [
                       styles.micBtn,
                       {
-                        backgroundColor: (isListening || autoVoiceMode) ? '#EF4444' : colors.surfaceHighlight,
-                        borderColor: autoVoiceMode ? '#EF4444' : colors.border,
+                        backgroundColor: micOn ? '#EF4444' : colors.surfaceHighlight,
+                        borderColor: flowView.auto ? '#EF4444' : colors.border,
                         borderWidth: 1,
+                        opacity: pressed ? 0.85 : 1,
                       },
                     ]}
-                    onPress={toggleVoiceListening}
+                    onPress={() => dispatch({ type: 'micPressed' })}
+                    onLongPress={handleVoiceLongPress}
+                    delayLongPress={HOLD_DELAY_MS + HOLD_FILL_MS}
                     onPressIn={handleVoicePressIn}
                     onPressOut={handleVoicePressOut}
-                    activeOpacity={0.85}
                     disabled={hasEvaluated}
                   >
                     {/* Barra de progreso de carga al mantener presionado para modo automático */}
-                    {!autoVoiceMode && (
-                      <Animated.View
-                        style={[
-                          styles.micHoldProgress,
-                          {
-                            backgroundColor: colors.primary + '35',
-                            width: holdProgress.interpolate({
-                              inputRange: [0, 1],
-                              outputRange: ['0%', '100%'],
-                            }),
-                          },
-                        ]}
-                      />
+                    {!flowView.auto && (
+                      <Animated.View style={[styles.micHoldProgress, { backgroundColor: colors.primary + '35' }, holdStyle]} />
                     )}
 
                     <Ionicons
-                      name={(isListening || autoVoiceMode) ? 'mic' : 'mic-outline'}
+                      name={micOn ? 'mic' : 'mic-outline'}
                       size={22}
-                      color={(isListening || autoVoiceMode) ? '#FFF' : colors.text}
+                      color={micOn ? '#FFF' : colors.text}
                     />
                     <View style={{ alignItems: 'flex-start' }}>
                       <Text
                         style={[
                           styles.micBtnText,
-                          { color: (isListening || autoVoiceMode) ? '#FFF' : colors.text },
+                          { color: micOn ? '#FFF' : colors.text },
                         ]}
                       >
-                        {(isListening || autoVoiceMode) ? t('conjugation.listeningVoice') : t('conjugation.respondByVoice')}
+                        {micOn ? t('conjugation.listeningVoice') : t('conjugation.respondByVoice')}
                       </Text>
-                      {!isListening && !autoVoiceMode && (
+                      {!micOn && (
                         <Text style={[styles.micBtnSubtext, { color: colors.textMuted }]}>
                           {t('conjugation.holdForAutoVoice')}
                         </Text>
                       )}
                     </View>
-                  </TouchableOpacity>
+                  </Pressable>
+                  </Animated.View>
                 </View>
               </View>
 
               {/* Retroalimentación Flotante Fuera de la Tarjeta con Animación Suave */}
               {hasEvaluated && (
                 <Animated.View
-                  style={[
-                    styles.feedbackBox,
-                    {
-                      backgroundColor: colors.surface,
-                      borderColor: isCorrect ? '#10B981' : colors.danger,
-                      opacity: feedbackAnim,
-                      transform: [
-                        {
-                          translateY: feedbackAnim.interpolate({
-                            inputRange: [0, 1],
-                            outputRange: [10, 0],
-                          }),
-                        },
-                      ],
-                    },
-                  ]}
+                  entering={FadeInDown.duration(200)}
+                  style={[styles.feedbackBox, { backgroundColor: colors.surface, borderColor: isCorrect ? '#10B981' : colors.danger }]}
                 >
                   <View style={styles.feedbackHeader}>
                     <Ionicons
@@ -1259,16 +1032,7 @@ export function ConjugationPracticeModal({
                   {/* Barra ascendente de tiempo para pasar de tarjeta */}
                   <View style={[styles.autoAdvanceTrack, { backgroundColor: colors.surfaceHighlight }]}>
                     <Animated.View
-                      style={[
-                        styles.autoAdvanceFill,
-                        {
-                          backgroundColor: isCorrect ? '#10B981' : colors.primary,
-                          width: autoNextProgress.interpolate({
-                            inputRange: [0, 1],
-                            outputRange: ['0%', '100%'],
-                          }),
-                        },
-                      ]}
+                      style={[styles.autoAdvanceFill, { backgroundColor: isCorrect ? '#10B981' : colors.primary }, autoNextStyle]}
                     />
                   </View>
 
@@ -1787,7 +1551,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0,
     left: 0,
+    right: 0,
     bottom: 0,
+    transformOrigin: 'left',
   },
   micBtnText: {
     fontSize: 14,
@@ -1850,8 +1616,10 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   autoAdvanceFill: {
+    width: '100%',
     height: '100%',
     borderRadius: 2,
+    transformOrigin: 'left',
   },
   feedbackActionsRow: {
     flexDirection: 'row',

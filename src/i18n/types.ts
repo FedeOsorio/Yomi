@@ -297,13 +297,11 @@ export interface TranslationSchema {
     baseForm: string;
     activeKanjiReading: string;
     manualEdit: string;
-    strokeAndChars: string;
-    totalCharacters: string;
+    drawStrokes: string;
     traditional: string;
     hanziBreakdown: string;
     kanjiBreakdown: string;
     noSpecificLevel: string;
-    viewStroke: string;
     commonWordsWithChar: string;
     dictionaryUsageExamples: string;
     queryingDictionary: string;
@@ -311,13 +309,11 @@ export interface TranslationSchema {
     state: string;
     times: string;
     difficulty: string;
-    closeWindow: string;
     editAnswer: string;
     enterAnswerPlaceholder: string;
     enterMeaningPlaceholder: string;
     modifyPronunciationHelp: string;
     failedUpdateReading: string;
-    loadingStroke: string;
     strokeUnavailable: string;
     meaningCannotBeEmpty: string;
     readingCannotBeEmpty: string;

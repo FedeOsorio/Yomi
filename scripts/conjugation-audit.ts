@@ -1,7 +1,9 @@
 import fs from 'fs';
 import path from 'path';
 import { CONJUGATION_TYPES } from '../lib/conjugation-types';
-import { classifyJapaneseWord, conjugateJapanese, JapaneseConjugationForm } from '../lib/japanese-utils';
+import { equivalentConjugations } from '../lib/japanese-conjugation';
+import { classifyJapaneseWord, conjugateJapanese, hiraganaToRomaji, JapaneseConjugationForm } from '../lib/japanese-utils';
+import { matchesConjugationAnswer } from '../lib/voice-match';
 
 /**
  * Prueba de las conjugaciones japonesas (lib/japanese-conjugation.ts, vía conjugateJapanese y
@@ -15,6 +17,9 @@ import { classifyJapaneseWord, conjugateJapanese, JapaneseConjugationForm } from
  * 2. Los verbos y adjetivos comunes de JMdict (scripts/fixtures/conjugation-words.json, de
  *    build:conjugations), de punta a punta: la categoría que deduce la app y la conjugación que sale,
  *    comparadas con una referencia por tipo.
+ * 3. La evaluación de la respuesta en la práctica (matchesConjugationAnswer): casos escritos a mano, y con las
+ *    formas de JMdict, que la forma correcta dicha en kana o romaji valga y que la misma con un sonido de más o de
+ *    menos (っ, vocal larga, ん) no valga.
  *
  * Correrlo después de tocar las conjugaciones: todo al 100%.
  */
@@ -164,14 +169,67 @@ for (const [w, r, type] of words) {
   }
 }
 
+
+// ─── 3. Evaluación de la respuesta en la práctica ─────────────────────────────────────────────
+
+const expectedOf = (kanji: string, reading: string) => ({ written: equivalentConjugations(kanji), readings: equivalentConjugations(reading) });
+const answerCases: [string, string, string, boolean][] = [
+  ['食べて', 'たべて', '食べて', true], ['食べて', 'たべて', 'たべて', true], ['食べて', 'たべて', 'tabete', true], ['食べて', 'たべて', 'タベテ', true],
+  ['言って', 'いって', '行って', true], ['会って', 'あって', '合って', true], ['買わない', 'かわない', 'かはない', true],
+  ['綺麗じゃない', 'きれいじゃない', '綺麗ではない', true], ['綺麗じゃない', 'きれいじゃない', 'きれいではない', true],
+  ['綺麗じゃありません', 'きれいじゃありません', 'きれいじゃないです', true], ['高くないです', 'たかくないです', '高くありません', true],
+  ['食べなくて', 'たべなくて', '食べないで', true], ['行きましょう', 'いきましょう', 'いきましょお', true],
+  ['いて', 'いて', 'いって', false], ['居て', 'いて', '行って', false], ['聞いて', 'きいて', 'きて', false], ['聞いて', 'きいて', '来て', false],
+  ['来て', 'きて', 'きいて', false], ['読んで', 'よんで', 'よでん', false], ['待って', 'まって', 'まて', false], ['高くなくて', 'たかくなくて', '高くないで', false],
+  ['行きましょう', 'いきましょう', 'いきましょ', false], ['書かなかった', 'かかなかった', 'かかなった', false], ['食べました', 'たべました', '食べます', false],
+  ['食べて', 'たべて', '食べてください', false], ['食べて', 'たべて', '', false],
+];
+const answerFailures: string[] = [];
+for (const [k, r, said, want] of answerCases) {
+  if (matchesConjugationAnswer(expectedOf(k, r), said) !== want) answerFailures.push(`${k}【${r}】 dicho "${said}": ${want ? 'no vale y debería' : 'vale y no debería'}`);
+}
+/** La misma lectura con un sonido de más o de menos (cada variante es otra palabra). */
+const soundSlips = (kana: string): string[] => {
+  const out = new Set<string>();
+  for (let i = 0; i < kana.length; i++) {
+    if (kana[i] === 'っ' || kana[i] === 'ん') out.add(kana.slice(0, i) + kana.slice(i + 1));
+    if (i > 0 && /[かきくけこさしすせそたちつてとぱぴぷぺぽ]/.test(kana[i])) out.add(kana.slice(0, i) + 'っ' + kana.slice(i));
+  }
+  const lastVowel = kana.match(/[いう]$/);
+  if (!lastVowel) out.add(kana + 'う');
+  return [...out];
+};
+let answerTotal = answerCases.length;
+for (const [w, r, type] of words) {
+  if (/^[぀-ヿー]+$/.test(w) && !CONJUGATION_TYPES[w]) continue;
+  for (const form of ['te', 'nakatta', 'masu'] as JapaneseConjugationForm[]) {
+    const got = conj(w, r, form);
+    const reading = toHira(got.reading);
+    if (!reading) continue;
+    const expected = expectedOf(got.kanji, reading);
+    const valid = new Set(expected.readings.map(toHira));
+    for (const said of [got.kanji, reading, hiraganaToRomaji(reading)]) {
+      answerTotal++;
+      if (!matchesConjugationAnswer(expected, said)) answerFailures.push(`${w} ${type} ${form}: "${said}" no vale`);
+    }
+    for (const slip of soundSlips(reading)) {
+      if (valid.has(slip)) continue;
+      answerTotal++;
+      if (matchesConjugationAnswer(expected, slip)) answerFailures.push(`${w} ${type} ${form}: "${slip}" vale por ${reading}`);
+    }
+  }
+}
+
 // ─── Resultado ─────────────────────────────────────────────────────────────────────────────────
 
 console.log(`Oráculo escrito a mano: ${oracleTotal - oracleFailures}/${oracleTotal}`);
 console.log(`JMdict de punta a punta (${words.length - ambiguous.length} palabras): ${jmTotal - jmFailures.length}/${jmTotal} formas`);
 console.log(`  (${ambiguous.length} escritas solo en kana y ambiguas, no se pueden decidir: ${ambiguous.join(', ')})`);
+console.log(`Evaluación de la respuesta en la práctica: ${answerTotal - answerFailures.length}/${answerTotal}`);
 const limit = showAll ? Infinity : 30;
-[...failures, ...jmFailures].slice(0, limit).forEach((f) => console.log('  ✗', f));
-if (!showAll && failures.length + jmFailures.length > limit) console.log(`  … y ${failures.length + jmFailures.length - limit} más (--all)`);
-const ok = failures.length === 0 && jmFailures.length === 0;
+[...failures, ...jmFailures, ...answerFailures].slice(0, limit).forEach((f) => console.log('  ✗', f));
+const allFailures = failures.length + jmFailures.length + answerFailures.length;
+if (!showAll && allFailures > limit) console.log(`  … y ${allFailures - limit} más (--all)`);
+const ok = failures.length === 0 && jmFailures.length === 0 && answerFailures.length === 0;
 console.log(ok ? 'Todo bien' : 'HAY FALLOS');
 process.exitCode = ok ? 0 : 1;

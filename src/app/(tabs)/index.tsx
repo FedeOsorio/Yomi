@@ -10,7 +10,6 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
   Alert,
   Platform,
@@ -42,6 +41,7 @@ import { onDataChanged } from '../../../lib/backup-service';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { Shadows, Spacing, Typography } from '../../constants/theme';
 import { FolderFilterBar } from '../../components/FolderFilterBar';
+import { PressableScale } from '../../components/PressableScale';
 import { FolderBreadcrumb } from '../../components/folders/FolderBreadcrumb';
 import { useFolderManager } from '../../hooks/useFolderManager';
 import { useSingleNavigation } from '../../hooks/useSingleNavigation';
@@ -311,9 +311,10 @@ export default function HomeScreen() {
                   layout={LinearTransition.duration(220)}
                   exiting={FadeOut.duration(160)}
                 >
-                  <TouchableOpacity
+                  <PressableScale
                     style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
-                    activeOpacity={0.7}
+                    activeOpacity={0.85}
+                    scaleTo={0.98}
                     onPress={() => navigate(`/deck/${item.id}`)}
                     onLongPress={() => handleDeckLongPress(item)}
                   >
@@ -388,7 +389,7 @@ export default function HomeScreen() {
                     <View style={styles.cardRight}>
                       <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
                     </View>
-                  </TouchableOpacity>
+                  </PressableScale>
                 </Animated.View>
               );
             })}
@@ -397,13 +398,13 @@ export default function HomeScreen() {
       </Animated.View>
 
       {/* Floating Action Button (+) posicionado dinámicamente a 16px sobre el tope real de la barra */}
-      <TouchableOpacity
+      <PressableScale
         style={[styles.fab, { backgroundColor: colors.primary, bottom: fabBottomPosition }]}
         activeOpacity={0.8}
         onPress={() => setMenuVisible(true)}
       >
         <Ionicons name="add" size={30} color="#FFF" />
-      </TouchableOpacity>
+      </PressableScale>
 
       {/* Modal de Opciones Rápidas (+) */}
       <Modal
@@ -416,7 +417,7 @@ export default function HomeScreen() {
           <View style={[styles.menuContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <Text style={[styles.menuTitle, { color: colors.text }]}>{t('decks.whatToDo')}</Text>
 
-            <TouchableOpacity style={[styles.menuOption, { borderBottomColor: colors.border }]} onPress={handleOpenSearch}>
+            <PressableScale style={[styles.menuOption, { borderBottomColor: colors.border }]} scaleTo={0.98} onPress={handleOpenSearch}>
               <View style={[styles.menuIconBox, { backgroundColor: colors.primary }]}>
                 <Ionicons name="text-outline" size={24} color="#FFF" />
               </View>
@@ -426,9 +427,9 @@ export default function HomeScreen() {
                   {t('decks.addWordCardSub')}
                 </Text>
               </View>
-            </TouchableOpacity>
+            </PressableScale>
 
-            <TouchableOpacity style={[styles.menuOption, { borderBottomColor: colors.border }]} onPress={handleOpenCreateModal}>
+            <PressableScale style={[styles.menuOption, { borderBottomColor: colors.border }]} scaleTo={0.98} onPress={handleOpenCreateModal}>
               <View style={[styles.menuIconBox, { backgroundColor: colors.secondary }]}>
                 <Ionicons name="folder-outline" size={24} color="#FFF" />
               </View>
@@ -438,10 +439,11 @@ export default function HomeScreen() {
                   {t('decks.createNewDeckSub')}
                 </Text>
               </View>
-            </TouchableOpacity>
+            </PressableScale>
 
-            <TouchableOpacity
+            <PressableScale
               style={[styles.menuOption, { borderBottomWidth: 0 }]}
+              scaleTo={0.98}
               onPress={() => {
                 setMenuVisible(false);
                 navigate('/deck/import');
@@ -456,7 +458,7 @@ export default function HomeScreen() {
                   {t('decks.importSub')}
                 </Text>
               </View>
-            </TouchableOpacity>
+            </PressableScale>
           </View>
         </Pressable>
       </Modal>
@@ -497,15 +499,15 @@ export default function HomeScreen() {
             >
               <View style={styles.modalHeader}>
                 <Text style={[styles.modalTitle, { color: colors.text }]}>{t('decks.createModalTitle')}</Text>
-                <TouchableOpacity onPress={closeCreateModal} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <PressableScale onPress={closeCreateModal} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                   <Ionicons name="close" size={24} color={colors.textMuted} />
-                </TouchableOpacity>
+                </PressableScale>
               </View>
 
               {/* Selector de Tipo de Mazo */}
               <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>{t('decks.deckTypeLabel')}</Text>
               <View style={styles.typeSelectorRow}>
-                <TouchableOpacity
+                <PressableScale
                   style={[
                     styles.typeCard,
                     { backgroundColor: colors.surfaceHighlight, borderColor: colors.border },
@@ -548,9 +550,9 @@ export default function HomeScreen() {
                       {t('decks.languageTypeSub')}
                     </Text>
                   </View>
-                </TouchableOpacity>
+                </PressableScale>
 
-                <TouchableOpacity
+                <PressableScale
                   style={[
                     styles.typeCard,
                     { backgroundColor: colors.surfaceHighlight, borderColor: colors.border },
@@ -593,7 +595,7 @@ export default function HomeScreen() {
                       {t('decks.customTypeSub')}
                     </Text>
                   </View>
-                </TouchableOpacity>
+                </PressableScale>
               </View>
 
               {/* Input Nombre */}
@@ -619,7 +621,7 @@ export default function HomeScreen() {
                       {SUPPORTED_LANGUAGES.map((lang) => {
                         const isSelected = selectedLang === lang.code;
                         return (
-                          <TouchableOpacity
+                          <PressableScale
                             key={lang.code}
                             style={[
                               styles.langChip,
@@ -638,7 +640,7 @@ export default function HomeScreen() {
                             >
                               {lang.label}
                             </Text>
-                          </TouchableOpacity>
+                          </PressableScale>
                         );
                       })}
                     </View>
@@ -663,7 +665,7 @@ export default function HomeScreen() {
                 )}
               </View>
 
-              <TouchableOpacity
+              <PressableScale
                 style={[styles.createDeckSubmitBtn, { backgroundColor: colors.primary }, isCreating && { opacity: 0.7 }]}
                 onPress={handleCreateDeck}
                 disabled={isCreating}
@@ -671,7 +673,7 @@ export default function HomeScreen() {
                 <Text style={styles.createDeckSubmitText}>
                   {isCreating ? t('decks.creating') : t('decks.createBtn')}
                 </Text>
-              </TouchableOpacity>
+              </PressableScale>
             </Animated.View>
           </View>
         </KeyboardAvoidingView>

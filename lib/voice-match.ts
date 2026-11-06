@@ -56,9 +56,11 @@ function levenshtein(a: string, b: string): number {
 
 /** Hiragana a partir de kana/romaji. Devuelve '' si el texto contiene kanji (no se adivina su lectura). */
 function toKana(text: string): string {
-  let t = (text || '').toLowerCase().replace(PUNCT, '');
-  if (!t || HAS_KANJI.test(t)) return '';
+  let t = (text || '').toLowerCase();
+  // El romaji se convierte antes de quitar signos: la ' separa la ん (kan'you = かんよう, kanyou = かにょう)
   if (/[a-z]/.test(t)) t = romajiToHiragana(t);
+  t = t.replace(PUNCT, '');
+  if (!t || HAS_KANJI.test(t)) return '';
   t = expandChoonpu(katakanaToHiragana(t));
   return t.replace(/[ぁぃぅぇぉ]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 1)).replace(/[^぀-ゟ]/g, '');
 }
@@ -508,4 +510,24 @@ export function checkVoiceMatch(rawCard: CardLike, transcript: string, lang: str
   if (target.startsWith('ja')) return matchJapanese(card, transcript);
   if (target.startsWith('zh')) return matchChinese(card, transcript);
   return matchAlphabetic(card, transcript);
+}
+
+/**
+ * Respuesta de la práctica de conjugaciones (dicha o escrita) contra la forma esperada (`written`: con kanji,
+ * `readings`: en kana). Más estricta que checkVoiceMatch: en una forma conjugada un sonido de más o de menos es
+ * otra palabra (いて ≠ いって, きて ≠ きいて, よんで ≠ よでん), así que no se tolera la duración de las vocales, la っ
+ * ni un sonido distinto. Solo escrituras equivalentes: la misma escritura, kanji homófono, katakana, romaji, cifras,
+ * おう/おお, ぢ/づ = じ/ず, y は/へ/を escritos donde la palabra lleva わ/え/お.
+ */
+export function matchesConjugationAnswer(expected: { written: string[]; readings: string[] }, transcript: string): boolean {
+  const raw = /[a-z]/i.test(transcript || '') ? romajiToHiragana(transcript) : transcript || '';
+  const clean = normalizeNumerals(raw).replace(PUNCT, '');
+  if (!clean) return false;
+  if (expected.written.some((w) => w && normalizeNumerals(w).replace(PUNCT, '') === clean)) return true;
+  // ぢ/づ suenan igual que じ/ず (つづける se dice "tsuzukeru"): es la misma escritura
+  const sound = (kana: string) => phonetic(kana).replace(/ぢ/g, 'じ').replace(/づ/g, 'ず');
+  const targets = expected.readings.map(toKana).filter(Boolean).map(sound);
+  const { kana, written } = heardJapaneseReadings(clean);
+  if (written.some((h) => targets.includes(sound(h)))) return true;
+  return kana.some((h) => targets.some((e) => e === sound(h) || sameSoundAsParticle(sound(h), e)));
 }

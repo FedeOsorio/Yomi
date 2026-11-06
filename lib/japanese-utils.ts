@@ -77,7 +77,6 @@ const ROMAJI_TO_HIRAGANA_MAP: Record<string, string> = {
   'la': 'ら', 'li': 'り', 'lu': 'る', 'le': 'れ', 'lo': 'ろ',
   'lya': 'りゃ', 'lyu': 'りゅ', 'lyo': 'りょ',
   'va': 'ば', 'vi': 'び', 'vu': 'ぶ', 've': 'べ', 'vo': 'ぼ',
-  'gue': 'げ', 'gui': 'ぎ',
   'lla': 'や', 'lli': 'り', 'llu': 'ゆ', 'lle': 'え', 'llo': 'よ',
   'ña': 'にゃ', 'ñi': 'に', 'ñu': 'にゅ', 'ñe': 'ね', 'ño': 'にょ',
   'che': 'ちぇ',
@@ -165,24 +164,18 @@ export function romajiToHiragana(romaji: string): string {
   // 2. Normalizar guiones morfológicos (ej. "hyaku-en" -> "hyakuen", "shin-osaka" -> "shin'osaka")
   text = text.replace(/n-([aeiouy])/g, "n'$1").replace(/[-_]/g, '');
 
-  // Normalizar casos comunes donde 'n' precede a una vocal en compuestos léxicos (ej. senen -> sen'en -> せんえん)
-  text = text
-    .replace(/\bsen([aeiou])/g, "sen'$1")
-    .replace(/\bman([aeiou])/g, "man'$1")
-    .replace(/\bkan([aeiou])/g, "kan'$1")
-    .replace(/\bshin([aeiou])/g, "shin'$1")
-    .replace(/\bren([aeiou])/g, "ren'$1")
-    .replace(/\bzen([aeiou])/g, "zen'$1")
-    .replace(/\bkin([aeiou])/g, "kin'$1");
+  // 'n' antes de vocal es な/に/ぬ/ね/の (kana = かな); ん antes de vocal se escribe n' (sen'en = せんえん)
+  // nn al final o antes de consonante es una sola ん, como en el teclado japonés (kann = かん, konnichi = こんにち)
+  text = text.replace(/nn(?=$|[^aiueoy])/g, "n'");
 
   let result = '';
   let i = 0;
 
   while (i < text.length) {
-    // Manejo de consonantes dobles (pequeño tsu: っ), ej. "matte" -> "まって", "gakkou" -> "がっこう"
+    // Manejo de consonantes dobles (pequeño tsu: っ), ej. "matte" -> "まって", "gakkou" -> "がっこう", "matcha" -> "まっちゃ"
     if (
       i + 1 < text.length &&
-      text[i] === text[i + 1] &&
+      (text[i] === text[i + 1] || text.startsWith('tch', i)) &&
       !['a', 'i', 'u', 'e', 'o', 'n'].includes(text[i])
     ) {
       result += 'っ';
@@ -301,18 +294,18 @@ const HIRAGANA_TO_ROMAJI_MAP: Record<string, string> = {
   'あ': 'a', 'い': 'i', 'う': 'u', 'え': 'e', 'お': 'o',
   'か': 'ka', 'き': 'ki', 'く': 'ku', 'け': 'ke', 'こ': 'ko',
   'さ': 'sa', 'し': 'shi', 'す': 'su', 'せ': 'se', 'そ': 'so',
-  'た': 'ta', 'ち': 'chi', 'つ': 'tsu', 'て': 'te', 'to': 'to',
-  'な': 'na', 'に': 'ni', 'ぬ': 'nu', 'ね': 'ne', 'no': 'no',
+  'た': 'ta', 'ち': 'chi', 'つ': 'tsu', 'て': 'te', 'と': 'to',
+  'な': 'na', 'に': 'ni', 'ぬ': 'nu', 'ね': 'ne', 'の': 'no',
   'は': 'ha', 'ひ': 'hi', 'ふ': 'fu', 'へ': 'he', 'ほ': 'ho',
   'ま': 'ma', 'み': 'mi', 'む': 'mu', 'め': 'me', 'も': 'mo',
   'や': 'ya', 'ゆ': 'yu', 'よ': 'yo',
   'ら': 'ra', 'り': 'ri', 'る': 'ru', 'れ': 're', 'ろ': 'ro',
   'わ': 'wa', 'を': 'wo', 'ん': 'n',
-  'が': 'ga', 'ぎ': 'gi', 'ぐ': 'gu', 'げ': 'ge', 'go': 'go',
-  'ざ': 'za', 'じ': 'ji', 'ず': 'zu', 'ぜ': 'ze', 'zo': 'zo',
-  'だ': 'da', 'ぢ': 'ji', 'づ': 'zu', 'で': 'de', 'do': 'do',
-  'ば': 'ba', 'び': 'bi', 'ぶ': 'bu', 'べ': 'be', 'bo': 'bo',
-  'ぱ': 'pa', 'pi': 'pi', 'ぷ': 'pu', 'ぺ': 'pe', 'po': 'po',
+  'が': 'ga', 'ぎ': 'gi', 'ぐ': 'gu', 'げ': 'ge', 'ご': 'go',
+  'ざ': 'za', 'じ': 'ji', 'ず': 'zu', 'ぜ': 'ze', 'ぞ': 'zo',
+  'だ': 'da', 'ぢ': 'ji', 'づ': 'zu', 'で': 'de', 'ど': 'do',
+  'ば': 'ba', 'び': 'bi', 'ぶ': 'bu', 'べ': 'be', 'ぼ': 'bo',
+  'ぱ': 'pa', 'ぴ': 'pi', 'ぷ': 'pu', 'ぺ': 'pe', 'ぽ': 'po',
   'きゃ': 'kya', 'きゅ': 'kyu', 'きょ': 'kyo',
   'しゃ': 'sha', 'しゅ': 'shu', 'しょ': 'sho',
   'ちゃ': 'cha', 'ちゅ': 'chu', 'ちょ': 'cho',
@@ -329,11 +322,34 @@ const HIRAGANA_TO_ROMAJI_MAP: Record<string, string> = {
 /**
  * Convierte Hiragana a Romaji de forma determinística para sesgo contextual (contextual biasing).
  */
+/**
+ * Romaji a hiragana mientras se escribe: lo ya completo se convierte y las consonantes del final quedan como
+ * están hasta que llegue su vocal (k → k, ka → か, kan → かn, kana → かな). Al enviar, romajiToHiragana completo.
+ */
+export function romajiToHiraganaAsYouType(text: string): string {
+  const match = text.match(/^(.*?)([bcdfghjklmnpqrstvwxyzñ']*)$/is);
+  if (!match || !/[a-zñ]/i.test(match[1])) return text;
+  return romajiToHiragana(match[1]) + match[2].toLowerCase();
+}
+
 export function hiraganaToRomaji(kana: string): string {
   if (!kana) return '';
   let result = '';
   let i = 0;
   while (i < kana.length) {
+    // っ: dobla la consonante que sigue (まって = matte, まっちゃ = matcha)
+    if (kana[i] === 'っ') {
+      const next = hiraganaToRomaji(kana.slice(i + 1, i + 3)).charAt(0);
+      if (next && !/[aiueon]/.test(next)) result += next === 'c' ? 't' : next;
+      i += 1;
+      continue;
+    }
+    // ん antes de vocal o y: n' (せんえん = sen'en, きんよう = kin'you), para que no se lea como な/に/…
+    if (kana[i] === 'ん' && /^[あいうえおやゆよ]/.test(kana.slice(i + 1))) {
+      result += "n'";
+      i += 1;
+      continue;
+    }
     if (i + 1 < kana.length && HIRAGANA_TO_ROMAJI_MAP[kana.slice(i, i + 2)]) {
       result += HIRAGANA_TO_ROMAJI_MAP[kana.slice(i, i + 2)];
       i += 2;
