@@ -5,6 +5,7 @@ import { decks, srsItems, words } from '../db/schema';
 import { cleanHtmlAndAnkiTags, parseAnkiFuriganaSyntax } from './anki-importer';
 import { cleanAndFormatMeanings, extractKanjis, searchJapanese, resolveJapaneseReading } from './japanese-search';
 import { classifyJapaneseWord, deconjugateJapanese, isJapaneseDictionaryForm, toNormalizedHiragana, COMMON_KANA_NOUNS_AND_EXPRESSIONS, containsJapanese } from './japanese-utils';
+import { conjugationTypeOf } from './japanese-conjugation';
 import { JLPT_KANJI_READINGS } from './jlpt-data';
 import { DictionaryEntry } from './search-engine';
 import { createNewSrsItem } from './srs-engine';
@@ -977,8 +978,14 @@ export async function getConjugableWordsForDeck(deckId: string): Promise<Conjuga
     const cleanSimplified = (w.simplified || '').trim();
     const rawKun = aux.kunReading || '';
 
+    // Adjetivo -na escrito en kanji (有名, 便利): se conjuga tal cual, no hay forma base que buscar
+    const isKanjiNaAdjective =
+      cleanSimplified.length >= 2 &&
+      (category === 'Adjetivo -na' || conjugationTypeOf(cleanSimplified, w.pinyinDisplay || '') === 'adj-na');
+    if (isKanjiNaAdjective) category = 'Adjetivo -na';
+
     // Si termina en kanji pero no tiene dictionaryForm resuelto todavía, intentar auto-resolver
-    if (/[\u4e00-\u9faf]$/.test(cleanSimplified) && !dictionaryForm) {
+    if (/[\u4e00-\u9faf]$/.test(cleanSimplified) && !dictionaryForm && !isKanjiNaAdjective) {
       const resolved = resolveJapaneseBaseForm(cleanSimplified, w.pinyinDisplay || '', rawKun);
       if (resolved) {
         dictionaryForm = { kanji: resolved.baseKanji, reading: resolved.baseReading };

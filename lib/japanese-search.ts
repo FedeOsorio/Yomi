@@ -1,5 +1,6 @@
 import { dictDb } from '../db';
 import { romajiToHiragana, containsJapanese, deconjugateJapanese, classifyJapaneseWord, conjugateJapanese, JapaneseConjugationForm, toNormalizedHiragana, kanjiToHiragana, katakanaToHiragana, DAY_DATA } from './japanese-utils';
+import { categoryOfType, conjugationTypeOf } from './japanese-conjugation';
 import { localReading, searchLocalDictionary } from './japanese-dictionary';
 import { getQuickJlptLevel } from './jlpt-data';
 import { getStorageItem, setStorageItem } from './storage-service';
@@ -420,6 +421,9 @@ export const translateToSpanish = (text: string, fromLang: 'en' | 'ja' = 'en') =
  * a categorías estandarizadas y simplificadas (Verbo Godan (-u), Verbo Ichidan (-ru), etc.)
  */
 export function mapJishoPartsOfSpeech(partsOfSpeech: string[], word: string, reading: string): string {
+  // Verbos y adjetivos comunes: el tipo exacto de JMdict, igual que en el resto de la app
+  const knownType = conjugationTypeOf(word, reading);
+  if (knownType) return categoryOfType(knownType, reading);
   if (!partsOfSpeech || partsOfSpeech.length === 0) {
     return classifyJapaneseWord(word, reading);
   }

@@ -3,6 +3,7 @@ import { Directory, File, Paths } from 'expo-file-system';
 import { db } from '../db';
 import { decks, srsItems, words } from '../db/schema';
 import { resolveJapaneseReading } from './japanese-search';
+import { categoryOfType, conjugationTypeOf } from './japanese-conjugation';
 import { classifyJapaneseWord, containsJapanese } from './japanese-utils';
 import { registerWordInDictionary } from './phonetic-dictionary';
 import { getKanjiLevel } from './kanji-search';
@@ -20,6 +21,8 @@ import { resolveJapaneseBaseForm } from './word-service';
 const REPAIR_FLAG = 'yomi_data_repair_v1_done';
 /** Reparaciones agregadas después de la v1 (corren una vez también en instalaciones que ya hicieron la v1). */
 const REPAIR_FLAG_V2 = 'yomi_data_repair_v2_done';
+/** Tipo de conjugación de los verbos y adjetivos según JMdict (antes se adivinaba y fallaba: 着る, すごい, 有名). */
+const REPAIR_FLAG_V3 = 'yomi_data_repair_v3_done';
 
 /** Mazos de japonés que versiones viejas crearon con idioma 'zh-CN'. */
 async function fixJapaneseDecksMarkedAsChinese(): Promise<number> {
@@ -104,6 +107,37 @@ async function fixSingleKanjiLevels(): Promise<number> {
   return fixed;
 }
 
+/**
+ * Categoría de los verbos y adjetivos japoneses según su tipo exacto en JMdict (lib/conjugation-types.ts).
+ * Antes se adivinaba por la terminación y quedaba mal guardada: 着る como godan, すごい como sustantivo,
+ * 有名 como sustantivo. Solo toca las palabras que están en la tabla y tenían otra categoría.
+ */
+async function fixConjugationCategories(): Promise<number> {
+  const rows = await db
+    .select({ id: words.id, text: words.simplified, reading: words.pinyinDisplay, aux: words.auxiliaryInfo })
+    .from(words)
+    .innerJoin(decks, eq(words.deckId, decks.id))
+    .where(like(decks.languageCode, 'ja%'));
+
+  const updates: { id: string; aux: string | null }[] = [];
+  for (const row of rows) {
+    const aux = parseAux(row.aux);
+    const base = aux.dictionaryForm?.kanji || (row.text || '').trim();
+    const reading = aux.dictionaryForm?.reading || (row.reading || '').trim();
+    const type = conjugationTypeOf(base, reading);
+    if (!type) continue;
+    const category = categoryOfType(type, base.endsWith('る') || reading.endsWith('る') ? 'る' : '');
+    if (aux.category === category) continue;
+    aux.category = category;
+    updates.push({ id: row.id, aux: stringifyAux(aux) });
+  }
+  if (updates.length === 0) return 0;
+  await db.$client.withTransactionAsync(async () => {
+    for (const u of updates) await db.update(words).set({ auxiliaryInfo: u.aux }).where(eq(words.id, u.id));
+  });
+  return updates.length;
+}
+
 /** Corre las reparaciones de datos. Sin `force`, cada una solo la primera vez. */
 export async function runDataRepair(force = false): Promise<void> {
   if (force || (await getStorageItem(REPAIR_FLAG)) !== 'true') {
@@ -124,6 +158,15 @@ export async function runDataRepair(force = false): Promise<void> {
       await setStorageItem(REPAIR_FLAG_V2, 'true');
     } catch (err) {
       console.warn('[DataRepair] Error corrigiendo niveles de kanji:', err);
+    }
+  }
+  if (force || (await getStorageItem(REPAIR_FLAG_V3)) !== 'true') {
+    try {
+      const categoriesFixed = await fixConjugationCategories();
+      console.log(`[DataRepair] Categorías de conjugación corregidas: ${categoriesFixed}`);
+      await setStorageItem(REPAIR_FLAG_V3, 'true');
+    } catch (err) {
+      console.warn('[DataRepair] Error corrigiendo categorías de conjugación:', err);
     }
   }
 }

@@ -273,7 +273,8 @@ export default function DeckDetailScreen() {
         const isBaseForm = isJapaneseDictionaryForm(cleanWord, cleanReading, category);
         const isConjugable =
           Boolean(dictionaryForm) ||
-          (!endsWithKanji &&
+          // Terminada en kanji solo si es un adjetivo -na (有名, 便利): se conjuga tal cual
+          ((!endsWithKanji || category === 'Adjetivo -na') &&
             (category?.startsWith('Verbo') || category?.startsWith('Adjetivo')) &&
             (conjugationEnabled === true ||
               (conjugationEnabled === undefined && isBaseForm)));

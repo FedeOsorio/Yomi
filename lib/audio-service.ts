@@ -108,12 +108,20 @@ export async function preloadAudioService(languageCode: string = 'zh-CN'): Promi
  * se extrae la lectura esencial en kana para que TTS pronuncie la palabra natural
  * (ej. "山" -> "やま", "何" -> "なに", "本" -> "ほん").
  */
+/**
+ * Sube con cada pedido de voz y con cada stopSpeech: un pedido que todavía se estaba preparando (buscando la
+ * voz, esperando la cola) y quedó viejo no llega a hablar. Sin esto, la palabra de la tarjeta anterior podía
+ * sonar tarde sobre la siguiente.
+ */
+let speakGeneration = 0;
+
 export async function speakText(
   text: string,
   languageCode: string = 'zh-CN',
   reading?: string,
   options?: SpeakOptions
 ): Promise<void> {
+  const generation = ++speakGeneration;
   // Las tarjetas "[Audio]" / "[Video]" sin su archivo no se leen en voz alta
   if (!text || !text.trim() || isMediaPlaceholder(text)) {
     options?.onDone?.();
@@ -183,6 +191,11 @@ export async function speakText(
     await Speech.stop();
     // Pausa breve para garantizar que el servicio nativo de Android TTS haya purgado la cola previa (TextToSpeech.QUEUE_ADD)
     await new Promise((res) => setTimeout(res, 40));
+    // Mientras se preparaba llegó otro pedido o se pidió silencio: este ya no habla
+    if (generation !== speakGeneration) {
+      options?.onStopped?.();
+      return;
+    }
     Speech.speak(cleanText, {
       language: targetLang,
       voice: voiceIdentifier,
@@ -212,6 +225,7 @@ export async function speakText(
  * Detiene cualquier audio en reproducción (tanto TTS como archivos multimedia nativos).
  */
 export async function stopSpeech(): Promise<void> {
+  speakGeneration++;
   stopMediaAudio();
   try {
     await Speech.stop();
