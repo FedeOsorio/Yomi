@@ -56,6 +56,9 @@ import { useSingleNavigation } from '../../hooks/useSingleNavigation';
 const SWIPE_DISTANCE = 80;
 const SWIPE_VELOCITY = 700;
 
+/** Lado del cuadro del kanji aislado en el título: el carácter escrito y su dibujo trazo por trazo miden lo mismo. */
+const SINGLE_KANJI_BOX = 56; // letra de 48
+
 /** El carácter, si la palabra es un único kanji/hanzi: solo esas se dibujan trazo por trazo. */
 function singleKanjiOf(text: string): string | null {
   const chars = Array.from(text.trim());
@@ -753,18 +756,6 @@ export default function WordDetailScreen() {
 
                 {!isFrontPlaceholderOnly && (
                   <>
-                    {showStrokes && singleKanji ? (
-                      <Animated.View entering={FadeIn.duration(200)}>
-                        <Pressable onPress={toggleStrokes} accessibilityLabel={t('wordDetail.drawStrokes')}>
-                          <KanjiStrokeViewer
-                            char={singleKanji}
-                            primaryColor={colors.primary}
-                            textMutedColor={colors.textMuted}
-                            isChinese={isChinese}
-                          />
-                        </Pressable>
-                      </Animated.View>
-                    ) : (
                     <Pressable
                       style={styles.rubyContainer}
                       onPress={toggleStrokes}
@@ -774,6 +765,18 @@ export default function WordDetailScreen() {
                       {furiganaPairs.map((pair, idx) => {
                         const textLen = word.simplified.length;
                         const fontSize = textLen > 12 ? 20 : textLen > 8 ? 24 : textLen > 5 ? 28 : 32;
+                        // Kanji aislado: más grande, en un cuadro fijo donde también se dibujan sus trazos
+                        const charText = (
+                          <Text
+                            style={[
+                              isIdeographic ? styles.mainCharIdeographic : styles.mainCharAlphabetic,
+                              { color: colors.text, fontSize },
+                              singleKanji ? styles.singleKanjiChar : null,
+                            ]}
+                          >
+                            {pair.char}
+                          </Text>
+                        );
                         return (
                           <View key={idx} style={styles.rubyPair}>
                             {pair.furigana ? (
@@ -783,19 +786,32 @@ export default function WordDetailScreen() {
                             ) : (
                               <View style={{ height: 13 }} />
                             )}
-                            <Text
-                              style={[
-                                isIdeographic ? styles.mainCharIdeographic : styles.mainCharAlphabetic,
-                                { color: colors.text, fontSize }
-                              ]}
-                            >
-                              {pair.char}
-                            </Text>
+                            {singleKanji ? (
+                              <View style={styles.singleKanjiBox}>
+                                {showStrokes ? (
+                                  <Animated.View entering={FadeIn.duration(150)}>
+                                    <KanjiStrokeViewer
+                                      char={singleKanji}
+                                      color={colors.text}
+                                      mutedColor={colors.textMuted}
+                                      isChinese={isChinese}
+                                      size={SINGLE_KANJI_BOX}
+                                      strokeWidth={8}
+                                      showNumbers={false}
+                                      fallback={charText}
+                                    />
+                                  </Animated.View>
+                                ) : (
+                                  charText
+                                )}
+                              </View>
+                            ) : (
+                              charText
+                            )}
                           </View>
                         );
                       })}
                     </Pressable>
-                    )}
 
                     <View style={styles.readingRowContainer}>
                       {cleanReading && cleanReading !== word.simplified ? (
@@ -1539,6 +1555,16 @@ const styles = StyleSheet.create({
     fontSize: 32,
     fontWeight: 'bold',
     textAlign: 'center',
+  },
+  singleKanjiBox: {
+    width: SINGLE_KANJI_BOX,
+    height: SINGLE_KANJI_BOX,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  singleKanjiChar: {
+    fontSize: Math.round(SINGLE_KANJI_BOX * 0.86),
+    lineHeight: SINGLE_KANJI_BOX,
   },
   mainCharAlphabetic: {
     fontSize: 30,

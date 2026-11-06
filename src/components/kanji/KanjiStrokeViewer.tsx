@@ -337,18 +337,35 @@ function StrokeNumber({ label, index, progress, color }: { label: { text: string
 
 export interface KanjiStrokeViewerProps {
   char: string;
-  primaryColor: string;
-  textMutedColor: string;
+  /** Color de los trazos (el mismo del texto, para que el dibujo sea igual al carácter escrito). */
+  color: string;
+  /** Color de la guía (el carácter completo de fondo) y de los números de orden. */
+  mutedColor: string;
   isChinese?: boolean;
   /** Lado del dibujo, en puntos. */
   size?: number;
+  /** Grosor de los trazos de KanjiVG (en unidades de su dibujo de 109×109). */
+  strokeWidth?: number;
+  /** Números de orden de los trazos (en tamaños chicos no se leen). */
+  showNumbers?: boolean;
+  /** Lo que se muestra mientras cargan los trazos o si no hay (por ejemplo, el carácter escrito). */
+  fallback?: React.ReactNode;
 }
 
 /**
  * Dibuja un kanji/hanzi trazo por trazo, una vez, sobre el carácter en gris (así se ve lo que falta).
  * La animación corre en el hilo de la interfaz (Reanimated): no vuelve a dibujar la pantalla en cada cuadro.
  */
-export function KanjiStrokeViewer({ char, primaryColor, textMutedColor, isChinese = false, size = 160 }: KanjiStrokeViewerProps) {
+export function KanjiStrokeViewer({
+  char,
+  color,
+  mutedColor,
+  isChinese = false,
+  size = 160,
+  strokeWidth = 4,
+  showNumbers = true,
+  fallback,
+}: KanjiStrokeViewerProps) {
   const { t } = useTranslation();
   const [data, setData] = useState<StrokeData | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -383,7 +400,7 @@ export function KanjiStrokeViewer({ char, primaryColor, textMutedColor, isChines
   if (status === 'loading') {
     return (
       <View style={[styles.box, { width: size, height: size }]}>
-        <ActivityIndicator size="small" color={primaryColor} />
+        {fallback ?? <ActivityIndicator size="small" color={color} />}
       </View>
     );
   }
@@ -391,12 +408,12 @@ export function KanjiStrokeViewer({ char, primaryColor, textMutedColor, isChines
   if (status === 'error' || !data) {
     return (
       <View style={[styles.box, { width: size, height: size }]}>
-        <Text style={styles.error}>{t('wordDetail.strokeUnavailable')}</Text>
+        {fallback ?? <Text style={styles.error}>{t('wordDetail.strokeUnavailable')}</Text>}
       </View>
     );
   }
 
-  const guideColor = textMutedColor + '40';
+  const guideColor = mutedColor + '40';
 
   return (
     <View style={[styles.box, { width: size, height: size }]}>
@@ -415,7 +432,7 @@ export function KanjiStrokeViewer({ char, primaryColor, textMutedColor, isChines
           {isAnimCjk
             ? data.clipPaths.map((cp, idx) => <Path key={idx} d={cp} fill={guideColor} />)
             : data.paths.map((d, idx) => (
-                <Path key={idx} d={d} stroke={guideColor} strokeWidth={4} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                <Path key={idx} d={d} stroke={guideColor} strokeWidth={strokeWidth} fill="none" strokeLinecap="round" strokeLinejoin="round" />
               ))}
         </G>
         <G>
@@ -426,14 +443,15 @@ export function KanjiStrokeViewer({ char, primaryColor, textMutedColor, isChines
               index={idx}
               length={lengths[idx]}
               progress={progress}
-              color={primaryColor}
-              width={isAnimCjk ? 96 : 4}
+              color={color}
+              width={isAnimCjk ? 96 : strokeWidth}
               clipId={isAnimCjk ? `acp_${idx}` : undefined}
             />
           ))}
           {!isAnimCjk &&
+            showNumbers &&
             data.texts.map((label, idx) => (
-              <StrokeNumber key={idx} label={label} index={idx} progress={progress} color={textMutedColor} />
+              <StrokeNumber key={idx} label={label} index={idx} progress={progress} color={mutedColor} />
             ))}
         </G>
       </Svg>

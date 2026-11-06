@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { memo, useCallback, useDeferredValue, useMemo, useState } from 'react';
 import { Alert, ActivityIndicator, Modal, Platform, Pressable, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -31,6 +31,18 @@ import { useSingleNavigation } from '../../hooks/useSingleNavigation';
 // Minúsculas y sin tildes latinas (á, ü, tonos del pinyin). Se recompone con NFC para no perder el dakuten (が ≠ か).
 const normalizeForSearch = (text: string) =>
   text.normalize('NFD').replace(/[̀-ͯ]/g, '').normalize('NFC').toLowerCase().trim();
+
+/**
+ * Palabras ya procesadas de cada mazo (nivel, categoría, lectura limpia, índice de búsqueda…). Al volver al mazo
+ * solo se procesa de nuevo una palabra si cambió su fila en la base de datos; si no cambió nada, la lista no se
+ * vuelve a dibujar. Al entrar otra vez a un mazo ya visto, se muestra enseguida lo último y después se actualiza.
+ */
+interface DeckCacheEntry {
+  deckInfo: any;
+  list: any[];
+  rows: Map<string, { signature: string; row: any }>;
+}
+const deckCache = new Map<string, DeckCacheEntry>();
 
 interface DeckWordCardProps {
   item: any;
@@ -162,8 +174,10 @@ export default function DeckDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   // Un solo movimiento por vez: varios toques rápidos no abren pantallas repetidas ni vuelven atrás de más
   const router = useSingleNavigation();
-  const [deckWords, setDeckWords] = useState<any[]>([]);
-  const [deckInfo, setDeckInfo] = useState<any>(null);
+  const [deckWords, setDeckWords] = useState<any[]>(() => (id && deckCache.get(id)?.list) || []);
+  const [deckInfo, setDeckInfo] = useState<any>(() => (id && deckCache.get(id)?.deckInfo) || null);
+  // Hasta la primera carga no se sabe si el mazo está vacío (no mostrar "mazo vacío" mientras carga)
+  const [loaded, setLoaded] = useState(() => Boolean(id && deckCache.has(id)));
   const [conjugationModalVisible, setConjugationModalVisible] = useState(false);
   const [customCardModalVisible, setCustomCardModalVisible] = useState(false);
   const [editingCard, setEditingCard] = useState<CustomCardData | null>(null);
@@ -195,21 +209,24 @@ export default function DeckDetailScreen() {
 
   const fetchWords = useCallback(async () => {
     if (id) {
-      const result = await db.select().from(words).where(eq(words.deckId, id));
-      const d = await db.select().from(decks).where(eq(decks.id, id)).limit(1);
+      const [result, d, activeSrs] = await Promise.all([
+        db.select().from(words).where(eq(words.deckId, id)),
+        db.select().from(decks).where(eq(decks.id, id)).limit(1),
+        // Solo las tarjetas en repaso de este mazo
+        db
+          .select({ itemId: srsItems.itemId })
+          .from(srsItems)
+          .innerJoin(words, eq(words.id, srsItems.itemId))
+          .where(and(eq(srsItems.itemType, 'word'), eq(words.deckId, id))),
+      ]);
       const deckObj = d.length > 0 ? d[0] : null;
       if (deckObj) setDeckInfo(deckObj);
-
-      const activeSrs = await db
-        .select({ itemId: srsItems.itemId })
-        .from(srsItems)
-        .where(eq(srsItems.itemType, 'word'));
       const activeSrsSet = new Set(activeSrs.map((s) => s.itemId));
 
       const isJapaneseDeck = deckObj?.languageCode === 'ja-JP';
       const isChineseDeck = deckObj?.languageCode?.startsWith('zh');
 
-      const processed = result.map((w) => {
+      const processWord = (w: (typeof result)[number]) => {
         const aux = parseAux(w.auxiliaryInfo);
         let level: string | undefined = aux.level;
         let category: string | undefined = aux.category;
@@ -317,19 +334,41 @@ export default function DeckDetailScreen() {
           dictionaryForm,
           displayMeanings,
           isInReview: activeSrsSet.has(w.id),
+          // Archivos de audio/imagen de la tarjeta (los `missing` nunca vinieron en el .apkg)
+          mediaFiles: (aux.media ?? [])
+            .filter((m) => !m.missing && m.path)
+            .map((m) => mediaFileName(m.path!))
+            .filter(Boolean) as string[],
         };
+      };
+
+      // Solo se procesan las palabras nuevas o cambiadas; las demás conservan el mismo objeto (sus filas no se redibujan)
+      const previous = deckCache.get(id);
+      const deckSignature = `${deckObj?.languageCode}|${deckObj?.type}`;
+      const rows = new Map<string, { signature: string; row: any }>();
+      const processed = result.map((w) => {
+        const signature = deckSignature + JSON.stringify(w);
+        const cached = previous?.rows.get(w.id);
+        let row = cached && cached.signature === signature ? cached.row : processWord(w);
+        const isInReview = activeSrsSet.has(w.id);
+        if (row.isInReview !== isInReview) row = { ...row, isInReview };
+        rows.set(w.id, { signature, row });
+        return row;
       });
+      const unchanged =
+        previous !== undefined &&
+        previous.list.length === processed.length &&
+        processed.every((row, i) => row === previous.list[i]);
+      deckCache.set(id, { deckInfo: deckObj, list: unchanged ? previous.list : processed, rows });
+      setLoaded(true);
+      if (!unchanged) setDeckWords(processed);
 
-      setDeckWords(processed);
-
-      // Archivos únicos que faltan en disco y se pueden recuperar (los `missing` nunca vinieron en el .apkg)
-      const onDisk = listMediaFiles();
+      // Archivos únicos que faltan en disco y se pueden recuperar (se revisa siempre: recuperarlos cambia el disco, no la base)
       const missingFiles = new Set<string>();
-      for (const w of result) {
-        for (const m of parseAux(w.auxiliaryInfo).media ?? []) {
-          if (m.missing || !m.path) continue;
-          const fileName = mediaFileName(m.path);
-          if (fileName && !onDisk.has(fileName)) missingFiles.add(fileName);
+      if (processed.some((row) => row.mediaFiles.length > 0)) {
+        const onDisk = listMediaFiles();
+        for (const row of processed) {
+          for (const fileName of row.mediaFiles) if (!onDisk.has(fileName)) missingFiles.add(fileName);
         }
       }
       setMissingMediaCount(missingFiles.size);
@@ -524,6 +563,7 @@ export default function DeckDetailScreen() {
             progress.start(deckInfo.name, 0, t('decks.deletingDeck'));
             try {
               await deleteDeck(id);
+              deckCache.delete(id);
             } finally {
               progress.finish();
             }
@@ -703,7 +743,7 @@ export default function DeckDetailScreen() {
         </Pressable>
       </Modal>
 
-      {deckWords.length === 0 ? (
+      {deckWords.length === 0 && !loaded ? null : deckWords.length === 0 ? (
         <View style={styles.emptyContainer}>
           <Ionicons name={isCustomDeck ? 'layers-outline' : 'book-outline'} size={48} color={colors.textMuted} />
           <Text style={[styles.emptyText, { color: colors.textMuted }]}>
