@@ -6,7 +6,9 @@ import sqlite3 from 'sqlite3';
 
 const ASSETS_DIR = path.join(__dirname, '../assets/cedict');
 const CEDICT_FILE = path.join(ASSETS_DIR, 'cedict_ts.u8');
-const DB_FILE = path.join(ASSETS_DIR, 'dictionary.db');
+// Debe coincidir con providers/DatabaseProvider.tsx. Esta base se crea desde cero: después hay que correr
+// también build:dictionary:ja (scripts/build-japanese-dictionary.ts) para volver a cargar el japonés.
+const DB_FILE = path.join(ASSETS_DIR, 'dictionary-v2.db');
 
 const TONE_MAP: Record<string, string[]> = {
   'a': ['ā', 'á', 'ǎ', 'à'],
@@ -98,6 +100,9 @@ async function buildDictionary() {
     `);
 
     db.run(`CREATE INDEX idx_pinyin_key ON dictionary_entries(pinyin_key)`);
+    // La evaluación por voz busca el pinyin de lo que escribió el reconocedor (en simplificado o tradicional)
+    db.run(`CREATE INDEX idx_simplified ON dictionary_entries(simplified)`);
+    db.run(`CREATE INDEX idx_traditional ON dictionary_entries(traditional)`);
 
     const stmt = db.prepare('INSERT INTO dictionary_entries VALUES (?, ?, ?, ?, ?, ?, ?)');
 
@@ -140,7 +145,7 @@ async function buildDictionary() {
     stmt.finalize();
     db.exec('COMMIT');
 
-    console.log(`Se insertaron ${count} entradas en dictionary.db`);
+    console.log(`Se insertaron ${count} entradas en ${path.basename(DB_FILE)}`);
 
     // Guardar syllables
     const constantsDir = path.join(__dirname, '../constants');

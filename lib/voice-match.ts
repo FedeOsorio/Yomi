@@ -1,7 +1,7 @@
-import { expandChoonpu, getEffectiveCardLanguage, hiraganaToRomaji, JA_NUMBERS, katakanaToHiragana, romajiToHiragana, ZH_NUMBERS } from './japanese-utils';
+import { expandChoonpu, getEffectiveCardLanguage, hiraganaToRomaji, katakanaToHiragana, romajiToHiragana, ZH_NUMBERS } from './japanese-utils';
 import { KANJI_READINGS_MAP } from './kanji-readings-db';
-import { getReadingsForWord } from './phonetic-dictionary';
-import { toSearchKey } from './pinyin-utils';
+import { getPinyinForWord, getReadingsForWord } from './phonetic-dictionary';
+import { DIACRITIC_TO_TONE, toSearchKey } from './pinyin-utils';
 import { parseAux } from './word-aux';
 
 /**
@@ -10,10 +10,13 @@ import { parseAux } from './word-aux';
  * Regla general: lo que el usuario dijo en UNA elocución se compara COMPLETO contra la
  * lectura esperada de la tarjeta. No se aceptan coincidencias parciales, prefijos, sufijos,
  * conjugaciones ni partículas extra. Solo se tolera:
- *   - escribir la misma lectura con otro sistema (kanji homófono, katakana, romaji),
+ *   - escribir la misma palabra con otro sistema (kanji homófono, katakana, romaji, números en cifras:
+ *     26日 = 二十六日, 8がつ = 八月),
  *   - vocales largas escritas distinto (おう / おお / ー),
  *   - は/へ/を escritos donde la palabra lleva わ/え/お (el modelo toma el sonido como partícula),
  *   - 1 error de sonido en palabras largas (≥ 8 letras en romaji).
+ * Las tolerancias de sonido (duración, っ, 1 sonido distinto) valen solo cuando el reconocedor escribió kana:
+ * si escribió kanji ya eligió la palabra, y se compara su lectura exacta.
  */
 
 export interface VoiceMatchResult {
@@ -104,10 +107,11 @@ export function singleKanjiReadings(displayText?: string | null): string[] {
   if (single.length === 1 && KANJI_READINGS_MAP[single]) {
     return KANJI_READINGS_MAP[single];
   }
-  // Si la tarjeta contiene exactamente un único kanji acompañado de glosa o lectura (ej. "白 / しろ", "白: blanco")
-  const kanjis = single.match(/[\u4e00-\u9faf]/g);
-  if (kanjis && kanjis.length === 1 && KANJI_READINGS_MAP[kanjis[0]]) {
-    return KANJI_READINGS_MAP[kanjis[0]];
+  // Un único kanji acompañado de una glosa o lectura SEPARADA (ej. "白 / しろ", "白: blanco"). Con kana
+  // pegado es una palabra (食べる, 行く, 小さい): vale solo su lectura, no cualquiera del kanji
+  const head = stripMarkup(displayText).split(/[\/:：=|]|\s/)[0].trim();
+  if ([...head].length === 1 && KANJI_READINGS_MAP[head]) {
+    return KANJI_READINGS_MAP[head];
   }
   return [];
 }
@@ -135,16 +139,24 @@ function expectedJapaneseReadings(card: CardLike): string[] {
   return [...set];
 }
 
-/** Posibles lecturas en kana de lo que transcribió el reconocedor (que puede venir en kanji). */
-function heardJapaneseReadings(transcript: string): string[] {
+/**
+ * Lo que entendió el reconocedor, en kana.
+ * - kana: escribió kana o romaji. Es el sonido tal cual, y admite las tolerancias de duración y っ.
+ * - written: escribió kanji. Si es una palabra conocida (los mazos del usuario), sus lecturas; si no, las
+ *   combinaciones de lecturas de cada kanji (homófonos: 橋 → はし coincide con 箸). El reconocedor ya decidió
+ *   qué palabra era, así que estas se comparan exactas: con tantas combinaciones, cualquier tolerancia
+ *   termina aceptando palabras distintas (四日 por 八日, 兄 por 今日).
+ */
+function heardJapaneseReadings(transcript: string): { kana: string[]; written: string[] } {
   const clean = transcript.replace(PUNCT, '');
   const direct = toKana(clean);
-  if (direct) return [direct];
+  if (direct) return { kana: [direct], written: [] };
+
+  // Palabra de los mazos del usuario (川 = かわ): se sabe cómo se lee, no se prueban otras lecturas
+  const known = getReadingsForWord(clean).map(toKana).filter(Boolean);
+  if (known.length > 0) return { kana: [], written: known };
 
   const out = new Set<string>();
-  if (JA_NUMBERS[clean]) out.add(JA_NUMBERS[clean].kana);
-  getReadingsForWord(clean).forEach((r) => out.add(toKana(r)));
-
   // Homófonos: combinar lecturas de cada kanji (橋 → はし coincide con 箸). Limitado para no explotar.
   // El modelo a veces repite en kana la última sílaba del kanji (山ま, 山マ = やま): si la lectura
   // ya termina con ese kana, también se prueba sin repetirlo.
@@ -172,13 +184,54 @@ function heardJapaneseReadings(transcript: string): string[] {
   }
   combos.forEach((c) => out.add(c));
   out.delete('');
-  return [...out];
+  return { kana: [], written: [...out] };
+}
+
+const KANJI_DIGITS = ['〇', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+
+/** Número escrito en cifras → en kanji, como se escribe en japonés: 26 → 二十六, 1000 → 千, 2024 → 二千二十四. */
+function numberToKanji(digits: string): string {
+  const n = Number(digits);
+  // Con ceros a la izquierda o enorme: dígito por dígito (〇五, como un código)
+  if ((digits.length > 1 && digits.startsWith('0')) || !Number.isSafeInteger(n) || n >= 1e16) {
+    return [...digits].map((d) => KANJI_DIGITS[Number(d)]).join('');
+  }
+  if (n === 0) return '零';
+  const below10000 = (m: number) => {
+    let s = '';
+    for (const [value, sign] of [[1000, '千'], [100, '百'], [10, '十']] as const) {
+      const q = Math.floor(m / value);
+      if (q > 0) s += (q > 1 ? KANJI_DIGITS[q] : '') + sign;
+      m %= value;
+    }
+    return s + (m > 0 ? KANJI_DIGITS[m] : '');
+  };
+  let s = '';
+  let rest = n;
+  for (const [value, sign] of [[1e12, '兆'], [1e8, '億'], [1e4, '万']] as const) {
+    const q = Math.floor(rest / value);
+    if (q > 0) s += below10000(q) + sign;
+    rest %= value;
+  }
+  return s + below10000(rest);
+}
+
+/**
+ * Misma escritura para los números: el reconocedor los escribe en cifras (26日, 8月, ８がつ) y las tarjetas
+ * en kanji (二十六日, 八月). Son la misma palabra. También unifica ヶ/ヵ/カ/箇 después de un número (一ヶ月 = 一か月).
+ */
+function normalizeNumerals(text: string): string {
+  return text
+    .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
+    .replace(/(\d)[,，](?=\d{3})/g, '$1')
+    .replace(/\d+/g, numberToKanji)
+    .replace(/([〇零一二三四五六七八九十百千万億兆])[ヶヵケカ箇]/g, '$1か');
 }
 
 function matchJapanese(card: CardLike, transcript: string): VoiceMatchResult {
   const expected = expectedJapaneseReadings(card);
-  const surface = (card.displayText || '').replace(/[\[(【（].*?[\])】）]/g, '').replace(PUNCT, '');
-  const clean = transcript.replace(PUNCT, '');
+  const surface = normalizeNumerals((card.displayText || '').replace(/[\[(【（].*?[\])】）]/g, '')).replace(PUNCT, '');
+  const clean = normalizeNumerals(transcript).replace(PUNCT, '');
 
   // 1. Escribió exactamente la palabra de la tarjeta
   if (surface && clean === surface) {
@@ -195,15 +248,19 @@ function matchJapanese(card: CardLike, transcript: string): VoiceMatchResult {
     }
   }
 
-  const heard = heardJapaneseReadings(clean);
+  const { kana: heardKana, written: heardWritten } = heardJapaneseReadings(clean);
+  const heard = [...heardKana, ...heardWritten];
   // 2. Misma lectura (permitiendo vocales largas escritas distinto)
   for (const h of heard) {
     const hit = expected.find((e) => phonetic(e) === phonetic(h));
     if (hit) return { isMatch: true, matchedReading: hit, heard: hit };
   }
 
+  // Desde acá, tolerancias de sonido: solo para lo que el reconocedor escribió en kana (oyó el sonido y
+  // pudo errar la duración). Si escribió kanji ya decidió la palabra, y se compara exacto (paso 2).
+
   // 2-repeat. Misma lectura repetida (ej. 書く書く oído como かくかく vs かく)
-  for (const h of heard) {
+  for (const h of heardKana) {
     for (const e of expected) {
       if (e && (h === e + e || h === e + e + e || phonetic(h) === phonetic(e) + phonetic(e))) {
         return { isMatch: true, matchedReading: e, heard: e };
@@ -212,13 +269,13 @@ function matchJapanese(card: CardLike, transcript: string): VoiceMatchResult {
   }
 
   // 2b. Mismo sonido con tolerancia de duración en vocales largas (ej. とうも vs とも)
-  for (const h of heard) {
+  for (const h of heardKana) {
     const hit = expected.find((e) => collapseLongVowels(phonetic(e)) === collapseLongVowels(phonetic(h)));
     if (hit) return { isMatch: true, matchedReading: hit, heard: hit };
   }
 
   // 2c. Mismo sonido con tolerancia de sokuon (っ) espurio o absorbido ante oclusivas/africadas (ej. くっち vs くち)
-  for (const h of heard) {
+  for (const h of heardKana) {
     const hNoSokuon = phonetic(h).replace(/っ/g, '');
     const hit = expected.find((e) => phonetic(e).replace(/っ/g, '') === hNoSokuon);
     if (hit) return { isMatch: true, matchedReading: hit, heard: hit };
@@ -226,13 +283,13 @@ function matchJapanese(card: CardLike, transcript: string): VoiceMatchResult {
 
   // 2d. Mismo sonido escrito como partícula: el modelo oye "kawa" como か + は (partícula "wa").
   //     Solo vale donde la tarjeta lleva わ/え/お en esa posición; no agrega ni quita sonidos.
-  for (const h of heard) {
+  for (const h of heardKana) {
     const hit = expected.find((e) => sameSoundAsParticle(phonetic(h), phonetic(e)));
     if (hit) return { isMatch: true, matchedReading: hit, heard: hit };
   }
 
   // 3. Palabras largas: se tolera 1 sonido distinto (comparando en romaji)
-  for (const h of heard) {
+  for (const h of heardKana) {
     const hr = hiraganaToRomaji(phonetic(h));
     for (const e of expected) {
       const er = hiraganaToRomaji(phonetic(e));
@@ -243,15 +300,17 @@ function matchJapanese(card: CardLike, transcript: string): VoiceMatchResult {
   // 4. Palabras de UNA sola mora (こ, き, て…): el modelo suele oír sonora la consonante sorda
   //    cuando no se aspira (こ → ご), algo muy común en hispanohablantes. Solo en esa dirección:
   //    una tarjeta "ご" NO acepta "こ".
-  //    También tolera si al pronunciarla aislada se alargó la vocal (こ → こう/こお, じ → じい).
+  //    También tolera si al pronunciarla aislada se alargó la vocal (こ → こう/こお, じ → じい), pero solo si
+  //    el reconocedor lo escribió en kana: en kanji ya eligió una palabra (酔い = えい no es え alargada).
   for (const h of heard) {
+    const fromKana = heardKana.includes(h);
     for (const e of expected) {
       if (isSingleMora(e)) {
         const uh = unvoice(h);
-        if (unvoice(e) === e && (uh === e || isProlongedMora(uh, e)) && h !== e) {
+        if (unvoice(e) === e && (uh === e || (fromKana && isProlongedMora(uh, e))) && h !== e) {
           return { isMatch: true, matchedReading: e, heard: e };
         }
-        if (isProlongedMora(h, e)) {
+        if (fromKana && isProlongedMora(h, e)) {
           return { isMatch: true, matchedReading: e, heard: e };
         }
       }
@@ -310,13 +369,51 @@ function isProlongedMora(heard: string, expected: string): boolean {
 
 const toneless = (s: string) => toSearchKey(s || '').replace(/[^a-z]/g, '');
 
+/** Número en cifras → en hanzi, como se escribe en chino: 26 → 二十六, 105 → 一百零五, 2024 → 二千零二十四. */
+function numberToHanzi(digits: string): string {
+  const n = Number(digits);
+  if ((digits.length > 1 && digits.startsWith('0')) || !Number.isSafeInteger(n) || n >= 1e12) {
+    return [...digits].map((d) => KANJI_DIGITS[Number(d)].replace('〇', '零')).join('');
+  }
+  if (n === 0) return '零';
+  const below10000 = (m: number, leading: boolean) => {
+    let s = '';
+    let pendingZero = false;
+    for (const [value, sign] of [[1000, '千'], [100, '百'], [10, '十'], [1, '']] as const) {
+      const q = Math.floor(m / value);
+      m %= value;
+      if (q === 0) {
+        if (s) pendingZero = true;
+        continue;
+      }
+      if (pendingZero) s += '零';
+      pendingZero = false;
+      // 10-19 al principio se dice 十X, no 一十X
+      s += (value === 10 && q === 1 && !s && leading ? '' : KANJI_DIGITS[q]) + sign;
+    }
+    return s;
+  };
+  let s = '';
+  let rest = n;
+  for (const [value, sign] of [[1e8, '亿'], [1e4, '万']] as const) {
+    const q = Math.floor(rest / value);
+    if (q > 0) s += below10000(q, !s) + sign;
+    rest %= value;
+  }
+  if (rest > 0) s += (s && rest < 1000 ? '零' : '') + below10000(rest, !s);
+  return s;
+}
+
 function matchChinese(card: CardLike, transcript: string): VoiceMatchResult {
-  const hanzi = (card.displayText || '').replace(PUNCT, '');
+  // Mismo número escrito en cifras o en hanzi (26号 = 二十六号)
+  const toHanzi = (t: string) =>
+    t.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)).replace(/(\d)[,，](?=\d{3})/g, '$1').replace(/\d+/g, numberToHanzi);
+  const hanzi = toHanzi(card.displayText || '').replace(PUNCT, '');
   const reading = card.displayReading || '';
-  const clean = transcript.replace(PUNCT, '');
+  const clean = toHanzi(transcript).replace(PUNCT, '');
 
   if (hanzi && clean === hanzi) return { isMatch: true, matchedReading: reading, heard: hanzi };
-  const num = ZH_NUMBERS[clean];
+  const num = ZH_NUMBERS[transcript.replace(PUNCT, '')];
   if (num && (num.hanzi === hanzi || toneless(num.pinyin) === toneless(reading))) {
     return { isMatch: true, matchedReading: reading, heard: num.hanzi };
   }
@@ -324,7 +421,48 @@ function matchChinese(card: CardLike, transcript: string): VoiceMatchResult {
   if (/^[a-zA-Zāáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜü\s]+$/.test(transcript) && toneless(transcript) === toneless(reading)) {
     return { isMatch: true, matchedReading: reading, heard: transcript };
   }
+  // Hanzi homófono: mismo pinyin con el mismo tono (是 shì no vale por 十 shí). La lectura de lo que escribió
+  // el reconocedor sale del diccionario (CC-CEDICT)
+  const cardReadings = reading.split(/[\/,;|]/).filter((r) => toneless(r));
+  if (chinesePinyinOf(clean).some((p) => cardReadings.some((r) => samePinyin(p, r)))) {
+    return { isMatch: true, matchedReading: reading, heard: clean };
+  }
   return { isMatch: false, heard: clean };
+}
+
+/**
+ * Pinyin (tonos en números) de lo que escribió el reconocedor: el de la palabra en el diccionario; si no es una
+ * palabra del diccionario, las combinaciones de las lecturas de cada hanzi (limitadas).
+ */
+function chinesePinyinOf(hanzi: string): string[] {
+  const known = getPinyinForWord(hanzi);
+  if (known.length > 0 || [...hanzi].length < 2) return known;
+  let combos = [''];
+  for (const ch of hanzi) {
+    const options = getPinyinForWord(ch);
+    if (options.length === 0) return [];
+    combos = combos.flatMap((prefix) => options.map((o) => `${prefix} ${o}`)).slice(0, 200);
+  }
+  return combos.map((c) => c.trim());
+}
+
+/**
+ * Tonos de un pinyin, en orden: "ni3 hao3" → "33", "nǐ hǎo" → "33". El neutro (5, o sílaba sin tilde) no se
+ * anota, así ambas escrituras coinciden ("ma1 ma5" = "māma" → "1"). null si no trae tonos de ningún tipo.
+ */
+function pinyinTones(pinyin: string): string | null {
+  const digits = pinyin.match(/[1-5]/g);
+  if (digits) return digits.filter((d) => d !== '5').join('');
+  const marks = [...pinyin.normalize('NFC')].map((c) => DIACRITIC_TO_TONE[c]?.tone ?? '').join('');
+  return marks || null;
+}
+
+/** Mismo pinyin: mismas letras y mismos tonos (si uno de los dos no trae tonos, solo las letras). */
+function samePinyin(a: string, b: string): boolean {
+  if (toneless(a) !== toneless(b)) return false;
+  const ta = pinyinTones(a);
+  const tb = pinyinTones(b);
+  return ta === null || tb === null || ta === tb;
 }
 
 // ───────────── otros idiomas ─────────────
@@ -357,20 +495,7 @@ export function expectedVoiceWords(rawCard: CardLike, lang: string): string[] {
   const surface = (card.displayText || '').replace(/[\[(【（].*?[\])】）]/g, '').replace(PUNCT, '');
   if (target.startsWith('ja')) {
     const furigana = [...(card.displayText || '').matchAll(/[\[(【（](.*?)[\])】）]/g)].flatMap((m) => splitReadings(m[1]));
-    const aux = parseAux(card.auxiliaryInfo);
-    const auxReadings = [aux.kanjiReadings, aux.onReading, aux.kunReading].flatMap(splitReadings);
-    const singleReadings = singleKanjiReadings(card.displayText);
-    return Array.from(
-      new Set(
-        [
-          surface,
-          ...splitReadings(card.displayReading),
-          ...furigana,
-          ...auxReadings,
-          ...singleReadings,
-        ].filter(Boolean)
-      )
-    );
+    return Array.from(new Set([surface, ...splitReadings(card.displayReading), ...furigana].filter(Boolean)));
   }
   return Array.from(new Set([surface, ...(card.displayReading || '').split(/[\/\n,、;•|]/).map((r) => r.trim())].filter(Boolean)));
 }

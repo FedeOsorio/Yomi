@@ -81,6 +81,15 @@ const END_SILENCE_MS = 400; // 400ms de pausa para dar la elocución por termina
 const PRE_ROLL_MS = 300; // 300ms conserva completo el ataque de consonantes iniciales (ts, k, t, sh)
 const MIN_UTTERANCE_MS = 140; // palabras de una o dos moras rápidas (てん, くち, かい, こ)
 const MAX_UTTERANCE_MS = 4000;
+/**
+ * Si el micrófono recién abierto no entrega audio (solo silencio digital) en este tiempo, se reabre solo.
+ * Pasa en Android cuando se abre justo después de que sonó la voz de Yomi: el usuario tenía que cerrarlo y
+ * abrirlo a mano para que lo escuchara.
+ */
+const MIC_SILENT_RESTART_MS = 1500;
+const MIC_SILENT_MAX_RESTARTS = 2;
+/** Por debajo de esto el micrófono no está entregando sonido (un micrófono real siempre tiene algo de ruido). */
+const DIGITAL_SILENCE_RMS = 0.0001;
 const PAD_BEFORE_MS = 60; // 60ms de silencio digital previo para inicializar el estado del transductor
 const PAD_AFTER_MS = 80; // 80ms de silencio digital final para estabilizar la decodificación
 
@@ -141,6 +150,7 @@ class SherpaVoiceService {
   private unsubscribers: Array<() => void> = [];
   private callbacks: SherpaCallbacks | null = null;
   private generation = 0;
+  private silentMicWatchdog: ReturnType<typeof setTimeout> | null = null;
   /** Caracteres que conoce el modelo japonés (una pista con otro carácter se descarta). */
   private tokenSet: Set<string> | null = null;
   lastError: string | null = null;
@@ -380,7 +390,12 @@ class SherpaVoiceService {
    * Abre el micrófono. `hotwords`: palabras esperadas en este intento (la tarjeta actual); solo las
    * usa el modelo japonés.
    */
-  async start(langCode: string, callbacks: SherpaCallbacks, hotwords: string[] = []): Promise<boolean> {
+  async start(
+    langCode: string,
+    callbacks: SherpaCallbacks,
+    hotwords: string[] = [],
+    silentRestartsLeft = MIC_SILENT_MAX_RESTARTS
+  ): Promise<boolean> {
     await this.abort();
     const gen = ++this.generation;
 
@@ -406,6 +421,7 @@ class SherpaVoiceService {
     let silenceMs = 0;
     let noiseFloor = 0.003;
     let busy = false;
+    let micDeliversSound = false;
 
     const pushPreRoll = (samples: Float32Array) => {
       for (let i = 0; i < samples.length; i++) preRoll.push(samples[i]);
@@ -463,12 +479,13 @@ class SherpaVoiceService {
 
       const offData = stream.onData((samples: Float32Array, rate: number) => {
         if (gen !== this.generation || samples.length === 0) return;
-        if (Date.now() - streamStartAt < SETTLING_MS) return;
-        const chunkMs = (samples.length / (rate || SAMPLE_RATE)) * 1000;
-
         let sum = 0;
         for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
         const rms = Math.sqrt(sum / samples.length);
+        if (rms > DIGITAL_SILENCE_RMS) micDeliversSound = true;
+        if (Date.now() - streamStartAt < SETTLING_MS) return;
+        const chunkMs = (samples.length / (rate || SAMPLE_RATE)) * 1000;
+
         if (!speaking) noiseFloor = noiseFloor * 0.95 + Math.min(rms, 0.015) * 0.05;
         // Umbral de voz: mínimo 0.0075 RMS para capturar consonantes sordas/africadas (ts, sh, k)
         // sin cortar el inicio de palabras como "tsuki" o "shiro".
@@ -517,6 +534,16 @@ class SherpaVoiceService {
       await stream.start();
       if (gen !== this.generation) return false;
       callbacks.onStart?.();
+
+      // Micrófono abierto pero mudo: se reabre solo, como hacía el usuario a mano
+      if (silentRestartsLeft > 0) {
+        this.silentMicWatchdog = setTimeout(() => {
+          this.silentMicWatchdog = null;
+          if (gen !== this.generation || micDeliversSound) return;
+          console.log('[Sherpa] El micrófono no entrega audio: se reabre');
+          this.start(langCode, callbacks, hotwords, silentRestartsLeft - 1).catch(() => {});
+        }, MIC_SILENT_RESTART_MS);
+      }
       return true;
     } catch (err: any) {
       await this.abort();
@@ -535,6 +562,8 @@ class SherpaVoiceService {
   /** Detiene el micrófono sin notificar y descarta resultados pendientes. */
   async abort(): Promise<void> {
     this.generation++;
+    if (this.silentMicWatchdog) clearTimeout(this.silentMicWatchdog);
+    this.silentMicWatchdog = null;
     this.callbacks = null;
     this.unsubscribers.forEach((off) => {
       try {

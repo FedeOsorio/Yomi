@@ -1,17 +1,24 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { SQLiteProvider, useSQLiteContext } from 'expo-sqlite';
+import { deleteDatabaseAsync, SQLiteProvider, useSQLiteContext } from 'expo-sqlite';
 import { useMigrations } from 'drizzle-orm/expo-sqlite/migrator';
 import { db, initUserDb, initDictDb } from '../db';
 import migrations from '../db/migrations/migrations';
 import { backfillMissingReadings, runDataRepair } from '../lib/data-repair';
+import { setChineseDictionaryLookup, setDictionaryLookup } from '../lib/phonetic-dictionary';
+
+/** Nombre de la copia del diccionario en el teléfono (cambia con cada versión de su contenido). */
+const DICTIONARY_DB = 'dictionary-v2.db';
+const OLD_DICTIONARY_DBS = ['dictionary.db'];
 
 export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return (
-    // 1. Base de datos de solo lectura para el diccionario (estática, ~19MB)
-    <SQLiteProvider 
-      databaseName="dictionary.db" 
-      assetSource={{ assetId: require('../assets/cedict/dictionary.db') }}
+    // 1. Base de datos de solo lectura para los diccionarios (estática, ~24 MB): chino (CC-CEDICT) y japonés
+    //    (JMdict). Se copia al teléfono una sola vez: si cambia su contenido hay que cambiarle el nombre
+    //    (ver scripts/build-japanese-dictionary.ts)
+    <SQLiteProvider
+      databaseName={DICTIONARY_DB}
+      assetSource={{ assetId: require('../assets/cedict/dictionary-v2.db') }}
     >
       <DictInitProvider>
         {/* 2. Base de datos viva del usuario (mazos, palabras, SRS, <100KB) */}
@@ -28,7 +35,27 @@ const DictInitProvider: React.FC<{ children: React.ReactNode }> = ({ children })
 
   React.useMemo(() => {
     initDictDb(dictExpoDb);
+    // La evaluación por voz conoce así la lectura de cualquier palabra común que escriba el reconocedor
+    setDictionaryLookup((word) =>
+      dictExpoDb
+        .getAllSync<{ hiragana: string }>('SELECT DISTINCT hiragana FROM japanese_dictionary_entries WHERE kanji = ?', [word])
+        .map((row) => row.hiragana)
+    );
+    // Lo mismo en chino: el pinyin de lo que escribió el reconocedor (homófonos con el mismo tono)
+    setChineseDictionaryLookup((word) =>
+      dictExpoDb
+        .getAllSync<{ pinyin_numeric: string }>(
+          'SELECT DISTINCT pinyin_numeric FROM dictionary_entries WHERE simplified = ? OR traditional = ?',
+          [word, word]
+        )
+        .map((row) => row.pinyin_numeric)
+    );
   }, [dictExpoDb]);
+
+  // Copias de versiones anteriores del diccionario que quedaron en el teléfono (ya no se abren)
+  useEffect(() => {
+    for (const name of OLD_DICTIONARY_DBS) deleteDatabaseAsync(name).catch(() => {});
+  }, []);
 
   return <>{children}</>;
 };

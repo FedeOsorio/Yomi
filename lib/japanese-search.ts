@@ -1,4 +1,6 @@
-import { romajiToHiragana, containsJapanese, deconjugateJapanese, classifyJapaneseWord, conjugateJapanese, JapaneseConjugationForm, toNormalizedHiragana, kanjiToHiragana, DAY_DATA } from './japanese-utils';
+import { dictDb } from '../db';
+import { romajiToHiragana, containsJapanese, deconjugateJapanese, classifyJapaneseWord, conjugateJapanese, JapaneseConjugationForm, toNormalizedHiragana, kanjiToHiragana, katakanaToHiragana, DAY_DATA } from './japanese-utils';
+import { localReading, searchLocalDictionary } from './japanese-dictionary';
 import { getQuickJlptLevel } from './jlpt-data';
 import { getStorageItem, setStorageItem } from './storage-service';
 
@@ -452,8 +454,25 @@ export function mapJishoPartsOfSpeech(partsOfSpeech: string[], word: string, rea
   return classifyJapaneseWord(word, reading);
 }
 
+/** Consulta a Jisho por internet (solo cuando el diccionario local no tiene la palabra exacta). */
+function searchJisho(terms: string[]): Promise<any[][]> {
+  return Promise.all(
+    terms.flatMap((term) => [
+      fetch(`https://jisho.org/api/v1/search/words?keyword=${encodeURIComponent(term + ' #common')}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((json) => (Array.isArray(json?.data) ? json.data : []))
+        .catch(() => []),
+      fetch(`https://jisho.org/api/v1/search/words?keyword=${encodeURIComponent(term)}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((json) => (Array.isArray(json?.data) ? json.data : []))
+        .catch(() => []),
+    ])
+  );
+}
+
 /**
- * Busca palabras en japonés (usando JMdict/Jisho) con ordenamiento inteligente por relevancia y uso común.
+ * Busca palabras en japonés con ordenamiento inteligente por relevancia y uso común. Primero en el
+ * diccionario de la app (sin internet); si no tiene la palabra exacta, también en Jisho.
  */
 export async function searchJapanese(rawInput: string, toLang: string = 'es'): Promise<JapaneseEntry[]> {
   if (!rawInput || !rawInput.trim()) return [];
@@ -490,19 +509,17 @@ export async function searchJapanese(rawInput: string, toLang: string = 'es'): P
       };
     }
 
-    // Consultar primero palabras comunes (#common) para que los términos cotidianos aparezcan primero
-    const queryPromises = queryTerms.flatMap((term) => [
-      fetch(`https://jisho.org/api/v1/search/words?keyword=${encodeURIComponent(term + ' #common')}`)
-        .then((res) => (res.ok ? res.json() : null))
-        .then((json) => (Array.isArray(json?.data) ? json.data : []))
-        .catch(() => []),
-      fetch(`https://jisho.org/api/v1/search/words?keyword=${encodeURIComponent(term)}`)
-        .then((res) => (res.ok ? res.json() : null))
-        .then((json) => (Array.isArray(json?.data) ? json.data : []))
-        .catch(() => []),
-    ]);
-
-    const resultsArray = await Promise.all(queryPromises);
+    // Primero el diccionario local. Si tiene la palabra exacta alcanza; si no (palabra poco común, que el local
+    // no trae), también Jisho por internet, con las palabras comunes (#common) primero
+    const localData = dictDb ? await searchLocalDictionary(dictDb.$client, queryTerms) : [];
+    const hiraganaTerms = queryTerms.map(katakanaToHiragana);
+    const hasExactLocal = localData.some((item) =>
+      item.japanese.some(
+        (j: { word?: string; reading: string }) =>
+          (j.word && queryTerms.includes(j.word)) || hiraganaTerms.includes(katakanaToHiragana(j.reading))
+      )
+    );
+    const resultsArray = hasExactLocal ? [localData] : [localData, ...(await searchJisho(queryTerms))];
     const combinedData: any[] = [];
     const seenSlugs = new Set<string>();
 
@@ -871,9 +888,10 @@ const resolvedReadingCache = new Map<string, string>();
  * Estrategia jerárquica universal (cero mapeo manual):
  * 1. Si no contiene kanji, normaliza a Hiragana puro directamente.
  * 2. Consulta la caché en memoria y la caché persistente local.
- * 3. Repositorio Lingüístico Oficial: Jisho API / JMdict (180.000+ términos nativos con lecturas léxicas e irregulares exactas).
- * 4. Motor NLP de Romanización: Google NLP Translate con parámetro dt=rm (oraciones complejas, frases y conjugaciones verbales).
- * 5. Fallback Offline: Catálogo universal canónico de 2.678 kanjis (KANJI_READINGS_MAP).
+ * 3. Diccionario de la app (JMdict, palabras comunes, sin internet).
+ * 4. Jisho por internet (JMdict completo, 180.000+ términos), para las palabras que la app no trae.
+ * 5. Motor NLP de Romanización: Google NLP Translate con parámetro dt=rm (oraciones complejas, frases y conjugaciones verbales).
+ * 6. Fallback Offline: Catálogo universal canónico de 2.678 kanjis (KANJI_READINGS_MAP).
  */
 export async function resolveJapaneseReading(text: string): Promise<string> {
   if (!text || !text.trim()) return '';
@@ -907,8 +925,12 @@ export async function resolveJapaneseReading(text: string): Promise<string> {
 
   let readingResult = '';
 
-  // 4. Estrategia 1: Jisho / JMdict API (precisión absoluta para léxico, compuestos y lecturas irregulares como 二十歳 -> はたち, 六日 -> むいか)
-  try {
+  // 4. Diccionario de la app (JMdict, palabras comunes, sin internet): lecturas exactas, también las
+  //    irregulares (二十歳 → はたち, 六日 → むいか). La lectura común de la forma principal primero
+  if (dictDb) readingResult = await localReading(dictDb.$client, clean);
+
+  // 5. Jisho por internet (palabras que el diccionario de la app no trae)
+  if (!readingResult) try {
     const res = await fetch(`https://jisho.org/api/v1/search/words?keyword=${encodeURIComponent(clean)}`, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
       signal: AbortSignal.timeout(3500),
@@ -936,7 +958,7 @@ export async function resolveJapaneseReading(text: string): Promise<string> {
     }
   } catch {}
 
-  // 5. Estrategia 2: Google Romanization (oraciones, frases largas y verbos conjugados)
+  // 6. Google Romanization (oraciones, frases largas y verbos conjugados)
   if (!readingResult) {
     try {
       const gUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=ja&tl=es&dt=rm&q=${encodeURIComponent(clean)}`;
@@ -954,7 +976,7 @@ export async function resolveJapaneseReading(text: string): Promise<string> {
     } catch {}
   }
 
-  // 6. Estrategia 3: Fallback Offline (utiliza catálogo universal KANJI_READINGS_MAP)
+  // 7. Fallback Offline (utiliza catálogo universal KANJI_READINGS_MAP)
   if (!readingResult) {
     readingResult = kanjiToHiragana(clean);
   }

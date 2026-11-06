@@ -1,5 +1,4 @@
 import { toNormalizedHiragana } from './japanese-utils';
-import { KANJI_READINGS_MAP } from './kanji-readings-db';
 import { parseAux } from './word-aux';
 
 /**
@@ -68,14 +67,62 @@ export function registerWordInDictionary(rawText?: string | null, rawReading?: s
   wordToReadings.set(text, set);
 }
 
-/** Lecturas conocidas (kana) de una palabra o kanji. */
+/** Lecturas de una palabra en el diccionario japonés de la app (JMdict, palabras comunes). */
+type DictionaryLookup = (word: string) => string[];
+let dictionaryLookup: DictionaryLookup | null = null;
+const dictionaryCache = new Map<string, string[]>();
+
+/** La app conecta acá su diccionario (ver DatabaseProvider); las pruebas, el suyo. */
+export function setDictionaryLookup(lookup: DictionaryLookup | null): void {
+  dictionaryLookup = lookup;
+  dictionaryCache.clear();
+}
+
+function dictionaryReadings(word: string): string[] {
+  if (!dictionaryLookup) return [];
+  let readings = dictionaryCache.get(word);
+  if (!readings) {
+    try {
+      readings = dictionaryLookup(word).map(toNormalizedHiragana).filter(Boolean);
+    } catch {
+      readings = [];
+    }
+    dictionaryCache.set(word, readings);
+  }
+  return readings;
+}
+
+/** Pinyin de una palabra china en el diccionario de la app (CC-CEDICT), con tonos en números: "ni3 hao3". */
+let chineseLookup: DictionaryLookup | null = null;
+const chineseCache = new Map<string, string[]>();
+
+export function setChineseDictionaryLookup(lookup: DictionaryLookup | null): void {
+  chineseLookup = lookup;
+  chineseCache.clear();
+}
+
+/** Pinyin (con tonos en números) de una palabra o hanzi en simplificado o tradicional. Vacío si no está. */
+export function getPinyinForWord(wordText: string): string[] {
+  const clean = (wordText || '').trim();
+  if (!clean || !chineseLookup) return [];
+  let pinyin = chineseCache.get(clean);
+  if (!pinyin) {
+    try {
+      pinyin = chineseLookup(clean).filter(Boolean);
+    } catch {
+      pinyin = [];
+    }
+    chineseCache.set(clean, pinyin);
+  }
+  return pinyin;
+}
+
+/**
+ * Lecturas (kana) de una palabra o kanji: las de los mazos del usuario y las del diccionario. Vacío si no está
+ * en ninguno (entonces el evaluador prueba las lecturas del catálogo de cada kanji).
+ */
 export function getReadingsForWord(wordText: string): string[] {
   const clean = (wordText || '').trim();
   if (!clean) return [];
-  const results = new Set(wordToReadings.get(clean) ?? []);
-  if (clean.length === 1 && KANJI_READINGS_MAP[clean]) {
-    KANJI_READINGS_MAP[clean].forEach((r) => results.add(toNormalizedHiragana(r)));
-  }
-  results.delete('');
-  return [...results];
+  return [...new Set([...(wordToReadings.get(clean) ?? []), ...dictionaryReadings(clean)])].filter(Boolean);
 }
