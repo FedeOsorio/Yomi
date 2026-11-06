@@ -229,7 +229,6 @@ export const ja: TranslationSchema = {
     pressToStart: 'タップして開始',
     startingMic: 'マイクを起動中...',
     listeningYourPronunciation: '発音を聞き取り中...',
-    evaluatingAnswer: '回答を判定中...',
     srsOfficial: '公式SRS復習 (FSRS v5)',
     freePracticeMode: '完了済み • 自由練習モード',
     howToStudy: '本日の学習方法は？',

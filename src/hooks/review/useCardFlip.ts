@@ -1,4 +1,12 @@
-import { cancelAnimation, Easing, interpolate, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import {
+  cancelAnimation,
+  Easing,
+  interpolate,
+  useAnimatedStyle,
+  useSharedValue,
+  withSequence,
+  withTiming,
+} from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
 /**
@@ -28,12 +36,26 @@ export function useCardFlip() {
     });
   };
 
-  /** Vuelve al frente. `onDone` se llama al terminar, se haya completado o no. */
-  const showFront = (duration: number, onDone?: () => void) => {
-    flip.value = withTiming(0, { duration, easing: Easing.inOut(Easing.ease) }, () => {
+  /**
+   * Vuelve al frente. `onHalfway` se llama a mitad del giro, con la tarjeta de perfil (ahí se cambia el
+   * contenido sin que se vea), y `onDone` al terminar, se haya completado o no.
+   */
+  const showFront = (duration: number, onDone?: () => void, onHalfway?: () => void) => {
+    const finish = () => {
       'worklet';
       if (onDone) scheduleOnRN(onDone);
-    });
+    };
+    if (!onHalfway) {
+      flip.value = withTiming(0, { duration, easing: Easing.inOut(Easing.ease) }, finish);
+      return;
+    }
+    flip.value = withSequence(
+      withTiming(0.5, { duration: duration / 2, easing: Easing.in(Easing.ease) }, () => {
+        'worklet';
+        scheduleOnRN(onHalfway);
+      }),
+      withTiming(0, { duration: duration / 2, easing: Easing.out(Easing.ease) }, finish)
+    );
   };
 
   /** Deja la tarjeta de frente sin animación. */

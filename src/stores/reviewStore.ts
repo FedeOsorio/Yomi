@@ -22,7 +22,6 @@ export interface CardEvaluation {
   matchedReading?: string;
 }
 
-export type SpeechStatus = 'idle' | 'starting' | 'listening' | 'evaluating' | 'correct' | 'incorrect';
 export type StudyMethod = 'text' | 'voice';
 
 export interface ReviewState {
@@ -57,10 +56,8 @@ export interface ReviewState {
   isChecked: boolean;
   evaluation: CardEvaluation | null;
 
-  // Reconocimiento de voz
-  isListening: boolean;
+  // Reconocimiento de voz: lo que se entendió (el estado del micrófono lo lleva lib/review-flow.ts)
   speechTranscript: string;
-  speechStatus: SpeechStatus;
 
   // Getters / Selectores
   getCurrentCard: () => DueCardWithContext | null;
@@ -80,9 +77,7 @@ export interface ReviewState {
   setInputMeaning: (val: string) => void;
   setIsChecked: (val: boolean) => void;
   setEvaluation: (evalData: CardEvaluation | null) => void;
-  setIsListening: (val: boolean) => void;
   setSpeechTranscript: (val: string) => void;
-  setSpeechStatus: (val: SpeechStatus) => void;
   setIsProcessing: (val: boolean) => void;
   recordFailedCard: (cardId: string) => void;
   /**
@@ -123,10 +118,7 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
   inputMeaning: '',
   isChecked: false,
   evaluation: null,
-
-  isListening: false,
   speechTranscript: '',
-  speechStatus: 'idle',
 
   getCurrentCard: () => {
     const { dueCards, currentIndex } = get();
@@ -177,8 +169,6 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       isChecked: false,
       evaluation: null,
       speechTranscript: '',
-      speechStatus: 'idle',
-      isListening: false,
       isProcessing: false,
     });
 
@@ -215,9 +205,7 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       inputMeaning: '',
       isChecked: false,
       evaluation: null,
-      isListening: false,
       speechTranscript: '',
-      speechStatus: 'idle',
       isProcessing: false,
     });
   },
@@ -226,9 +214,7 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
   setInputMeaning: (val) => set({ inputMeaning: val }),
   setIsChecked: (val) => set({ isChecked: val }),
   setEvaluation: (evalData) => set({ evaluation: evalData }),
-  setIsListening: (val) => set({ isListening: val }),
   setSpeechTranscript: (val) => set({ speechTranscript: val }),
-  setSpeechStatus: (val) => set({ speechStatus: val }),
   setIsProcessing: (val) => set({ isProcessing: val }),
 
   recordFailedCard: (cardId) => {
@@ -260,7 +246,6 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       isChecked: false,
       evaluation: null,
       speechTranscript: '',
-      speechStatus: 'idle',
     });
   },
 
@@ -277,8 +262,6 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
         isChecked: false,
         evaluation: null,
         speechTranscript: '',
-        speechStatus: 'idle',
-        isListening: false,
           isProcessing: false,
       });
       return true;
@@ -286,8 +269,6 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       set({
         sessionCompleted: true,
         sessionCount: nextCount,
-        isListening: false,
-        speechStatus: 'idle',
         speechTranscript: '',
         isProcessing: false,
       });

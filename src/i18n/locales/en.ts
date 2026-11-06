@@ -229,7 +229,6 @@ export const en: TranslationSchema = {
     pressToStart: 'Tap to start',
     startingMic: 'Starting microphone...',
     listeningYourPronunciation: 'Listening to your pronunciation...',
-    evaluatingAnswer: 'Evaluating answer...',
     srsOfficial: 'Official SRS Review (FSRS v5)',
     freePracticeMode: 'Deck up to date • Free Practice Mode',
     howToStudy: 'HOW DO YOU WANT TO STUDY TODAY?',

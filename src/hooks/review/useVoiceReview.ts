@@ -8,8 +8,20 @@ import { getEffectiveCardLanguage } from '../../../lib/japanese-utils';
 import { detectMeaningLocale } from '../../../lib/meaning-language';
 import { registerWordInDictionary } from '../../../lib/phonetic-dictionary';
 import { calculateChineseAccuracyScore } from '../../../lib/pinyin-utils';
+import {
+  ANSWER_VISIBLE_MS,
+  initialVoiceFlow,
+  MAX_VOICE_ATTEMPTS,
+  MicStatus,
+  micStatusOf,
+  SPEECH_SAFETY_MS,
+  stepVoiceFlow,
+  VOICE_TIMEOUT_MS,
+  VoiceEffect,
+  VoiceEvent,
+  VoiceFlowState,
+} from '../../../lib/review-flow';
 import { MODEL_NOT_DOWNLOADED, sherpaVoiceService } from '../../../lib/sherpa-service';
-import { expectedVoiceWords } from '../../../lib/voice-match';
 import { getSpeechEnginePreference, speechService, usesOfflineModel } from '../../../lib/speech-recognition-service';
 import {
   asksForMeaning,
@@ -19,21 +31,15 @@ import {
   getCardMeaningTargets,
   isCustomReviewCard,
 } from '../../../lib/srs-engine';
-import { CardEvaluation, useReviewStore } from '../../stores/reviewStore';
+import { expectedVoiceWords } from '../../../lib/voice-match';
 import { getUserSpeechLocale, useTranslation } from '../../i18n';
+import { CardEvaluation, useReviewStore } from '../../stores/reviewStore';
+import { useSingleNavigation } from '../useSingleNavigation';
 import type { useAutoAdvance } from './useAutoAdvance';
 import type { useCardFlip } from './useCardFlip';
-import { useSingleNavigation } from '../useSingleNavigation';
 
-/** Segundos que tiene el usuario para pronunciar cada tarjeta. */
-const VOICE_TIMEOUT_SECONDS = 15;
-/** Intentos de pronunciación por tarjeta antes de darla por fallada. */
-const MAX_VOICE_ATTEMPTS = 3;
-/** Tiempo con la respuesta a la vista antes de pasar sola a la siguiente tarjeta. */
-const ANSWER_VISIBLE_MS = 7000;
-
-/** Palabras esperadas de la tarjeta: sesgan el reconocedor (pistas del modelo japonés). */
-const getContextualStrings = (card: DueCardWithContext): string[] => expectedVoiceWords(card, getEffectiveCardLanguage(card));
+/** Signos que se ignoran al reconocer la alucinación "はい". */
+const NOISE = /[\s。、，．！？!?,.:;・~～\-_'"「」『』（）()[\]【】]/g;
 
 /** Significados como lista (vienen como JSON o separados por comas), para dárselos de pista al reconocedor. */
 const parseMeaningList = (meanings: string): string[] => {
@@ -45,16 +51,18 @@ const parseMeaningList = (meanings: string): string[] => {
 };
 
 /**
- * Repaso manos libres: micrófono, intentos, límite de tiempo, evaluación y paso automático
- * a la siguiente tarjeta. Todo el estado de voz de la pantalla de repaso vive acá.
+ * Repaso manos libres. Las decisiones (cuándo abrir el micrófono, cuándo evaluar, cuándo pasar de tarjeta)
+ * las toma el recorrido de lib/review-flow.ts; este hook solo ejecuta lo que pide (micrófono, voz, giro,
+ * cuenta, guardar) y le avisa los resultados.
  */
 export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance: ReturnType<typeof useAutoAdvance>) {
   const { t } = useTranslation();
   // Un solo movimiento por vez: varios toques rápidos no abren pantallas repetidas ni vuelven atrás de más
   const router = useSingleNavigation();
-  const isListening = useReviewStore((s) => s.isListening);
   const store = useReviewStore.getState;
-  const { setIsListening, setSpeechStatus, setSpeechTranscript, setIsChecked, setEvaluation } = useReviewStore.getState();
+  // Cómo se ve el micrófono (sale del recorrido)
+  const [micStatus, setMicStatus] = useState<MicStatus>('idle');
+  const isListening = micStatus === 'listening';
 
   // Texto mientras se carga el modelo de voz (null = listo / inactivo)
   const [setupLabel, setSetupLabel] = useState<string | null>(null);
@@ -63,34 +71,16 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
   // Idioma cuyo modelo de voz falta (null = no hay aviso abierto)
   const [modelRequiredLang, setModelRequiredLang] = useState<string | null>(null);
 
-  // Barra de 15 s alrededor del micrófono y "respiración" del botón mientras escucha
-  // (Reanimated: corren en el hilo de la interfaz, no se traban si la app está ocupada)
+  // Tiempo de la tarjeta (anillo de 15 s) y "respiración" del botón mientras escucha (Reanimated)
   const micProgress = useSharedValue(0);
   const micPulse = useSharedValue(1);
 
-  // true cuando la tarjeta actual ya se evaluó: descarta resultados tardíos del reconocedor
-  const isCardEvaluated = useRef(false);
-  // Intentos usados en la tarjeta actual. Se conservan si el usuario detiene y reactiva el micrófono.
-  const attempts = useRef<{ cardId: string; count: number }>({ cardId: '', count: 0 });
+  const flow = useRef<VoiceFlowState>(initialVoiceFlow);
   // Respuesta evaluada pero aún no guardada en el SRS. Se guarda al pasar de tarjeta,
   // para que el usuario pueda "Marcar incorrecta" un acierto que el reconocedor dio por bueno.
   const pendingReview = useRef<{ cardId: string; rating: Rating; wasFailedInSession: boolean } | null>(null);
   // Idioma de los significados de cada mazo (se calcula una vez por mazo con todas sus tarjetas de la sesión)
   const meaningLocaleByDeck = useRef(new Map<string, string>());
-
-  /** Idioma en que se responde el significado: el de los significados del mazo, o el de la app si no se distingue. */
-  const meaningSpeechLocale = (card: DueCardWithContext): string => {
-    const deckKey = card.deckId ?? '';
-    const cached = meaningLocaleByDeck.current.get(deckKey);
-    if (cached) return cached;
-    const meanings = store()
-      .dueCards.filter((c) => (c.deckId ?? '') === deckKey)
-      .map((c) => getCardMeaningTargets(c));
-    const locale = detectMeaningLocale(meanings) ?? getUserSpeechLocale();
-    meaningLocaleByDeck.current.set(deckKey, locale);
-    return locale;
-  };
-
 
   useEffect(() => {
     if (!isListening) {
@@ -103,14 +93,210 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
     return () => cancelAnimation(micPulse);
   }, [isListening]);
 
-  const flushPendingReview = () => {
+  // ───────────── Recorrido ─────────────
+
+  function dispatch(event: VoiceEvent) {
+    const { state, effects } = stepVoiceFlow(flow.current, event);
+    flow.current = state;
+    setMicStatus(micStatusOf(state));
+    effects.forEach(run);
+  }
+
+  function run(effect: VoiceEffect) {
+    const card = store().getCurrentCard();
+    switch (effect.type) {
+      case 'openMic':
+        if (card) listen(card, effect.session);
+        break;
+      case 'closeMic':
+        speechService.abort().catch(() => {});
+        break;
+      case 'startTimer': {
+        const { turn } = effect;
+        micProgress.value = 0;
+        micProgress.value = withTiming(1, { duration: VOICE_TIMEOUT_MS, easing: Easing.linear }, (finished) => {
+          'worklet';
+          if (finished) scheduleOnRN(dispatch, { type: 'timeUp', turn });
+        });
+        break;
+      }
+      case 'stopTimer':
+        cancelAnimation(micProgress);
+        break;
+      case 'feedback':
+        setFeedback(`No coincide · intento ${effect.attempt} de ${MAX_VOICE_ATTEMPTS}`);
+        break;
+      case 'reveal':
+        if (card) reveal(card, effect.turn, effect.correct, effect.reading);
+        break;
+      case 'speak': {
+        if (!card) break;
+        const { turn } = effect;
+        const done = () => dispatch({ type: 'speechDone', turn });
+        // Si la voz no avisa que terminó (algunos motores no lo hacen), se sigue igual
+        setTimeout(done, SPEECH_SAFETY_MS);
+        speakCard(card, getEffectiveCardLanguage(card), {
+          reading: effect.reading ?? card.displayReading,
+          onDone: done,
+          onError: done,
+          onStopped: done,
+        });
+        break;
+      }
+      case 'stopSpeech':
+        stopSpeech();
+        break;
+      case 'startCountdown': {
+        const { turn } = effect;
+        autoAdvance.start(ANSWER_VISIBLE_MS, () => dispatch({ type: 'countdownDone', turn }));
+        break;
+      }
+      case 'cancelCountdown':
+        autoAdvance.cancel();
+        break;
+      case 'markIncorrect': {
+        const { evaluation } = store();
+        store().answerCurrentCard(Rating.Again);
+        if (pendingReview.current) pendingReview.current.rating = Rating.Again;
+        if (evaluation) {
+          store().setEvaluation({ ...evaluation, isReadingCorrect: false, isMeaningCorrect: false, computedRating: Rating.Again, matchedReading: undefined });
+        }
+        break;
+      }
+      case 'saveAnswer':
+        saveAnswer();
+        break;
+      case 'advance': {
+        const { turn } = effect;
+        // El contenido cambia a mitad del giro, con la tarjeta de perfil
+        let moved = false;
+        const moveToNext = () => {
+          if (moved) return;
+          moved = true;
+          store().advanceCard();
+        };
+        flip.showFront(
+          300,
+          () => {
+            moveToNext();
+            const s = store();
+            const next = s.sessionCompleted ? null : s.getCurrentCard();
+            dispatch({ type: 'advanced', turn, next: !next ? 'end' : isCustomReviewCard(next) ? 'buttons' : 'voice' });
+          },
+          moveToNext
+        );
+        break;
+      }
+      case 'resetCard':
+        setFeedback(null);
+        store().setSpeechTranscript('');
+        cancelAnimation(micProgress);
+        micProgress.value = 0;
+        break;
+    }
+  }
+
+  /** Registra el resultado de la tarjeta y la gira al dorso. */
+  function reveal(card: DueCardWithContext, turn: number, correct: boolean, matchedReading?: string) {
+    setFeedback(null);
+    store().setIsChecked(true);
+
+    let voiceScore: CardEvaluation['voiceScore'];
+    // Precisión por sílaba solo en chino (el reconocedor no mide el acento tonal del japonés)
+    if (getEffectiveCardLanguage(card).startsWith('zh')) {
+      const recognized = matchedReading || store().speechTranscript || '';
+      const res = calculateChineseAccuracyScore(recognized, card.displayText, card.displayReading);
+      voiceScore = { score: res.score, label: res.label, breakdown: res.breakdown };
+    }
+    const rating = correct ? Rating.Good : Rating.Again;
+    store().setEvaluation({ isReadingCorrect: correct, isMeaningCorrect: correct, computedRating: rating, voiceScore, matchedReading });
+    const { wasFailedInSession } = store().answerCurrentCard(rating);
+    pendingReview.current = { cardId: card.id, rating, wasFailedInSession };
+
+    flip.showBack(300, () => dispatch({ type: 'flipDone', turn }));
+  }
+
+  function saveAnswer() {
     const pending = pendingReview.current;
     pendingReview.current = null;
     if (!pending) return;
     store()
       .saveCardReview(pending.cardId, pending.rating, pending.wasFailedInSession)
       .catch((err) => console.warn('Error al procesar FSRS:', err));
-  };
+  }
+
+  /** Idioma en que se responde el significado: el de los significados del mazo, o el de la app si no se distingue. */
+  function meaningSpeechLocale(card: DueCardWithContext): string {
+    const deckKey = card.deckId ?? '';
+    const cached = meaningLocaleByDeck.current.get(deckKey);
+    if (cached) return cached;
+    const meanings = store()
+      .dueCards.filter((c) => (c.deckId ?? '') === deckKey)
+      .map((c) => getCardMeaningTargets(c));
+    const locale = detectMeaningLocale(meanings) ?? getUserSpeechLocale();
+    meaningLocaleByDeck.current.set(deckKey, locale);
+    return locale;
+  }
+
+  /** Abre el micrófono (apertura `session`) y le avisa al recorrido lo que pasa. */
+  async function listen(card: DueCardWithContext, session: number) {
+    const lang = getEffectiveCardLanguage(card);
+    // Respuesta = significado: se escucha en el idioma de los significados del mazo (no en japonés)
+    const meaningMode = asksForMeaning(card);
+    const listenLang = meaningMode ? meaningSpeechLocale(card) : lang;
+    const meaningTargets = meaningMode ? getCardMeaningTargets(card) : '';
+    const hints = meaningMode ? parseMeaningList(meaningTargets) : expectedVoiceWords(card, lang);
+    const isCurrent = () => flow.current.session === session;
+    let reportedError = false;
+
+    console.log('[ReviewVoice] Escuchando tarjeta:', card.displayText);
+    registerWordInDictionary(card.displayText, card.displayReading);
+    speechService.invalidate();
+
+    const started = await speechService.start(
+      listenLang,
+      {
+        onStart: () => dispatch({ type: 'micStarted', session }),
+        onResult: (transcript, isFinal, alternatives = []) => {
+          if (!isCurrent()) return;
+          // Si el motor transcribe "はい" como alucinación y la tarjeta no lo espera, se ignora para no quemar intentos
+          if (!meaningMode && lang.startsWith('ja') && /^(はい|はいはい|はーい)$/.test(transcript.replace(NOISE, ''))) {
+            const expectsHai = hints.some((w) => ['はい', 'はいはい', '灰', '杯', '拝', '配'].includes(w.replace(NOISE, '')));
+            if (!expectsHai) return;
+          }
+          // Probar la transcripción principal y todas las alternativas que entregó el reconocedor
+          const candidates = Array.from(new Set([transcript, ...alternatives].filter(Boolean)));
+          let match: ReturnType<typeof checkVoiceMatch> | null = null;
+          if (meaningMode) {
+            if (candidates.some((c) => checkMeaningMatch(meaningTargets, c))) match = { isMatch: true, heard: transcript };
+          } else {
+            match = candidates.map((c) => checkVoiceMatch(card, c, lang)).find((r) => r.isMatch) ?? null;
+          }
+          const shown = match ?? (meaningMode ? null : checkVoiceMatch(card, transcript, lang));
+          store().setSpeechTranscript(shown?.heard || transcript);
+          dispatch({ type: 'heard', session, match: Boolean(match), final: isFinal, reading: match?.matchedReading });
+        },
+        onError: (err) => {
+          if (!isCurrent()) return;
+          reportedError = true;
+          if (err === MODEL_NOT_DOWNLOADED) setModelRequiredLang(listenLang);
+          else Alert.alert(t('review.micErrorTitle'), err || t('review.micErrorDefault'));
+          dispatch({ type: 'micError', session });
+        },
+        onEnd: () => dispatch({ type: 'micClosed', session }),
+      },
+      { contextualStrings: hints }
+    );
+
+    // No se pudo abrir (también al reabrirse solo). Si el usuario lo apagó mientras se abría, no hay nada que avisar
+    const stillWanted = flow.current.phase === 'starting' || flow.current.phase === 'listening';
+    if (!started && isCurrent() && stillWanted) {
+      if (!reportedError) Alert.alert(t('review.micNotStartedTitle'), t('review.micNotStartedMsg'));
+      dispatch({ type: 'micNotStarted', session });
+    }
+  }
+
+  // ───────────── Preparación ─────────────
 
   const goToModelDownload = () => {
     setModelRequiredLang(null);
@@ -142,354 +328,18 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
       Alert.alert(t('review.micPermissionTitle'), t('review.micPermissionMsg'));
       return false;
     }
-    const pref = await getSpeechEnginePreference();
-    if (pref === 'offline') {
-      if (!(await sherpaVoiceService.hasModelFor(lang))) {
-        onModelMissing();
-        // Esperar a que cierre el modal de opciones antes de abrir el aviso (dos Modal a la vez fallan en Android)
-        setTimeout(() => setModelRequiredLang(lang), 250);
-        return false;
-      }
+    if ((await getSpeechEnginePreference()) === 'offline' && !(await sherpaVoiceService.hasModelFor(lang))) {
+      onModelMissing();
+      // Esperar a que cierre el modal de opciones antes de abrir el aviso (dos Modal a la vez fallan en Android)
+      setTimeout(() => setModelRequiredLang(lang), 250);
+      return false;
     }
     return true;
   };
 
-  /** Evalúa la tarjeta (acierto o fallo), la gira y deja la respuesta pendiente de guardar. */
-  const evaluate = (card: DueCardWithContext, isSuccess: boolean, matchedReading?: string) => {
-    isCardEvaluated.current = true;
-    cancelAnimation(micProgress);
-    setFeedback(null);
-    attempts.current = { cardId: '', count: 0 }; // la próxima vez que aparezca empieza de cero
-
-    speechService.abort().catch(() => {});
-    setIsListening(false);
-    setSpeechStatus(isSuccess ? 'correct' : 'incorrect');
-    setIsChecked(true);
-
-    const lang = getEffectiveCardLanguage(card);
-    let voiceScore: CardEvaluation['voiceScore'];
-    // Precisión por sílaba solo en chino (el reconocedor no mide el acento tonal del japonés)
-    if (lang.startsWith('zh')) {
-      const recognized = matchedReading || store().speechTranscript || '';
-      const res = calculateChineseAccuracyScore(recognized, card.displayText, card.displayReading);
-      voiceScore = { score: res.score, label: res.label, breakdown: res.breakdown };
-    }
-
-    const rating = isSuccess ? Rating.Good : Rating.Again;
-    setEvaluation({
-      isReadingCorrect: isSuccess,
-      isMeaningCorrect: isSuccess,
-      computedRating: rating,
-      voiceScore,
-      matchedReading: isSuccess ? matchedReading : undefined,
-    });
-
-    const { wasFailedInSession } = store().answerCurrentCard(rating);
-    pendingReview.current = { cardId: card.id, rating, wasFailedInSession };
-
-    // Al terminar el giro: leer la palabra (con la lectura que dijo el usuario si acertó) y arrancar la cuenta
-    flip.showBack(300, () => {
-      let advanceTriggered = false;
-      const triggerAdvance = () => {
-        if (advanceTriggered) return;
-        advanceTriggered = true;
-        autoAdvance.start(ANSWER_VISIBLE_MS, advance);
-      };
-
-      // Temporizador de seguridad: si el audio tarda más de 5 s o no emite eventos, avanzar de todos modos
-      const safetyTimeout = setTimeout(triggerAdvance, 5000);
-
-      speakCard(card, lang, {
-        reading: isSuccess && matchedReading ? matchedReading : card.displayReading,
-        onDone: () => {
-          clearTimeout(safetyTimeout);
-          triggerAdvance();
-        },
-        onError: () => {
-          clearTimeout(safetyTimeout);
-          triggerAdvance();
-        },
-        onStopped: () => {
-          clearTimeout(safetyTimeout);
-          triggerAdvance();
-        },
-      });
-    });
-  };
-
-  /** El reconocedor dio por buena la respuesta pero el usuario sabe que la dijo mal. */
-  const markIncorrect = () => {
-    const { evaluation } = store();
-    if (!evaluation?.isReadingCorrect) return;
-    store().answerCurrentCard(Rating.Again);
-    if (pendingReview.current) pendingReview.current.rating = Rating.Again;
-    setSpeechStatus('incorrect');
-    setEvaluation({ ...evaluation, isReadingCorrect: false, isMeaningCorrect: false, computedRating: Rating.Again, matchedReading: undefined });
-  };
-
-  /**
-   * Abre el micrófono para la tarjeta, con 15 s y hasta 3 intentos.
-   * resume: el reconocedor se cerró solo (silencio, fin de frase) y se reabre sin reiniciar el tiempo.
-   */
-  const startListening = async (card: DueCardWithContext, lang: string, resume = false) => {
-    if (!resume) {
-      stopSpeech();
-      autoAdvance.cancel();
-      cancelAnimation(micProgress);
-      micProgress.value = 0;
-      flip.reset();
-    }
-
-    // Cualquier resultado tardío de la tarjeta anterior queda descartado
-    speechService.invalidate();
-    const generation = speechService.getGeneration();
-    isCardEvaluated.current = false;
-    const isStale = () => speechService.getGeneration() !== generation || isCardEvaluated.current;
-
-    if (!resume) {
-      setSpeechTranscript('');
-      setIsListening(false);
-      setSpeechStatus('starting');
-    }
-
-    let timerStarted = false;
-    // Se acabó el tiempo de la tarjeta (lo avisa la animación del anillo al completarse)
-    const onTimeUp = () => {
-      if (!isStale()) evaluate(card, false);
-    };
-    const runTimer = (from: number) => {
-      micProgress.value = from;
-      micProgress.value = withTiming(
-        1,
-        { duration: Math.max(0, (1 - from) * VOICE_TIMEOUT_SECONDS * 1000), easing: Easing.linear },
-        (finished) => {
-          'worklet';
-          if (finished) scheduleOnRN(onTimeUp);
-        }
-      );
-    };
-    const startTimeout = () => {
-      if (timerStarted || isStale()) return;
-      timerStarted = true;
-      // Al reabrir, el tiempo sigue desde donde iba
-      if (resume) {
-        cancelAnimation(micProgress);
-        runTimer(micProgress.value);
-      } else {
-        runTimer(0);
-      }
-    };
-
-    console.log('[ReviewVoice] Escuchando tarjeta:', card.displayText);
-    registerWordInDictionary(card.displayText, card.displayReading);
-    if (attempts.current.cardId !== card.id) {
-      attempts.current = { cardId: card.id, count: 0 };
-      setFeedback(null);
-    }
-    let reportedError: string | null = null;
-
-    // Palabra en kana: se responde qué significa, en el idioma de los significados del mazo (no en japonés)
-    const meaningMode = asksForMeaning(card);
-    const listenLang = meaningMode ? meaningSpeechLocale(card) : lang;
-    const meaningTargets = meaningMode ? getCardMeaningTargets(card) : '';
-
-    const started = await speechService.start(
-      listenLang,
-      {
-        onStart: () => {
-          if (isStale()) return;
-          startTimeout();
-          setIsListening(true);
-          setSpeechStatus('listening');
-        },
-        onResult: (transcript, isFinal, alternatives = []) => {
-          if (isStale()) return;
-
-          // Si el motor transcribe "はい" como alucinación y la tarjeta no lo espera, se ignora para no quemar intentos
-          if (!meaningMode && lang.startsWith('ja') && /^(はい|はいはい|はーい)$/.test(transcript.replace(/[\s。、，．！？!?,.:;・~～\-_'"「」『』（）()[\]【】]/g, ''))) {
-            const expectsHai = getContextualStrings(card).some((w) => {
-              const c = w.replace(/[\s。、，．！？!?,.:;・~～\-_'"「」『』（）()[\]【】]/g, '');
-              return c === 'はい' || c === 'はいはい' || c === '灰' || c === '杯' || c === '拝' || c === '配';
-            });
-            if (!expectsHai) {
-              console.log('[ReviewVoice] Ignorando alucinación "はい" en la tarjeta actual');
-              return;
-            }
-          }
-
-          // Probar la transcripción principal y todas las alternativas que entregó el reconocedor
-          const candidates = Array.from(new Set([transcript, ...alternatives].filter(Boolean)));
-          let matchResult: ReturnType<typeof checkVoiceMatch> | null = null;
-          if (meaningMode) {
-            if (candidates.some((cand) => checkMeaningMatch(meaningTargets, cand))) {
-              matchResult = { isMatch: true, heard: transcript } as ReturnType<typeof checkVoiceMatch>;
-            }
-          } else for (const cand of candidates) {
-            const res = checkVoiceMatch(card, cand, lang);
-            if (res.isMatch) {
-              matchResult = res;
-              break;
-            }
-          }
-
-          const primaryRes = matchResult || (meaningMode ? null : checkVoiceMatch(card, transcript, lang));
-          setSpeechTranscript(primaryRes?.heard || transcript);
-
-          // Si coincide, ¡acierto inmediato! No esperamos a que el reconocedor cierre la elocución
-          if (matchResult?.isMatch) {
-            console.log('[ReviewVoice] Acierto inmediato:', matchResult);
-            isCardEvaluated.current = true;
-            speechService.abort().catch(() => {});
-            setIsListening(false);
-            setSpeechStatus('evaluating');
-            setFeedback(null);
-            setTimeout(() => evaluate(card, true, matchResult.matchedReading), 150);
-            return;
-          }
-
-          // Solo cuando el reconocedor da por finalizada la frase (isFinal = true) contamos el intento fallido
-          if (!isFinal) return;
-
-          console.log('[ReviewVoice] Intento no coincidente:', transcript, '→', primaryRes);
-          const used = ++attempts.current.count;
-          if (used >= MAX_VOICE_ATTEMPTS) {
-            evaluate(card, false);
-            return;
-          }
-          setFeedback(`No coincide · intento ${used} de ${MAX_VOICE_ATTEMPTS}`);
-        },
-        onError: (err) => {
-          if (isStale()) return;
-          reportedError = err;
-          setIsListening(false);
-          setSpeechStatus('idle');
-          cancelAnimation(micProgress);
-          if (err === MODEL_NOT_DOWNLOADED) {
-            setModelRequiredLang(listenLang);
-            return;
-          }
-          Alert.alert(t('review.micErrorTitle'), err || t('review.micErrorDefault'));
-        },
-        onEnd: () => {
-          // Después de un error real (ya avisado) no se reabre solo: con un error que se repite sería un bucle
-          if (isStale() || isCardEvaluated.current || reportedError) return;
-          // El reconocedor del teléfono se cierra solo tras un silencio o una frase: mientras quede tiempo e
-          // intentos, se reabre (sin reiniciar el tiempo) para que el micrófono no se apague con el reloj corriendo
-          if (attempts.current.count < MAX_VOICE_ATTEMPTS && !store().isChecked) {
-            console.log('[ReviewVoice] El reconocedor se cerró, reabriendo el micrófono');
-            setTimeout(() => {
-              if (!isStale() && !isCardEvaluated.current && !store().isChecked) {
-                startListening(card, lang, true);
-              }
-            }, 100);
-          }
-        },
-      },
-      { contextualStrings: meaningMode ? parseMeaningList(meaningTargets) : getContextualStrings(card) }
-    );
-
-    if (!started && !isStale()) {
-      setIsListening(false);
-      setSpeechStatus('idle');
-      if (!reportedError) Alert.alert(t('review.micNotStartedTitle'), t('review.micNotStartedMsg'));
-    }
-  };
-
-  /** Botón del micrófono: lo apaga si está escuchando, si no empieza a escuchar. */
-  const toggleMic = (card: DueCardWithContext, lang: string) => {
-    if (store().speechStatus === 'starting' || setupLabel) return;
-    if (store().isListening) {
-      speechService.stop();
-      setIsListening(false);
-      setSpeechStatus('idle');
-      cancelAnimation(micProgress);
-    } else {
-      startListening(card, lang);
-    }
-  };
-
-  /** Guarda la respuesta, gira la tarjeta al frente y empieza a escuchar la siguiente. */
-  async function advance() {
-    flushPendingReview();
-    autoAdvance.cancel();
-    await stopSpeech();
-    setSpeechTranscript('');
-
-    isCardEvaluated.current = true;
-    speechService.invalidate();
-    await speechService.abort().catch(() => {});
-
-    // El contenido cambia a mitad del giro (150 ms), cuando la tarjeta está de perfil
-    let advanced = false;
-    const doAdvance = () => {
-      if (advanced) return;
-      advanced = true;
-      store().advanceCard();
-    };
-    setTimeout(doAdvance, 150);
-
-    flip.showFront(300, () => {
-      doAdvance();
-      const state = store();
-      // advanceCard() no mueve el índice en la última tarjeta: no volver a abrir el micrófono
-      const next = state.sessionCompleted ? null : state.getCurrentCard();
-      // Las tarjetas personalizadas se responden con los botones: abrir el micrófono ahí hacía que el
-      // audio del propio mazo (que dice la palabra) se diera por respuesta y pasara tarjetas solo
-      if (next && !isCustomReviewCard(next)) {
-        // Pausa breve de 120ms para purgar cualquier eco de altavoz o sintetizador antes de abrir el micrófono
-        setTimeout(() => {
-          startListening(next, getEffectiveCardLanguage(next));
-        }, 120);
-      } else {
-        speechService.abort().catch(() => {});
-        setIsListening(false);
-        setSpeechStatus('idle');
-      }
-    });
-  }
-
-  /** Al empezar una sesión: micrófono en reposo hasta que el usuario lo active. */
-  const resetForSession = () => {
-    autoAdvance.cancel();
-    setIsListening(false);
-    setSpeechStatus('idle');
-    micProgress.value = 0;
-  };
-
-  /** La pantalla pierde el foco: guardar lo pendiente y cortar el micrófono. */
-  const pauseOnBlur = () => {
-    flushPendingReview();
-    stopSpeech();
-    autoAdvance.cancel();
-    isCardEvaluated.current = true;
-    speechService.stop();
-    setIsListening(false);
-    setSpeechStatus('idle');
-  };
-
-  /** La app pasa a segundo plano. */
-  const pauseOnBackground = () => {
-    flushPendingReview();
-    stopSpeech();
-    speechService.abort().catch(() => {});
-    setIsListening(false);
-  };
-
-  /** El usuario sale de la sesión. */
-  const endSession = () => {
-    flushPendingReview();
-    stopSpeech();
-    autoAdvance.cancel();
-    isCardEvaluated.current = true;
-    speechService.invalidate();
-    cancelAnimation(micProgress);
-    micProgress.value = 0;
-    flip.reset();
-    speechService.abort().catch(() => {});
-    setSpeechTranscript('');
-  };
-
   return {
+    micStatus,
+    isListening,
     setupLabel,
     feedback,
     micProgress,
@@ -500,13 +350,23 @@ export function useVoiceReview(flip: ReturnType<typeof useCardFlip>, autoAdvance
     goToModelDownload,
     ensureReady,
     prepareModel,
-    toggleMic,
-    evaluate,
-    markIncorrect,
-    advance,
-    resetForSession,
-    pauseOnBlur,
-    pauseOnBackground,
-    endSession,
+    /** Botón del micrófono (mientras se carga el modelo no hace nada) */
+    toggleMic: () => setupLabel === null && dispatch({ type: 'micPressed' }),
+    /** "No lo sé" */
+    giveUp: () => dispatch({ type: 'giveUp' }),
+    markIncorrect: () => dispatch({ type: 'markIncorrect' }),
+    /** "Siguiente" */
+    next: () => dispatch({ type: 'nextPressed' }),
+    /** Hay una tarjeta nueva en pantalla que no llegó pasando por voz (inicio de sesión, botones) */
+    cardShown: () => dispatch({ type: 'cardShown' }),
+    /** La pantalla perdió el foco o la app pasó a segundo plano */
+    interrupt: () => dispatch({ type: 'interrupted' }),
+    /** El usuario sale de la sesión */
+    endSession: () => {
+      dispatch({ type: 'interrupted' });
+      saveAnswer();
+      dispatch({ type: 'cardShown' });
+      flip.reset();
+    },
   };
 }

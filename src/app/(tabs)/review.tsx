@@ -57,8 +57,9 @@ import { useSingleNavigation } from '../../hooks/useSingleNavigation';
 
 /**
  * Pestaña Repaso. Muestra el selector de mazos, el resumen al terminar o la sesión activa.
- * La lógica pesada vive en hooks: voz (useVoiceReview), giro de la tarjeta (useCardFlip),
- * cuenta regresiva (useAutoAdvance) y ciclo de vida de la pantalla (useSessionLifecycle).
+ * La lógica pesada vive afuera: el recorrido por voz (lib/review-flow.ts, ejecutado por useVoiceReview),
+ * el giro de la tarjeta (useCardFlip), la cuenta regresiva (useAutoAdvance) y el ciclo de vida de la
+ * pantalla (useSessionLifecycle).
  */
 export default function ReviewScreen() {
   const { t } = useTranslation();
@@ -83,8 +84,6 @@ export default function ReviewScreen() {
   const sessionFailedCount = useReviewStore((s) => s.sessionFailedCardIds.size);
   const isChecked = useReviewStore((s) => s.isChecked);
   const evaluation = useReviewStore((s) => s.evaluation);
-  const isListening = useReviewStore((s) => s.isListening);
-  const speechStatus = useReviewStore((s) => s.speechStatus);
   const {
     fetchDecksData,
     promptStudyMethod,
@@ -119,8 +118,8 @@ export default function ReviewScreen() {
     flip.reset();
     autoAdvance.cancel();
     await startSession(deckId, deckName, method, practiceMode);
-    // En voz el micrófono NO se abre solo: queda en "Presiona para comenzar"
-    if (method === 'voice') voice.resetForSession();
+    // En voz el micrófono NO se abre solo en la primera tarjeta: queda en "Presiona para comenzar"
+    voice.cardShown();
   };
 
   const handleSelectMethod = async (method: StudyMethod) => {
@@ -151,8 +150,8 @@ export default function ReviewScreen() {
     selectedDeckName,
     isVoiceSessionActive: Boolean(selectedDeckId && studyMethod === 'voice' && !sessionCompleted),
     onExitSession: handleExitSession,
-    onAppBackground: voice.pauseOnBackground,
-    onScreenBlur: voice.pauseOnBlur,
+    onAppBackground: voice.interrupt,
+    onScreenBlur: voice.interrupt,
   });
 
   // Al entrar a la pestaña: cargar mazos, o abrir directamente un mazo si vino por parámetro
@@ -265,9 +264,8 @@ export default function ReviewScreen() {
     } catch (e) {
       console.error('Error al guardar repaso FSRS:', e);
     }
-    // El contenido cambia a mitad del giro (130 ms), cuando la tarjeta está de perfil
-    flip.showFront(260, () => setIsProcessing(false));
-    setTimeout(() => advanceCard(), 130);
+    // El contenido cambia a mitad del giro, cuando la tarjeta está de perfil
+    flip.showFront(260, () => setIsProcessing(false), () => advanceCard());
   };
 
   // ───────────── Tarjetas personalizadas ─────────────
@@ -282,8 +280,8 @@ export default function ReviewScreen() {
     if (!currentCard || isProcessing) return;
     setIsProcessing(true);
     const cardId = currentCard.id;
-    flip.showFront(250);
-    setTimeout(async () => {
+    // La acción corre a mitad del giro, con la tarjeta de perfil
+    flip.showFront(250, undefined, async () => {
       try {
         if (action === 'soon') {
           // Reinicia el contador de "Más tarde" y vuelve entre 10 y 25 tarjetas más adelante, al azar
@@ -306,11 +304,13 @@ export default function ReviewScreen() {
           advanceCard(true);
         }
         flip.reset();
+        // En una sesión por voz, la tarjeta que sigue arranca con el micrófono en reposo
+        if (studyMethod === 'voice') voice.cardShown();
       } catch (err) {
         console.error('Error al procesar acción de tarjeta personalizada:', err);
         setIsProcessing(false);
       }
-    }, 140);
+    });
   };
 
   // ───────────── Vistas ─────────────
@@ -423,13 +423,13 @@ export default function ReviewScreen() {
         <View style={styles.voiceFloatingContainer}>
           {!isChecked ? (
             <VoiceMicControl
-              isListening={isListening}
-              speechStatus={speechStatus}
+              isListening={voice.isListening}
+              speechStatus={voice.micStatus}
               busyLabel={voice.setupLabel}
               micProgress={voice.micProgress}
               micPulse={voice.micPulse}
               colors={colors}
-              onPress={() => voice.toggleMic(currentCard, lang)}
+              onPress={voice.toggleMic}
             />
           ) : (
             evaluation?.voiceScore && (
@@ -507,9 +507,9 @@ export default function ReviewScreen() {
         onCustomAction={handleCustomCardAction}
         learnedDays={nextLearnedInterval(currentCard.scheduledDays)}
         laterHours={nextLaterHours(currentCard.auxiliaryInfo)}
-        onVoiceGiveUp={() => voice.evaluate(currentCard, false)}
+        onVoiceGiveUp={voice.giveUp}
         onMarkIncorrect={voice.markIncorrect}
-        onVoiceNext={voice.advance}
+        onVoiceNext={voice.next}
         onGiveUp={handleGiveUp}
         onCheck={handleCheck}
         onNext={handleNextCard}

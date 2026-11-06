@@ -229,7 +229,6 @@ export interface TranslationSchema {
     pressToStart: string;
     startingMic: string;
     listeningYourPronunciation: string;
-    evaluatingAnswer: string;
     srsOfficial: string;
     freePracticeMode: string;
     howToStudy: string;

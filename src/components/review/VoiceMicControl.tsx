@@ -3,6 +3,7 @@ import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'rea
 import Animated, { SharedValue, useAnimatedProps, useAnimatedStyle } from 'react-native-reanimated';
 import Svg, { Circle } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
+import type { MicStatus } from '../../../lib/review-flow';
 import { Spacing } from '../../constants/theme';
 import { useTranslation } from '../../i18n';
 
@@ -12,7 +13,7 @@ const CIRCUMFERENCE = 2 * Math.PI * CIRCLE_RADIUS;
 
 export interface VoiceMicControlProps {
   isListening: boolean;
-  speechStatus: 'idle' | 'starting' | 'listening' | 'evaluating' | 'correct' | 'incorrect';
+  speechStatus: MicStatus;
   /** Si hay texto, el motor se está preparando (descarga/carga del modelo) y el botón queda bloqueado. */
   busyLabel?: string | null;
   /** Tiempo usado de la tarjeta, de 0 a 1 (el anillo se va completando) */
@@ -141,11 +142,7 @@ export const VoiceMicControl = memo(function VoiceMicControl({
         </TouchableOpacity>
       ) : (
         <Text style={[styles.floatingMicHintText, { color: colors.textMuted }]}>
-          {speechStatus === 'listening'
-            ? t('review.listeningYourPronunciation')
-            : speechStatus === 'evaluating'
-              ? t('review.evaluatingAnswer')
-              : ''}
+          {speechStatus === 'listening' ? t('review.listeningYourPronunciation') : ''}
         </Text>
       )}
     </>

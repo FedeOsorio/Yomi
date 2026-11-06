@@ -80,6 +80,7 @@
     "build:dictionary": "tsx scripts/build-dictionary.ts",
     "build:dictionary:ja": "tsx scripts/build-japanese-dictionary.ts",
     "test:voice": "tsx scripts/voice-audit.ts",
+    "test:review": "tsx scripts/review-flow-test.ts",
     "optimize:images": "node scripts/convertImagesToWebp.js",
     "build:android:debug": "cd android && gradlew.bat assembleDebug",
     "build:android:bundle": "cd android && gradlew.bat bundleRelease"
