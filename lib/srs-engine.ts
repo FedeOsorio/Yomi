@@ -8,8 +8,6 @@ import { toSearchKey } from './pinyin-utils';
 import { parseAux, stringifyAux } from './word-aux';
 
 export { JA_NUMBERS, ZH_NUMBERS };
-export { checkVoiceMatch } from './voice-match';
-export type { VoiceMatchResult } from './voice-match';
 
 // Inicializar motor FSRS con intervalos diarios (sin pasos de minutos intra-día)
 let _fsrsInstance: ReturnType<typeof fsrs> | null = null;

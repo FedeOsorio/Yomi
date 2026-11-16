@@ -581,10 +581,17 @@ export default function DeckDetailScreen() {
   }, [isCustomDeck, deckInfo?.languageCode]);
 
   const handlePressWord = useCallback((wordId: string) => {
-    // El detalle navega entre las palabras visibles en este momento (respetando la búsqueda)
-    if (id) setBrowseList(id, filteredWords.map((w) => w.id));
+    // El detalle navega entre las palabras visibles en este momento (respetando la búsqueda), y las muestra
+    // enseguida con lo que ya cargó el listado
+    if (id) {
+      setBrowseList(
+        id,
+        filteredWords.map((w) => w.id),
+        { deck: deckInfo, words: new Map(filteredWords.map((w) => [w.id, w])) }
+      );
+    }
     router.push(`/word/${wordId}`);
-  }, [router, id, filteredWords, setBrowseList]);
+  }, [router, id, filteredWords, deckInfo, setBrowseList]);
 
   const renderWordItem = useCallback(({ item }: { item: any }) => (
     <DeckWordCard

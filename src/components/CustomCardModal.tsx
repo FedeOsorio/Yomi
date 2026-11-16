@@ -264,8 +264,7 @@ export function CustomCardModal({
 
     setListeningTarget(target);
 
-    // El dictado sigue el idioma de la app y usa siempre el reconocedor nativo
-    // (el modelo offline es solo para evaluar el repaso).
+    // El dictado sigue el idioma de la app (reconocedor del teléfono)
     await speechService.start(getUserSpeechLocale(), {
       onResult: (transcript, isFinal) => {
         const trimmed = transcript.trim();
@@ -290,7 +289,7 @@ export function CustomCardModal({
       onEnd: () => {
         setListeningTarget(null);
       },
-    }, { preferredEngine: 'native' });
+    });
   };
 
   const finishSwap = (newQuestion: string, newAnswer: string) => {

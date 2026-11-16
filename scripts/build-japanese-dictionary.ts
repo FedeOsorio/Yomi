@@ -11,10 +11,11 @@ import { DatabaseSync } from 'node:sqlite';
  *   npm run build:dictionary:ja -- <jmdict-eng-X.json>
  *
  * El JSON es JMdict de https://github.com/scriptin/jmdict-simplified/releases (jmdict-eng-<versión>.json.tgz,
- * descomprimido). Escribe en assets/cedict/dictionary-v2.db, que crea build:dictionary (el chino): si se
- * regenera el chino, después hay que correr este de nuevo.
+ * descomprimido). Escribe en assets/cedict/dictionary-v3.db, que crea build:dictionary (el chino): si se
+ * regenera el chino, después hay que correr este de nuevo. Recrea la tabla: después hay que correr
+ * build:dictionary:es para volver a cargar los significados en español.
  *
- * Si cambia el contenido de una base ya publicada, hay que cambiarle el nombre (dictionary-v3.db) y actualizar
+ * Si cambia el contenido de una base ya publicada, hay que cambiarle el nombre (dictionary-v4.db) y actualizar
  * providers/DatabaseProvider.tsx: la app copia la base al teléfono una sola vez y, con el mismo nombre, se
  * queda con la vieja.
  *
@@ -22,7 +23,7 @@ import { DatabaseSync } from 'node:sqlite';
  */
 
 const ASSETS_DIR = path.join(__dirname, '../assets/cedict');
-const TARGET = path.join(ASSETS_DIR, 'dictionary-v2.db');
+const TARGET = path.join(ASSETS_DIR, 'dictionary-v3.db');
 
 interface JmdictForm {
   text: string;

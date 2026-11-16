@@ -65,6 +65,68 @@ function singleKanjiOf(text: string): string | null {
   return chars.length === 1 && extractKanjis(chars[0]).length === 1 ? chars[0] : null;
 }
 
+/**
+ * La palabra tal como la tiene el listado del mazo, para mostrarla enseguida mientras se lee de la base
+ * (sin el estado de repaso, que llega un instante después). null si no vino del listado.
+ */
+function previewDetail(wordId?: string): WordDetailWithRelations | null {
+  const preview = useDeckBrowseStore.getState().preview;
+  const row = wordId ? (preview?.words.get(wordId) as WordDetailWithRelations['word'] | undefined) : undefined;
+  if (!preview || !row) return null;
+  let meaningsList: string[];
+  try {
+    const parsed = JSON.parse(row.meanings);
+    meaningsList = Array.isArray(parsed) ? parsed : [row.meanings];
+  } catch {
+    meaningsList = [row.meanings];
+  }
+  const { level, category, conjugationEnabled } = parseAux(row.auxiliaryInfo);
+  return {
+    word: row,
+    deck: preview.deck as WordDetailWithRelations['deck'],
+    srsItem: null,
+    meaningsList,
+    compoundWords: [],
+    level,
+    category,
+    conjugationEnabled,
+  };
+}
+
+/** Significados marcados para el repaso (en mazo personalizado, o si no hay una selección válida: todos). */
+function selectedMeaningsFor(res: WordDetailWithRelations): string[] {
+  const isCustom = res.deck?.type === 'custom';
+  let parsedRaw: string[] = [];
+  try {
+    parsedRaw = JSON.parse(res.word.meanings);
+    if (!Array.isArray(parsedRaw)) parsedRaw = [String(res.word.meanings)];
+  } catch {
+    parsedRaw = [String(res.word.meanings)];
+  }
+
+  const allMeanings = isCustom ? parsedRaw : cleanAndFormatMeanings(res.word.meanings);
+  let currentSelected: string[] = allMeanings;
+
+  if (res.word.auxiliaryInfo) {
+    const { selectedMeanings } = parseAux(res.word.auxiliaryInfo);
+    if (Array.isArray(selectedMeanings) && selectedMeanings.length > 0) {
+      currentSelected = selectedMeanings;
+    }
+  } else if (res.srsItem?.displayMeaning) {
+    try {
+      const srsMeanings = JSON.parse(res.srsItem.displayMeaning);
+      if (Array.isArray(srsMeanings) && srsMeanings.length > 0) {
+        currentSelected = srsMeanings;
+      }
+    } catch (e) { }
+  }
+
+  if (isCustom || currentSelected.length === 0 || !allMeanings.some((m) => currentSelected.includes(m))) {
+    currentSelected = allMeanings;
+  }
+  return currentSelected;
+}
+
 export default function WordDetailScreen() {
   const { colors } = useTheme();
   const { t } = useTranslation();
@@ -73,13 +135,17 @@ export default function WordDetailScreen() {
   const router = useRouter();
   // Un solo movimiento por vez: varios toques rápidos no abren pantallas repetidas ni vuelven atrás de más
   const nav = useSingleNavigation();
-  const [data, setData] = useState<WordDetailWithRelations | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Si vino del listado del mazo, se muestra enseguida con sus datos (sin ruedita de carga)
+  const [initialPreview] = useState(() => previewDetail(typeof id === 'string' ? id : undefined));
+  const [data, setData] = useState<WordDetailWithRelations | null>(initialPreview);
+  const [loading, setLoading] = useState(initialPreview === null);
   // Kanji que se está dibujando trazo por trazo en el título (solo palabras de un único kanji)
   const [strokeChar, setStrokeChar] = useState<string | null>(null);
   const [asyncCompounds, setAsyncCompounds] = useState<CompoundWord[]>([]);
   const [compoundsLoading, setCompoundsLoading] = useState(false);
-  const [selectedMeanings, setSelectedMeanings] = useState<string[]>([]);
+  const [selectedMeanings, setSelectedMeanings] = useState<string[]>(() =>
+    initialPreview ? selectedMeaningsFor(initialPreview) : []
+  );
   const [editingMeaning, setEditingMeaning] = useState<string | null>(null);
   const [editMeaningText, setEditMeaningText] = useState('');
   const [isEditingReading, setIsEditingReading] = useState(false);
@@ -178,45 +244,17 @@ export default function WordDetailScreen() {
       setStrokeChar(null);
       setEditingMeaning(null);
       setIsEditingReading(false);
+      // Al deslizar a otra palabra del listado, se muestra enseguida con lo que ya tiene el listado
+      const preview = data?.word.id !== id ? previewDetail(id) : null;
+      if (preview) {
+        setData(preview);
+        setSelectedMeanings(selectedMeaningsFor(preview));
+        animateSwipeIn();
+      }
       const res = await getWordDetailWithRelations(id);
       setData(res);
-      animateSwipeIn();
-
-      if (res) {
-        const isCustom = res.deck?.type === 'custom';
-        let parsedRaw: string[] = [];
-        try {
-          parsedRaw = JSON.parse(res.word.meanings);
-          if (!Array.isArray(parsedRaw)) parsedRaw = [String(res.word.meanings)];
-        } catch {
-          parsedRaw = [String(res.word.meanings)];
-        }
-
-        const allMeanings = isCustom ? parsedRaw : cleanAndFormatMeanings(res.word.meanings);
-        let currentSelected: string[] = allMeanings;
-
-        if (res.word.auxiliaryInfo) {
-          const { selectedMeanings } = parseAux(res.word.auxiliaryInfo);
-          if (Array.isArray(selectedMeanings) && selectedMeanings.length > 0) {
-            currentSelected = selectedMeanings;
-          }
-        } else if (res.srsItem?.displayMeaning) {
-          try {
-            const srsMeanings = JSON.parse(res.srsItem.displayMeaning);
-            if (Array.isArray(srsMeanings) && srsMeanings.length > 0) {
-              currentSelected = srsMeanings;
-            }
-          } catch (e) { }
-        }
-
-        // En mazo custom, o si currentSelected está vacío o no coincide, asegurar que todos queden seleccionados
-        if (isCustom || currentSelected.length === 0 || !allMeanings.some((m) => currentSelected.includes(m))) {
-          currentSelected = allMeanings;
-        }
-
-        setSelectedMeanings(currentSelected);
-      }
-
+      if (!preview) animateSwipeIn();
+      if (res) setSelectedMeanings(selectedMeaningsFor(res));
       setLoading(false);
     }
   };
@@ -412,7 +450,8 @@ export default function WordDetailScreen() {
     return () => {
       isMounted = false;
     };
-  }, [data]);
+    // Solo depende de la palabra y el idioma: no se recarga al llegar los datos completos después de la vista previa
+  }, [data?.word.simplified, data?.deck?.languageCode]);
 
   // Precarga en segundo plano de los trazos de un kanji aislado, para que se dibujen al instante al tocarlo
   useEffect(() => {
@@ -420,7 +459,7 @@ export default function WordDetailScreen() {
     const char = singleKanjiOf(data.word.simplified);
     const langCode = data.deck?.languageCode || 'zh-CN';
     if (char && (langCode.startsWith('ja') || langCode.startsWith('zh'))) preloadStrokeSvg(char, langCode.startsWith('zh'));
-  }, [data]);
+  }, [data?.word.simplified, data?.deck?.languageCode]);
 
   // Precarga automática del motor de audio (TTS) al entrar a la pantalla y liberación al salir
   useEffect(() => {

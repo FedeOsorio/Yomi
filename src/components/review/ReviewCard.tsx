@@ -1,17 +1,17 @@
 import { useMemo } from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { ScrollView, StyleProp, StyleSheet, Text, TextStyle, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { speakCard } from '../../../lib/audio-service';
 import { getCardMediaUris, isMediaPlaceholder } from '../../../lib/media-service';
 import { CardVideo } from '../media/CardVideo';
 import { CardImage } from '../media/CardImage';
-import { detectTextLanguage, formatJapaneseReading, toNormalizedHiragana } from '../../../lib/japanese-utils';
+import { detectTextLanguage, formatJapaneseReading } from '../../../lib/japanese-utils';
 import { DueCardWithContext } from '../../../lib/srs-engine';
 import { parseAux } from '../../../lib/word-aux';
 import { Spacing, Typography } from '../../constants/theme';
 import { useTranslation } from '../../i18n';
-import { CardEvaluation, StudyMethod } from '../../stores/reviewStore';
+import { CardEvaluation } from '../../stores/reviewStore';
 import { ReviewTextInputSection } from './ReviewTextInputSection';
 import { SyllableBreakdownView } from './SyllableBreakdownView';
 
@@ -28,7 +28,6 @@ type Colors = {
 interface ReviewCardProps {
   card: DueCardWithContext;
   lang: string;
-  studyMethod: StudyMethod;
   isChecked: boolean;
   isCustomCard: boolean;
   /** Se pregunta solo el significado (palabras solo en kana) */
@@ -41,54 +40,10 @@ interface ReviewCardProps {
   onSubmitText: () => void;
 }
 
-/**
- * Lectura de la tarjeta con la parte que pronunció el usuario resaltada en verde
- * (p. ej. para 日 con lecturas "にち、ひ、か", si dijo "ひ" se resalta "ひ").
- */
-function HighlightedReading({
-  text,
-  matched,
-  style,
-  mutedColor,
-  numberOfLines,
-}: {
-  text: string;
-  matched?: string;
-  style: StyleProp<TextStyle>;
-  mutedColor: string;
-  numberOfLines: number;
-}) {
-  if (!matched) {
-    return (
-      <Text style={style} numberOfLines={numberOfLines}>
-        {text}
-      </Text>
-    );
-  }
-  const normMatched = toNormalizedHiragana(matched);
-  return (
-    <Text style={style} numberOfLines={numberOfLines}>
-      {text.split(/([,、・•/|\s]+)/).map((tok, idx) => {
-        const normTok = toNormalizedHiragana(
-          tok.replace(/^(on|kun|音|訓)[:：\s]*/i, '').replace(/[・~～\s\(\)（）\-\.]/g, '').trim()
-        );
-        const isMatched =
-          normTok && normMatched && (normTok === normMatched || normMatched.includes(normTok) || normTok.includes(normMatched));
-        return (
-          <Text key={idx} style={isMatched ? { color: '#10B981', fontWeight: '800' } : { color: mutedColor }}>
-            {tok}
-          </Text>
-        );
-      })}
-    </Text>
-  );
-}
-
 /** Tarjeta de repaso con giro 3D: frente con la pregunta, dorso con la respuesta. */
 export function ReviewCard({
   card: currentCard,
   lang,
-  studyMethod,
   isChecked,
   isCustomCard,
   asksForMeaning,
@@ -120,7 +75,7 @@ export function ReviewCard({
   return (
     <View style={styles.flipContainer}>
       {/* Texto sutil de guía sobre la tarjeta sin badge ni ícono, sin alterar la posición vertical de la tarjeta */}
-      {studyMethod === 'text' && !isChecked && isIdeographic && !asksForMeaning && (
+      {!isChecked && isIdeographic && !asksForMeaning && (
         <Text style={[styles.optionsGuidanceText, { color: colors.textMuted }]}>
           {t('review.answerAnyOption')}
         </Text>
@@ -175,12 +130,8 @@ export function ReviewCard({
               {currentCard.displayText}
             </Text>
 
-            {asksForMeaning && studyMethod !== 'text' && !isChecked && (
-              <Text style={[styles.promptHintText, { color: colors.textMuted }]}>{t('review.whatWordMeans')}</Text>
-            )}
-
-            {/* Formulario de Respuestas Modo Clásico (Teclado) aislado para latencia cero */}
-            {studyMethod === 'text' && !isChecked && (
+            {/* Formulario de respuestas (teclado) aislado para latencia cero */}
+            {!isChecked && (
               <ReviewTextInputSection
                 isIdeographic={isIdeographic}
                 languageCode={lang}
@@ -283,23 +234,15 @@ export function ReviewCard({
               {Boolean(currentCard.displayReading) && (
                 <>
                   <Text style={[styles.flipBackLabel, { color: colors.textMuted }]}>{t('wordDetail.reading')}</Text>
-                  <HighlightedReading
-                    text={isJapanese ? formatJapaneseReading(currentCard.displayReading) : currentCard.displayReading}
-                    matched={isJapanese ? evaluation?.matchedReading : undefined}
-                    style={[styles.flipHeroReadingSmall, { color: colors.primary, marginBottom: 4 }]}
-                    mutedColor={colors.textMuted}
-                    numberOfLines={2}
-                  />
+                  <Text style={[styles.flipHeroReadingSmall, { color: colors.primary, marginBottom: 4 }]} numberOfLines={2}>
+                    {isJapanese ? formatJapaneseReading(currentCard.displayReading) : currentCard.displayReading}
+                  </Text>
 
                   {/* Desglose On/Kun adicional para tarjetas de Kanji */}
                   {kanjiReadings && kanjiReadings !== currentCard.displayReading ? (
-                    <HighlightedReading
-                      text={kanjiReadings}
-                      matched={isJapanese ? evaluation?.matchedReading : undefined}
-                      style={[styles.flipKanjiReadingsSub, { color: colors.textMuted }]}
-                      mutedColor={colors.textMuted}
-                      numberOfLines={1}
-                    />
+                    <Text style={[styles.flipKanjiReadingsSub, { color: colors.textMuted }]} numberOfLines={1}>
+                      {kanjiReadings}
+                    </Text>
                   ) : null}
 
                   {/* Desglose por sílaba Pinyin con círculos de porcentaje y barra de llenado (memoizado) */}
@@ -325,11 +268,6 @@ export function ReviewCard({
 }
 
 const styles = StyleSheet.create({
-  promptHintText: {
-    ...Typography.bodySmall,
-    marginTop: Spacing.xs,
-    textAlign: 'center',
-  },
   flipContainer: {
     width: '100%',
     position: 'relative',

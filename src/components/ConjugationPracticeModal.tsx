@@ -2,7 +2,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Modal,
   Pressable,
@@ -19,9 +18,6 @@ import Animated, {
   FadeInDown,
   useAnimatedStyle,
   useSharedValue,
-  withDelay,
-  withRepeat,
-  withSequence,
   withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -37,17 +33,13 @@ import {
 } from '../../lib/japanese-utils';
 import {
   initialPracticeFlow,
-  micLooksOn,
   PRACTICE_ANSWER_MS,
   PracticeEffect,
   PracticeEvent,
   PracticeFlowState,
   stepPracticeFlow,
 } from '../../lib/practice-flow';
-import { MODEL_NOT_DOWNLOADED } from '../../lib/sherpa-service';
-import { speechService } from '../../lib/speech-recognition-service';
-import { matchesConjugationAnswer } from '../../lib/voice-match';
-import { VoiceModelRequiredModal } from './review/VoiceModelRequiredModal';
+import { matchesConjugationAnswer } from '../../lib/answer-match';
 import {
   ConjugableWord,
   getAvailableDeckWordsForConjugation,
@@ -59,11 +51,6 @@ import {
 import { useTheme } from '../../providers/ThemeProvider';
 import { Shadows, Spacing } from '../constants/theme';
 import { useTranslation } from '../i18n';
-import { useSingleNavigation } from '../hooks/useSingleNavigation';
-
-/** Mantener apretado el micrófono: la barra empieza a llenarse a los 200 ms y tarda 550 ms más. */
-const HOLD_DELAY_MS = 200;
-const HOLD_FILL_MS = 550;
 
 interface ConjugationPracticeModalProps {
   visible: boolean;
@@ -297,9 +284,6 @@ export function ConjugationPracticeModal({
 }: ConjugationPracticeModalProps) {
   const { colors } = useTheme();
   const { t } = useTranslation();
-  // Un solo movimiento por vez: varios toques rápidos no abren pantallas repetidas ni vuelven atrás de más
-  const router = useSingleNavigation();
-  const [showModelRequired, setShowModelRequired] = useState(false);
   const insets = useSafeAreaInsets();
 
   const [loading, setLoading] = useState(true);
@@ -308,7 +292,7 @@ export function ConjugationPracticeModal({
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedForm, setSelectedForm] = useState<ConjugationFilterForm>('all');
 
-  // Lo escrito (o lo que se oyó por voz)
+  // Lo escrito
   const [textInput, setTextInput] = useState('');
 
   // Estadísticas de la sesión
@@ -322,52 +306,30 @@ export function ConjugationPracticeModal({
   const [availableWordsToAdd, setAvailableWordsToAdd] = useState<ConjugableWord[]>([]);
   const [loadingManagement, setLoadingManagement] = useState(false);
 
-  // Refs para leer la cola y la tarjeta actual desde los avisos del micrófono y las animaciones
+  // Refs para leer la cola y la tarjeta actual desde los avisos de las animaciones
   const queueRef = useRef<PracticeQueueItem[]>([]);
   queueRef.current = queue;
   const currentIndexRef = useRef(0);
   currentIndexRef.current = currentIndex;
 
-  // Recorrido de la práctica (lib/practice-flow.ts): decide cuándo abrir el micrófono, evaluar y pasar de tarjeta
+  // Recorrido de la práctica (lib/practice-flow.ts): decide cuándo evaluar y pasar de tarjeta
   const flow = useRef<PracticeFlowState>(initialPracticeFlow);
   const [flowView, setFlowView] = useState<PracticeFlowState>(initialPracticeFlow);
   const hasEvaluated = flowView.result !== null;
   const isCorrect = flowView.result === 'correct';
   const isFinished = flowView.phase === 'finished';
-  const micOn = micLooksOn(flowView);
-  // Cierre del micrófono en curso: la voz de Yomi espera a que termine (Android no comparte el audio)
-  const micClosing = useRef<Promise<unknown>>(Promise.resolve());
 
-  // Animaciones (Reanimated): carga al mantener el micrófono, barra de 7 s, cambio de tarjeta y el micrófono
-  // que "respira" mientras escucha (como en el repaso). Las barras se llenan con scaleX: no recalculan el diseño
-  const holdProgress = useSharedValue(0);
+  // Animaciones (Reanimated): barra de 7 s (se llena con scaleX: no recalcula el diseño) y cambio de tarjeta
   const autoNextProgress = useSharedValue(0);
   const cardOpacity = useSharedValue(1);
-  const micPulse = useSharedValue(1);
-  const holdStyle = useAnimatedStyle(() => ({ transform: [{ scaleX: holdProgress.value }] }));
   const autoNextStyle = useAnimatedStyle(() => ({ transform: [{ scaleX: autoNextProgress.value }] }));
   const cardStyle = useAnimatedStyle(() => ({ opacity: cardOpacity.value }));
-  const micPulseStyle = useAnimatedStyle(() => ({ transform: [{ scale: micPulse.value }] }));
-
-  const isListening = flowView.phase === 'listening';
-  useEffect(() => {
-    if (!isListening) {
-      cancelAnimation(micPulse);
-      micPulse.value = withTiming(1, { duration: 150 });
-      return;
-    }
-    const breathe = (toValue: number) => withTiming(toValue, { duration: 900, easing: Easing.inOut(Easing.ease) });
-    micPulse.value = withRepeat(withSequence(breathe(1.025), breathe(1)), -1);
-    return () => cancelAnimation(micPulse);
-  }, [isListening]);
 
   useEffect(() => {
     return () => {
       flow.current = initialPracticeFlow;
       cancelAnimation(autoNextProgress);
       cancelAnimation(cardOpacity);
-      speechService.invalidate();
-      speechService.abort().catch(() => {});
       stopSpeech();
     };
   }, []);
@@ -551,7 +513,7 @@ export function ConjugationPracticeModal({
     return { item, kanji, reading };
   };
 
-  /** ¿La respuesta (dicha o escrita) es la forma esperada o una equivalente (じゃない = ではない…)? */
+  /** ¿La respuesta escrita es la forma esperada o una equivalente (じゃない = ではない…)? */
   const isRightAnswer = (answer: string) => {
     const expected = activeExpected();
     if (!expected) return false;
@@ -580,19 +542,12 @@ export function ConjugationPracticeModal({
 
   function run(effect: PracticeEffect) {
     switch (effect.type) {
-      case 'openMic':
-        listen(effect.session);
-        break;
-      case 'closeMic':
-        speechService.invalidate();
-        micClosing.current = speechService.abort().catch(() => {});
-        break;
       case 'record':
         record(effect.correct);
         break;
       case 'speak': {
         const expected = activeExpected();
-        if (expected) micClosing.current.then(() => speakText(expected.kanji, 'ja-JP', expected.reading));
+        if (expected) speakText(expected.kanji, 'ja-JP', expected.reading);
         break;
       }
       case 'stopSpeech':
@@ -653,44 +608,6 @@ export function ConjugationPracticeModal({
     });
   }
 
-  /** Abre el micrófono (apertura `session`) y le avisa al recorrido lo que pasa. */
-  async function listen(session: number) {
-    const expected = activeExpected();
-    if (!expected) return;
-    const isCurrent = () => flow.current.session === session;
-    let reportedError = false;
-
-    speechService.invalidate();
-    const started = await speechService.start(
-      'ja-JP',
-      {
-        onStart: () => dispatch({ type: 'micStarted', session }),
-        onResult: (transcript, isFinal, alternatives = []) => {
-          if (!isCurrent() || !transcript || transcript === '[unk]') return;
-          setTextInput(romajiToHiragana(transcript));
-          const match = [transcript, ...alternatives].some(isRightAnswer);
-          dispatch({ type: 'heard', session, match, final: isFinal });
-        },
-        onError: (err) => {
-          if (!isCurrent()) return;
-          reportedError = true;
-          if (err === MODEL_NOT_DOWNLOADED) setShowModelRequired(true);
-          else Alert.alert(t('review.micErrorTitle'), err || t('review.micErrorDefault'));
-          dispatch({ type: 'micError', session });
-        },
-        onEnd: () => dispatch({ type: 'micClosed', session }),
-      },
-      // Pista solo la forma esperada: la forma de diccionario inclinaría al modelo hacia una respuesta mal
-      { contextualStrings: [expected.kanji, expected.reading].filter(Boolean), continuous: true }
-    );
-
-    const stillWanted = flow.current.phase === 'starting' || flow.current.phase === 'listening';
-    if (!started && isCurrent() && stillWanted) {
-      if (!reportedError) Alert.alert(t('review.micNotStartedTitle'), t('review.micNotStartedMsg'));
-      dispatch({ type: 'micNotStarted', session });
-    }
-  }
-
   // ───────────── Respuesta escrita ─────────────
 
   // Romaji → hiragana mientras se escribe (la sílaba sin terminar queda en romaji: kan → かn → かな)
@@ -701,26 +618,6 @@ export function ConjugationPracticeModal({
     if (!answer || hasEvaluated) return;
     setTextInput(answer);
     dispatch({ type: 'textSubmitted', correct: isRightAnswer(answer) });
-  };
-
-  // ───────────── Botón del micrófono ─────────────
-  // Toque: abre o apaga. Mantenerlo apretado (la barra se llena): modo automático, se abre solo en cada tarjeta.
-
-  const handleVoicePressIn = () => {
-    if (flow.current.auto) return;
-    // Los primeros 200 ms no se ve nada: así un toque simple no muestra la barra
-    holdProgress.value = 0;
-    holdProgress.value = withDelay(HOLD_DELAY_MS, withTiming(1, { duration: HOLD_FILL_MS, easing: Easing.linear }));
-  };
-
-  const handleVoicePressOut = () => {
-    cancelAnimation(holdProgress);
-    holdProgress.value = withTiming(0, { duration: 150 });
-  };
-
-  const handleVoiceLongPress = () => {
-    holdProgress.value = withTiming(0, { duration: 250 });
-    dispatch({ type: 'holdCompleted' });
   };
 
   const handleNextWord = () => dispatch({ type: 'nextPressed' });
@@ -945,53 +842,6 @@ export function ConjugationPracticeModal({
                       </TouchableOpacity>
                     )}
                   </View>
-
-                  {/* Botón de Voz con soporte de Modo Automático */}
-                  <Animated.View style={micPulseStyle}>
-                  <Pressable
-                    style={({ pressed }) => [
-                      styles.micBtn,
-                      {
-                        backgroundColor: micOn ? '#EF4444' : colors.surfaceHighlight,
-                        borderColor: flowView.auto ? '#EF4444' : colors.border,
-                        borderWidth: 1,
-                        opacity: pressed ? 0.85 : 1,
-                      },
-                    ]}
-                    onPress={() => dispatch({ type: 'micPressed' })}
-                    onLongPress={handleVoiceLongPress}
-                    delayLongPress={HOLD_DELAY_MS + HOLD_FILL_MS}
-                    onPressIn={handleVoicePressIn}
-                    onPressOut={handleVoicePressOut}
-                    disabled={hasEvaluated}
-                  >
-                    {/* Barra de progreso de carga al mantener presionado para modo automático */}
-                    {!flowView.auto && (
-                      <Animated.View style={[styles.micHoldProgress, { backgroundColor: colors.primary + '35' }, holdStyle]} />
-                    )}
-
-                    <Ionicons
-                      name={micOn ? 'mic' : 'mic-outline'}
-                      size={22}
-                      color={micOn ? '#FFF' : colors.text}
-                    />
-                    <View style={{ alignItems: 'flex-start' }}>
-                      <Text
-                        style={[
-                          styles.micBtnText,
-                          { color: micOn ? '#FFF' : colors.text },
-                        ]}
-                      >
-                        {micOn ? t('conjugation.listeningVoice') : t('conjugation.respondByVoice')}
-                      </Text>
-                      {!micOn && (
-                        <Text style={[styles.micBtnSubtext, { color: colors.textMuted }]}>
-                          {t('conjugation.holdForAutoVoice')}
-                        </Text>
-                      )}
-                    </View>
-                  </Pressable>
-                  </Animated.View>
                 </View>
               </View>
 
@@ -1282,18 +1132,6 @@ export function ConjugationPracticeModal({
             )}
           </View>
         </Modal>
-
-        <VoiceModelRequiredModal
-          visible={showModelRequired}
-          languageCode="ja-JP"
-          colors={colors}
-          onClose={() => setShowModelRequired(false)}
-          onGoToDownload={() => {
-            setShowModelRequired(false);
-            onClose();
-            router.push({ pathname: '/profile', params: { section: 'audio' } });
-          }}
-        />
       </View>
     </Modal>
   );
@@ -1533,36 +1371,6 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  micBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 52,
-    borderRadius: 14,
-    borderWidth: 1,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 6,
-    gap: 10,
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  micHoldProgress: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    transformOrigin: 'left',
-  },
-  micBtnText: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  micBtnSubtext: {
-    fontSize: 11,
-    fontWeight: '500',
-    marginTop: 1,
   },
   spokenText: {
     fontSize: 13,

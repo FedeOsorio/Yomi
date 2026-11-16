@@ -2,10 +2,10 @@ import { katakanaToHiragana } from './japanese-utils';
 
 /**
  * Consultas al diccionario japonés de la app (JMdict, palabras comunes; tabla japanese_dictionary_entries de
- * assets/cedict/dictionary-v2.db). Funcionan sin internet.
+ * assets/cedict/dictionary-v3.db). Funcionan sin internet.
  *
- * Reciben la base como parámetro: la app pasa la del teléfono (dictDb.$client) y scripts/voice-audit.ts la
- * del archivo, así se prueban sin el teléfono.
+ * Reciben la base como parámetro (la app pasa la del teléfono, dictDb.$client): así se pueden probar con el
+ * archivo, sin el teléfono.
  */
 export interface DictionaryClient {
   getAllAsync<T>(sql: string, params: (string | number)[]): Promise<T[]>;
@@ -16,6 +16,7 @@ interface Row {
   kana: string;
   kanji: string;
   meanings: string;
+  meanings_es: string | null;
   parts_of_speech: string;
   is_common: number;
 }
@@ -27,6 +28,8 @@ export interface JishoLikeItem {
   jlpt: string[];
   japanese: { word?: string; reading: string }[];
   senses: { english_definitions: string[]; parts_of_speech: string[]; tags: string[] }[];
+  /** Acepciones en español de JMdict (no todas las palabras las tienen) */
+  spanish_senses?: string[][];
 }
 
 /**
@@ -51,7 +54,7 @@ export async function searchLocalDictionary(client: DictionaryClient, terms: str
     if (entryIds.length === 0) return [];
 
     const rows = await client.getAllAsync<Row>(
-      `SELECT entry_id, kana, kanji, meanings, parts_of_speech, is_common FROM japanese_dictionary_entries
+      `SELECT entry_id, kana, kanji, meanings, meanings_es, parts_of_speech, is_common FROM japanese_dictionary_entries
        WHERE entry_id IN (${entryIds.map(() => '?').join(',')}) ORDER BY form_order`,
       entryIds
     );
@@ -76,6 +79,7 @@ export async function searchLocalDictionary(client: DictionaryClient, terms: str
             parts_of_speech: i === 0 ? partsOfSpeech : [],
             tags: [],
           })),
+          spanish_senses: primary.meanings_es ? JSON.parse(primary.meanings_es) : undefined,
         },
       ];
     });

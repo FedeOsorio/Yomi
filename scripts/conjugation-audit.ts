@@ -3,7 +3,7 @@ import path from 'path';
 import { CONJUGATION_TYPES } from '../lib/conjugation-types';
 import { equivalentConjugations } from '../lib/japanese-conjugation';
 import { classifyJapaneseWord, conjugateJapanese, hiraganaToRomaji, JapaneseConjugationForm } from '../lib/japanese-utils';
-import { matchesConjugationAnswer } from '../lib/voice-match';
+import { matchesConjugationAnswer } from '../lib/answer-match';
 
 /**
  * Prueba de las conjugaciones japonesas (lib/japanese-conjugation.ts, vía conjugateJapanese y
@@ -18,8 +18,8 @@ import { matchesConjugationAnswer } from '../lib/voice-match';
  *    build:conjugations), de punta a punta: la categoría que deduce la app y la conjugación que sale,
  *    comparadas con una referencia por tipo.
  * 3. La evaluación de la respuesta en la práctica (matchesConjugationAnswer): casos escritos a mano, y con las
- *    formas de JMdict, que la forma correcta dicha en kana o romaji valga y que la misma con un sonido de más o de
- *    menos (っ, vocal larga, ん) no valga.
+ *    formas de JMdict, que la forma correcta escrita en kanji, kana o romaji valga y que la misma con un sonido de
+ *    más o de menos (っ, vocal larga, ん) no valga.
  *
  * Correrlo después de tocar las conjugaciones: todo al 100%.
  */

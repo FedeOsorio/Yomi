@@ -1,43 +1,29 @@
 import { Ionicons } from '@expo/vector-icons';
-import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
-import { useFocusEffect, useNavigation } from 'expo-router';
-import { useCallback, useEffect, useRef } from 'react';
-import { AppState, BackHandler, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useNavigation } from 'expo-router';
+import { useEffect, useRef } from 'react';
+import { BackHandler, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getFloatingTabBarStyle, Spacing } from '../../constants/theme';
 import { useTheme } from '../../../providers/ThemeProvider';
 
-const KEEP_AWAKE_TAG = 'yomi_voice_review';
-
 interface SessionLifecycleOptions {
   selectedDeckId: string | null;
   selectedDeckName: string;
-  /** Repaso por voz en curso: mantiene la pantalla encendida. */
-  isVoiceSessionActive: boolean;
   onExitSession: () => void;
-  onAppBackground: () => void;
-  onScreenBlur: () => void;
 }
 
 /**
  * Todo lo que rodea a la sesión de repaso pero no es el repaso en sí: encabezado, barra de
- * pestañas, botón atrás de Android, app en segundo plano, pérdida de foco y pantalla encendida.
+ * pestañas y botón atrás de Android.
  */
-export function useSessionLifecycle({
-  selectedDeckId,
-  selectedDeckName,
-  isVoiceSessionActive,
-  onExitSession,
-  onAppBackground,
-  onScreenBlur,
-}: SessionLifecycleOptions) {
+export function useSessionLifecycle({ selectedDeckId, selectedDeckName, onExitSession }: SessionLifecycleOptions) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
 
-  // Las suscripciones viven toda la pantalla: siempre llaman a la versión más reciente de cada callback
-  const callbacks = useRef({ onExitSession, onAppBackground, onScreenBlur });
-  callbacks.current = { onExitSession, onAppBackground, onScreenBlur };
+  // Las suscripciones viven toda la pantalla: siempre llaman a la versión más reciente
+  const callbacks = useRef({ onExitSession });
+  callbacks.current = { onExitSession };
 
   // Ocultar la barra de pestañas durante la sesión
   useEffect(() => {
@@ -55,30 +41,6 @@ export function useSessionLifecycle({
     });
     return () => sub.remove();
   }, [selectedDeckId]);
-
-  // App en segundo plano (llamada, minimizar, bloquear). 'inactive' no cuenta: lo disparan diálogos del sistema.
-  useEffect(() => {
-    const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'background') callbacks.current.onAppBackground();
-    });
-    return () => sub.remove();
-  }, []);
-
-  // Pantalla encendida solo durante el repaso por voz (manos libres)
-  useEffect(() => {
-    if (isVoiceSessionActive) activateKeepAwakeAsync(KEEP_AWAKE_TAG);
-    else deactivateKeepAwake(KEEP_AWAKE_TAG);
-    return () => {
-      deactivateKeepAwake(KEEP_AWAKE_TAG);
-    };
-  }, [isVoiceSessionActive]);
-
-  // Al salir de la pestaña
-  useFocusEffect(
-    useCallback(() => {
-      return () => callbacks.current.onScreenBlur();
-    }, [])
-  );
 
   // Encabezado: flecha para salir de la sesión + nombre del mazo
   useEffect(() => {

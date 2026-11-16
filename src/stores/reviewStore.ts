@@ -8,28 +8,19 @@ import {
   getAllCardsForPractice,
   processCardReview,
 } from '../../lib/srs-engine';
-import { initPhoneticDictionary, invalidatePhoneticDictionary } from '../../lib/phonetic-dictionary';
-import { onDataChanged } from '../../lib/backup-service';
-
-// Después de importar o restaurar, el índice de lecturas se vuelve a cargar en el próximo repaso
-onDataChanged(invalidatePhoneticDictionary);
-
 export interface CardEvaluation {
   isReadingCorrect: boolean;
   isMeaningCorrect: boolean;
   computedRating: Rating;
+  /** Chino: precisión del pinyin escrito, sílaba por sílaba */
   voiceScore?: { score: number; label: string; breakdown?: PinyinBreakdownItem[] };
-  matchedReading?: string;
 }
-
-export type StudyMethod = 'text' | 'voice';
 
 export interface ReviewState {
   // Mazos y navegación
   decksList: DeckWithStats[];
   selectedDeckId: string | null;
   selectedDeckName: string;
-  studyMethod: StudyMethod;
   isPracticeMode: boolean;
   showMethodModal: boolean;
   pendingSelection: {
@@ -56,9 +47,6 @@ export interface ReviewState {
   isChecked: boolean;
   evaluation: CardEvaluation | null;
 
-  // Reconocimiento de voz: lo que se entendió (el estado del micrófono lo lleva lib/review-flow.ts)
-  speechTranscript: string;
-
   // Getters / Selectores
   getCurrentCard: () => DueCardWithContext | null;
 
@@ -66,18 +54,12 @@ export interface ReviewState {
   fetchDecksData: () => Promise<void>;
   promptStudyMethod: (deckId: string, deckName: string, hasDue: boolean) => void;
   setShowMethodModal: (show: boolean) => void;
-  startSession: (
-    deckId: string,
-    deckName: string,
-    method?: StudyMethod,
-    practiceMode?: boolean
-  ) => Promise<void>;
+  startSession: (deckId: string, deckName: string, practiceMode?: boolean) => Promise<void>;
   exitSession: () => void;
   setInputReading: (val: string) => void;
   setInputMeaning: (val: string) => void;
   setIsChecked: (val: boolean) => void;
   setEvaluation: (evalData: CardEvaluation | null) => void;
-  setSpeechTranscript: (val: string) => void;
   setIsProcessing: (val: boolean) => void;
   recordFailedCard: (cardId: string) => void;
   /**
@@ -100,7 +82,6 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
   decksList: [],
   selectedDeckId: null,
   selectedDeckName: '',
-  studyMethod: 'text',
   isPracticeMode: false,
   showMethodModal: false,
   pendingSelection: null,
@@ -118,7 +99,6 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
   inputMeaning: '',
   isChecked: false,
   evaluation: null,
-  speechTranscript: '',
 
   getCurrentCard: () => {
     const { dueCards, currentIndex } = get();
@@ -128,8 +108,6 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
   fetchDecksData: async () => {
     set({ loading: true });
     try {
-      initPhoneticDictionary().catch(() => {});
-
       const d = await getDecksWithStats();
       set({ decksList: d.filter((deck) => deck.activeCardsCount > 0) });
     } catch (e) {
@@ -141,8 +119,9 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
 
   promptStudyMethod: (deckId, deckName, hasDue) => {
     const targetDeck = get().decksList.find((d) => d.id === deckId);
-    if (targetDeck?.type === 'custom') {
-      get().startSession(deckId, deckName, 'text', !hasDue);
+    // Solo los mazos de japonés tienen otra opción (la práctica de conjugaciones): los demás empiezan directo
+    if (targetDeck?.type === 'custom' || !targetDeck?.languageCode?.startsWith('ja')) {
+      get().startSession(deckId, deckName, !hasDue);
       return;
     }
     set({
@@ -153,12 +132,11 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
 
   setShowMethodModal: (show) => set({ showMethodModal: show }),
 
-  startSession: async (deckId, deckName, method = 'text', practiceMode = false) => {
+  startSession: async (deckId, deckName, practiceMode = false) => {
     set({
       loading: true,
       selectedDeckId: deckId,
       selectedDeckName: deckName,
-      studyMethod: method,
       isPracticeMode: practiceMode,
       sessionCompleted: false,
       sessionCount: 0,
@@ -168,12 +146,10 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       inputMeaning: '',
       isChecked: false,
       evaluation: null,
-      speechTranscript: '',
       isProcessing: false,
     });
 
     try {
-      initPhoneticDictionary().catch(() => {});
       let cards: DueCardWithContext[] = [];
       cards = practiceMode
         ? await getAllCardsForPractice(deckId)
@@ -205,7 +181,6 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       inputMeaning: '',
       isChecked: false,
       evaluation: null,
-      speechTranscript: '',
       isProcessing: false,
     });
   },
@@ -214,7 +189,6 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
   setInputMeaning: (val) => set({ inputMeaning: val }),
   setIsChecked: (val) => set({ isChecked: val }),
   setEvaluation: (evalData) => set({ evaluation: evalData }),
-  setSpeechTranscript: (val) => set({ speechTranscript: val }),
   setIsProcessing: (val) => set({ isProcessing: val }),
 
   recordFailedCard: (cardId) => {
@@ -245,7 +219,6 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       inputMeaning: '',
       isChecked: false,
       evaluation: null,
-      speechTranscript: '',
     });
   },
 
@@ -261,15 +234,13 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
         inputMeaning: '',
         isChecked: false,
         evaluation: null,
-        speechTranscript: '',
-          isProcessing: false,
+        isProcessing: false,
       });
       return true;
     } else {
       set({
         sessionCompleted: true,
         sessionCount: nextCount,
-        speechTranscript: '',
         isProcessing: false,
       });
       return false;

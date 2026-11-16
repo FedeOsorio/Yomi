@@ -9,14 +9,13 @@ import {
   Text,
   View,
 } from 'react-native';
-import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Rating } from 'ts-fsrs';
 import { speakCard, stopSpeech } from '../../../lib/audio-service';
 import { detectTextLanguage, getEffectiveCardLanguage } from '../../../lib/japanese-utils';
 import { calculateChineseAccuracyScore } from '../../../lib/pinyin-utils';
 import { JLPT_KANJI_READINGS } from '../../../lib/jlpt-data';
-import { singleKanjiReadings } from '../../../lib/voice-match';
+import { singleKanjiReadings } from '../../../lib/answer-match';
 import { hasAnkiCardRef, parseAux } from '../../../lib/word-aux';
 import {
   calculateReviewRating,
@@ -41,25 +40,17 @@ import { ReviewCard } from '../../components/review/ReviewCard';
 import { AnkiCardView } from '../../components/anki/AnkiCardView';
 import { ReviewMethodModal } from '../../components/review/ReviewMethodModal';
 import { SessionSummaryView } from '../../components/review/SessionSummaryView';
-import { VoiceMicControl } from '../../components/review/VoiceMicControl';
-import { VoiceModelRequiredModal } from '../../components/review/VoiceModelRequiredModal';
-import { VoiceScoreBadge } from '../../components/review/VoiceScoreBadge';
-import { VoiceTranscriptArea } from '../../components/review/VoiceTranscriptArea';
 import { Spacing, Typography } from '../../constants/theme';
 import { useTranslation } from '../../i18n';
-import { useAutoAdvance } from '../../hooks/review/useAutoAdvance';
 import { useCardFlip } from '../../hooks/review/useCardFlip';
 import { useCardMeanings } from '../../hooks/review/useCardMeanings';
 import { useSessionLifecycle } from '../../hooks/review/useSessionLifecycle';
-import { useVoiceReview } from '../../hooks/review/useVoiceReview';
-import { CardEvaluation, StudyMethod, useReviewStore } from '../../stores/reviewStore';
+import { CardEvaluation, useReviewStore } from '../../stores/reviewStore';
 import { useSingleNavigation } from '../../hooks/useSingleNavigation';
 
 /**
- * Pestaña Repaso. Muestra el selector de mazos, el resumen al terminar o la sesión activa.
- * La lógica pesada vive afuera: el recorrido por voz (lib/review-flow.ts, ejecutado por useVoiceReview),
- * el giro de la tarjeta (useCardFlip), la cuenta regresiva (useAutoAdvance) y el ciclo de vida de la
- * pantalla (useSessionLifecycle).
+ * Pestaña Repaso. Muestra el selector de mazos, el resumen al terminar o la sesión activa (respuesta escrita).
+ * El giro de la tarjeta vive en useCardFlip y el ciclo de vida de la pantalla en useSessionLifecycle.
  */
 export default function ReviewScreen() {
   const { t } = useTranslation();
@@ -72,7 +63,6 @@ export default function ReviewScreen() {
   const decksList = useReviewStore((s) => s.decksList);
   const selectedDeckId = useReviewStore((s) => s.selectedDeckId);
   const selectedDeckName = useReviewStore((s) => s.selectedDeckName);
-  const studyMethod = useReviewStore((s) => s.studyMethod);
   const showMethodModal = useReviewStore((s) => s.showMethodModal);
   const pendingSelection = useReviewStore((s) => s.pendingSelection);
   const dueCards = useReviewStore((s) => s.dueCards);
@@ -102,8 +92,6 @@ export default function ReviewScreen() {
   } = useReviewStore.getState();
 
   const flip = useCardFlip();
-  const autoAdvance = useAutoAdvance();
-  const voice = useVoiceReview(flip, autoAdvance);
 
   const currentCard = dueCards[currentIndex] || null;
   const meaningsList = useCardMeanings(currentCard);
@@ -113,25 +101,17 @@ export default function ReviewScreen() {
 
   // ───────────── Sesión ─────────────
 
-  const handleStartSession = async (deckId: string, deckName: string, method: StudyMethod = 'text', practiceMode = false) => {
+  const handleStartSession = async (deckId: string, deckName: string, practiceMode = false) => {
     resetCurrentCardForm();
     flip.reset();
-    autoAdvance.cancel();
-    await startSession(deckId, deckName, method, practiceMode);
-    // En voz el micrófono NO se abre solo en la primera tarjeta: queda en "Presiona para comenzar"
-    voice.cardShown();
+    await startSession(deckId, deckName, practiceMode);
   };
 
-  const handleSelectMethod = async (method: StudyMethod) => {
+  const handleSelectClassic = async () => {
     if (!pendingSelection) return;
-    const { deckId, deckName, hasDue, languageCode } = pendingSelection;
-    const voiceLang = languageCode || 'ja-JP';
-    if (method === 'voice' && !(await voice.ensureReady(voiceLang, () => setShowMethodModal(false)))) return;
-
+    const { deckId, deckName, hasDue } = pendingSelection;
     setShowMethodModal(false);
-    await handleStartSession(deckId, deckName, method, !hasDue);
-    // Carga del modelo en segundo plano: el micrófono muestra "Cargando motor de voz…"
-    if (method === 'voice') voice.prepareModel(voiceLang);
+    await handleStartSession(deckId, deckName, !hasDue);
   };
 
   const handleOpenConjugation = (deckId: string, deckName: string) => {
@@ -140,19 +120,12 @@ export default function ReviewScreen() {
   };
 
   const handleExitSession = () => {
-    voice.endSession();
+    stopSpeech();
     exitSession();
     fetchDecksData();
   };
 
-  useSessionLifecycle({
-    selectedDeckId,
-    selectedDeckName,
-    isVoiceSessionActive: Boolean(selectedDeckId && studyMethod === 'voice' && !sessionCompleted),
-    onExitSession: handleExitSession,
-    onAppBackground: voice.interrupt,
-    onScreenBlur: voice.interrupt,
-  });
+  useSessionLifecycle({ selectedDeckId, selectedDeckName, onExitSession: handleExitSession });
 
   // Al entrar a la pestaña: cargar mazos, o abrir directamente un mazo si vino por parámetro
   useFocusEffect(
@@ -165,7 +138,7 @@ export default function ReviewScreen() {
         try {
           await fetchDecksData();
           const deck = useReviewStore.getState().decksList.find((item) => item.id === paramDeckId);
-          handleStartSession(paramDeckId, deck ? deck.name : 'Mazo', 'text', !((deck?.dueCount || 0) > 0));
+          handleStartSession(paramDeckId, deck ? deck.name : 'Mazo', !((deck?.dueCount || 0) > 0));
         } catch (e) {
           console.warn('Error al iniciar sesión con paramDeckId:', e);
           fetchDecksData();
@@ -304,8 +277,6 @@ export default function ReviewScreen() {
           advanceCard(true);
         }
         flip.reset();
-        // En una sesión por voz, la tarjeta que sigue arranca con el micrófono en reposo
-        if (studyMethod === 'voice') voice.cardShown();
       } catch (err) {
         console.error('Error al procesar acción de tarjeta personalizada:', err);
         setIsProcessing(false);
@@ -314,16 +285,6 @@ export default function ReviewScreen() {
   };
 
   // ───────────── Vistas ─────────────
-
-  const voiceModelModal = (
-    <VoiceModelRequiredModal
-      visible={voice.showModelRequired}
-      languageCode={voice.modelRequiredLang}
-      colors={colors}
-      onClose={voice.closeModelRequired}
-      onGoToDownload={voice.goToModelDownload}
-    />
-  );
 
   if (loading) {
     return (
@@ -344,12 +305,11 @@ export default function ReviewScreen() {
           pendingSelection={pendingSelection}
           colors={colors}
           onClose={() => setShowMethodModal(false)}
-          onSelectMethod={handleSelectMethod}
+          onSelectClassic={handleSelectClassic}
           onSelectConjugation={() => {
             if (pendingSelection) handleOpenConjugation(pendingSelection.deckId, pendingSelection.deckName);
           }}
         />
-        {voiceModelModal}
         {conjugationDeck && (
           <ConjugationPracticeModal
             visible
@@ -376,19 +336,9 @@ export default function ReviewScreen() {
           failedCount={sessionFailedCount}
           colors={colors}
           onExitSession={handleExitSession}
-          onPracticeAll={() => promptStudyMethod(selectedDeckId, selectedDeckName, false)}
-          onReviewDueAgain={() => {
-            if (selectedDeckId) startSession(selectedDeckId, selectedDeckName, studyMethod, false);
-          }}
+          onPracticeAll={() => handleStartSession(selectedDeckId, selectedDeckName, true)}
+          onReviewDueAgain={() => handleStartSession(selectedDeckId, selectedDeckName, false)}
         />
-        <ReviewMethodModal
-          visible={showMethodModal}
-          pendingSelection={pendingSelection}
-          colors={colors}
-          onClose={() => setShowMethodModal(false)}
-          onSelectMethod={handleSelectMethod}
-        />
-        {voiceModelModal}
       </View>
     );
   }
@@ -397,16 +347,12 @@ export default function ReviewScreen() {
   const isCustomCard = isCustomReviewCard(currentCard);
   const lang = getEffectiveCardLanguage(currentCard);
   const accent = isCustomCard ? '#10B981' : colors.primary;
-  const isVoice = studyMethod === 'voice';
 
   const yomiCard = (
     <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-      {isVoice && <VoiceTranscriptArea card={currentCard} isChecked={isChecked} feedback={voice.feedback} colors={colors} />}
-
       <ReviewCard
         card={currentCard}
         lang={lang}
-        studyMethod={studyMethod}
         isChecked={isChecked}
         isCustomCard={isCustomCard}
         asksForMeaning={asksForMeaning(currentCard)}
@@ -417,28 +363,6 @@ export default function ReviewScreen() {
         backStyle={flip.backStyle}
         onSubmitText={handleCheck}
       />
-
-      {/* Debajo de la tarjeta: micrófono antes de responder; precisión (chino) después */}
-      {isVoice && (
-        <View style={styles.voiceFloatingContainer}>
-          {!isChecked ? (
-            <VoiceMicControl
-              isListening={voice.isListening}
-              speechStatus={voice.micStatus}
-              busyLabel={voice.setupLabel}
-              micProgress={voice.micProgress}
-              micPulse={voice.micPulse}
-              colors={colors}
-              onPress={voice.toggleMic}
-            />
-          ) : (
-            evaluation?.voiceScore && (
-              <VoiceScoreBadge score={evaluation.voiceScore.score} label={evaluation.voiceScore.label} danger={colors.danger} />
-            )
-          )}
-        </View>
-      )}
-
     </ScrollView>
   );
 
@@ -466,13 +390,7 @@ export default function ReviewScreen() {
         </View>
       </View>
 
-      {/* Tocar la pantalla pausa la cuenta regresiva del modo voz */}
-      <View
-        style={{ flex: 1 }}
-        onTouchStart={() => isVoice && isChecked && autoAdvance.pause()}
-        onTouchEnd={() => isVoice && isChecked && autoAdvance.resume()}
-        onTouchCancel={() => isVoice && isChecked && autoAdvance.resume()}
-      >
+      <View style={{ flex: 1 }}>
         {isCustomCard && hasAnkiCardRef(currentCard.auxiliaryInfo) ? (
           <AnkiCardView
             key={currentCard.id}
@@ -486,35 +404,20 @@ export default function ReviewScreen() {
         )}
       </View>
 
-      {/* Cuenta regresiva hasta la siguiente tarjeta (modo voz, con la respuesta a la vista) */}
-      {isVoice && isChecked && (
-        <View style={styles.flipCountdownContainer}>
-          <Animated.View
-            style={[styles.flipCountdownBar, { backgroundColor: colors.primary }, autoAdvance.barStyle]}
-          />
-        </View>
-      )}
-
       <ReviewBottomBar
-        studyMethod={studyMethod}
         isCustomCard={isCustomCard}
         isChecked={isChecked}
         isProcessing={isProcessing}
-        evaluation={evaluation}
         bottomInset={insets.bottom}
         colors={colors}
         onShowCustomAnswer={handleShowCustomAnswer}
         onCustomAction={handleCustomCardAction}
         learnedDays={nextLearnedInterval(currentCard.scheduledDays)}
         laterHours={nextLaterHours(currentCard.auxiliaryInfo)}
-        onVoiceGiveUp={voice.giveUp}
-        onMarkIncorrect={voice.markIncorrect}
-        onVoiceNext={voice.next}
         onGiveUp={handleGiveUp}
         onCheck={handleCheck}
         onNext={handleNextCard}
       />
-      {voiceModelModal}
     </KeyboardAvoidingView>
   );
 }
@@ -563,35 +466,16 @@ const styles = StyleSheet.create({
   progressBarFill: {
     height: '100%',
   },
+  // La tarjeta arriba: en Android (pantalla de borde a borde) el teclado no achica la vista y tapaba la tarjeta centrada
   scrollContainer: {
     flexGrow: 1,
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     padding: Spacing.md,
-  },
-  flipCountdownContainer: {
-    width: '100%',
-    height: 4,
-    backgroundColor: 'transparent',
-    overflow: 'hidden',
-  },
-  flipCountdownBar: {
-    width: '100%',
-    height: 4,
-    borderRadius: 2,
-    transformOrigin: 'left',
   },
   deckBadgeContainer: {
     maxWidth: 140,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
-  },
-  voiceFloatingContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: Spacing.sm,
-    paddingHorizontal: Spacing.md,
-    width: '100%',
-    height: 155,
   },
 });

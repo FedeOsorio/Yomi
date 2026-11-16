@@ -478,6 +478,21 @@ function searchJisho(terms: string[]): Promise<any[][]> {
  * Busca palabras en japonés con ordenamiento inteligente por relevancia y uso común. Primero en el
  * diccionario de la app (sin internet); si no tiene la palabra exacta, también en Jisho.
  */
+/**
+ * Definiciones representativas de una lista de acepciones, igual que con las del inglés: hasta 2 de la primera
+ * acepción y la principal de las dos siguientes (como máximo 4, sin repetir).
+ */
+function pickDefinitions(senses?: string[][]): string[] {
+  const out: string[] = [];
+  (senses ?? []).slice(0, 3).forEach((glosses, i) => {
+    for (const g of glosses.slice(0, i === 0 ? 2 : 1)) {
+      const text = g.trim();
+      if (text && !out.includes(text)) out.push(text);
+    }
+  });
+  return out.slice(0, 4);
+}
+
 export async function searchJapanese(rawInput: string, toLang: string = 'es'): Promise<JapaneseEntry[]> {
   if (!rawInput || !rawInput.trim()) return [];
 
@@ -651,6 +666,8 @@ export async function searchJapanese(rawInput: string, toLang: string = 'es'): P
       displayReading: string;
       conjugationNote: string;
       rawDefinitions: string[];
+      /** Las definiciones ya están en el idioma pedido (español de JMdict): no se traducen */
+      alreadyTranslated: boolean;
     }> = [];
 
     const allDefinitionsToTranslate: string[] = [];
@@ -779,8 +796,11 @@ export async function searchJapanese(rawInput: string, toLang: string = 'es'): P
         }
       }
 
-      const topDefs = rawEnglishDefinitions.slice(0, 4);
-      allDefinitionsToTranslate.push(...topDefs);
+      // En español, los significados de JMdict en español si los tiene (sin internet); si no, el inglés traducido
+      const spanishDefs = toLang === 'es' ? pickDefinitions(item.spanish_senses) : [];
+      const alreadyTranslated = spanishDefs.length > 0;
+      const topDefs = alreadyTranslated ? spanishDefs : rawEnglishDefinitions.slice(0, 4);
+      if (!alreadyTranslated) allDefinitionsToTranslate.push(...topDefs);
 
       preparedItems.push({
         item,
@@ -792,18 +812,21 @@ export async function searchJapanese(rawInput: string, toLang: string = 'es'): P
         displayReading,
         conjugationNote,
         rawDefinitions: topDefs,
+        alreadyTranslated,
       });
     }
 
     // Traducir todas las definiciones en una única llamada por lotes (con caché inteligente)
-    await translateBatchToLanguage(allDefinitionsToTranslate, toLang, 'en');
+    if (allDefinitionsToTranslate.length > 0) await translateBatchToLanguage(allDefinitionsToTranslate, toLang, 'en');
 
     // Construir las entradas con sus traducciones garantizadas
     const entries: JapaneseEntry[] = [];
 
     for (let i = 0; i < preparedItems.length; i++) {
       const p = preparedItems[i];
-      const translatedMeanings = await translateBatchToLanguage(p.rawDefinitions, toLang, 'en');
+      const translatedMeanings = p.alreadyTranslated
+        ? p.rawDefinitions
+        : await translateBatchToLanguage(p.rawDefinitions, toLang, 'en');
 
       // Limpiar, desduplicar y capitalizar cada significado preservando paréntesis
       let finalMeanings = cleanAndFormatMeanings(translatedMeanings);

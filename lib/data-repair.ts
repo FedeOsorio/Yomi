@@ -5,7 +5,6 @@ import { decks, srsItems, words } from '../db/schema';
 import { resolveJapaneseReading } from './japanese-search';
 import { categoryOfType, conjugationTypeOf } from './japanese-conjugation';
 import { classifyJapaneseWord, containsJapanese } from './japanese-utils';
-import { registerWordInDictionary } from './phonetic-dictionary';
 import { getKanjiLevel } from './kanji-search';
 import { getStorageItem, setStorageItem } from './storage-service';
 import { getMediaDir, invalidateMediaFilesCache, listMediaFiles, MEDIA_DIR, mediaFileName } from './media-service';
@@ -23,6 +22,16 @@ const REPAIR_FLAG = 'yomi_data_repair_v1_done';
 const REPAIR_FLAG_V2 = 'yomi_data_repair_v2_done';
 /** Tipo de conjugación de los verbos y adjetivos según JMdict (antes se adivinaba y fallaba: 着る, すごい, 有名). */
 const REPAIR_FLAG_V3 = 'yomi_data_repair_v3_done';
+/** Se quitó el repaso por voz: borrar los modelos de reconocimiento descargados (160–230 MB cada uno). */
+const REPAIR_FLAG_V4 = 'yomi_data_repair_v4_done';
+
+/** Borra la carpeta de modelos de voz offline (documentDirectory/models), si quedó de versiones anteriores. */
+function deleteVoiceModels(): boolean {
+  const dir = new Directory(Paths.document, 'models');
+  if (!dir.exists) return false;
+  dir.delete();
+  return true;
+}
 
 /** Mazos de japonés que versiones viejas crearon con idioma 'zh-CN'. */
 async function fixJapaneseDecksMarkedAsChinese(): Promise<number> {
@@ -169,6 +178,14 @@ export async function runDataRepair(force = false): Promise<void> {
       console.warn('[DataRepair] Error corrigiendo categorías de conjugación:', err);
     }
   }
+  if ((await getStorageItem(REPAIR_FLAG_V4)) !== 'true') {
+    try {
+      if (deleteVoiceModels()) console.log('[DataRepair] Modelos de voz borrados');
+      await setStorageItem(REPAIR_FLAG_V4, 'true');
+    } catch (err) {
+      console.warn('[DataRepair] Error borrando modelos de voz:', err);
+    }
+  }
 }
 
 let backfillRunning = false;
@@ -199,7 +216,6 @@ export async function backfillMissingReadings(): Promise<void> {
         if (!reading) continue;
         await db.update(srsItems).set({ displayReading: reading }).where(eq(srsItems.id, card.id));
         await db.update(words).set({ pinyinDisplay: reading, pinyinNumeric: reading.toLowerCase() }).where(eq(words.id, card.itemId));
-        registerWordInDictionary(card.text, reading);
       } catch {}
     }
     if (cards.length > 0) console.log(`[DataRepair] Lecturas revisadas: ${cards.length}`);

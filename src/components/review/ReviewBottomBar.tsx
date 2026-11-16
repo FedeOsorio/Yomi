@@ -2,16 +2,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Shadows, Spacing } from '../../constants/theme';
 import { useTranslation } from '../../i18n';
-import { CardEvaluation, StudyMethod } from '../../stores/reviewStore';
-
 export type CustomCardAction = 'soon' | 'later' | 'next_day' | 'learned' | 'never';
 
 interface ReviewBottomBarProps {
-  studyMethod: StudyMethod;
   isCustomCard: boolean;
   isChecked: boolean;
   isProcessing: boolean;
-  evaluation: CardEvaluation | null;
   bottomInset: number;
   colors: { primary: string; surface: string; surfaceHighlight: string; border: string; text: string; textMuted: string; danger: string };
   // Tarjetas personalizadas
@@ -21,32 +17,23 @@ interface ReviewBottomBarProps {
   learnedDays: number;
   /** Horas que va a esperar la tarjeta con "Más tarde" (1 a 12) */
   laterHours: number;
-  // Modo voz
-  onVoiceGiveUp: () => void;
-  onMarkIncorrect: () => void;
-  onVoiceNext: () => void;
-  // Modo escritura
+  // Tarjetas de idioma
   onGiveUp: () => void;
   onCheck: () => void;
   onNext: () => void;
 }
 
-/** Botones inferiores de la sesión; cambian según el tipo de tarjeta, el modo y si ya se respondió. */
+/** Botones inferiores de la sesión; cambian según el tipo de tarjeta y si ya se respondió. */
 export function ReviewBottomBar({
-  studyMethod,
   isCustomCard,
   isChecked,
   isProcessing,
-  evaluation,
   bottomInset,
   colors,
   onShowCustomAnswer,
   onCustomAction,
   learnedDays,
   laterHours,
-  onVoiceGiveUp,
-  onMarkIncorrect,
-  onVoiceNext,
   onGiveUp,
   onCheck,
   onNext,
@@ -141,36 +128,6 @@ export function ReviewBottomBar({
             </View>
           </View>
         )
-      ) : studyMethod === 'voice' ? (
-        <View style={styles.actionButtonsRow}>
-          {isChecked ? (
-            <>
-              {evaluation?.isReadingCorrect && (
-                <TouchableOpacity
-                  style={[styles.markWrongBtn, { borderColor: colors.danger }]}
-                  onPress={onMarkIncorrect}
-                >
-                  <Ionicons name="close-circle-outline" size={18} color={colors.danger} style={{ marginRight: 6 }} />
-                  <Text style={[styles.markWrongBtnText, { color: colors.danger }]}>{t('review.markIncorrect')}</Text>
-                </TouchableOpacity>
-              )}
-              <TouchableOpacity
-                style={[styles.nextBtn, { backgroundColor: colors.primary }]}
-                onPress={onVoiceNext}
-              >
-                <Text style={styles.nextBtnText}>{t('review.nextCardNow')}</Text>
-                <Ionicons name="arrow-forward" size={18} color="#FFF" style={{ marginLeft: 6 }} />
-              </TouchableOpacity>
-            </>
-          ) : (
-            <TouchableOpacity
-              style={[styles.giveUpBtn, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border, flex: 1 }]}
-              onPress={onVoiceGiveUp}
-            >
-              <Text style={[styles.giveUpBtnText, { color: colors.textMuted }]}>{t('review.iDontKnow')}</Text>
-            </TouchableOpacity>
-          )}
-        </View>
       ) : (
         !isChecked ? (
           <View style={styles.actionButtonsRow}>
@@ -242,21 +199,6 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontWeight: 'bold',
     fontSize: 16,
-  },
-  markWrongBtn: {
-    flex: 1,
-    minHeight: 50,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 15,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    marginRight: Spacing.sm,
-  },
-  markWrongBtnText: {
-    fontWeight: 'bold',
-    fontSize: 15,
   },
   nextBtn: {
     flex: 1,

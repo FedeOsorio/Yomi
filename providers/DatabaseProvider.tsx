@@ -5,11 +5,11 @@ import { useMigrations } from 'drizzle-orm/expo-sqlite/migrator';
 import { db, initUserDb, initDictDb } from '../db';
 import migrations from '../db/migrations/migrations';
 import { backfillMissingReadings, runDataRepair } from '../lib/data-repair';
-import { setChineseDictionaryLookup, setDictionaryLookup } from '../lib/phonetic-dictionary';
+import { setDictionaryLookup } from '../lib/phonetic-dictionary';
 
 /** Nombre de la copia del diccionario en el teléfono (cambia con cada versión de su contenido). */
-const DICTIONARY_DB = 'dictionary-v2.db';
-const OLD_DICTIONARY_DBS = ['dictionary.db'];
+const DICTIONARY_DB = 'dictionary-v3.db';
+const OLD_DICTIONARY_DBS = ['dictionary.db', 'dictionary-v2.db'];
 
 export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return (
@@ -18,7 +18,7 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     //    (ver scripts/build-japanese-dictionary.ts)
     <SQLiteProvider
       databaseName={DICTIONARY_DB}
-      assetSource={{ assetId: require('../assets/cedict/dictionary-v2.db') }}
+      assetSource={{ assetId: require('../assets/cedict/dictionary-v3.db') }}
     >
       <DictInitProvider>
         {/* 2. Base de datos viva del usuario (mazos, palabras, SRS, <100KB) */}
@@ -35,20 +35,11 @@ const DictInitProvider: React.FC<{ children: React.ReactNode }> = ({ children })
 
   React.useMemo(() => {
     initDictDb(dictExpoDb);
-    // La evaluación por voz conoce así la lectura de cualquier palabra común que escriba el reconocedor
+    // La práctica de conjugaciones conoce así la lectura de una respuesta escrita con kanji
     setDictionaryLookup((word) =>
       dictExpoDb
         .getAllSync<{ hiragana: string }>('SELECT DISTINCT hiragana FROM japanese_dictionary_entries WHERE kanji = ?', [word])
         .map((row) => row.hiragana)
-    );
-    // Lo mismo en chino: el pinyin de lo que escribió el reconocedor (homófonos con el mismo tono)
-    setChineseDictionaryLookup((word) =>
-      dictExpoDb
-        .getAllSync<{ pinyin_numeric: string }>(
-          'SELECT DISTINCT pinyin_numeric FROM dictionary_entries WHERE simplified = ? OR traditional = ?',
-          [word, word]
-        )
-        .map((row) => row.pinyin_numeric)
     );
   }, [dictExpoDb]);
 

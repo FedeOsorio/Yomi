@@ -7,8 +7,8 @@ import sqlite3 from 'sqlite3';
 const ASSETS_DIR = path.join(__dirname, '../assets/cedict');
 const CEDICT_FILE = path.join(ASSETS_DIR, 'cedict_ts.u8');
 // Debe coincidir con providers/DatabaseProvider.tsx. Esta base se crea desde cero: después hay que correr
-// también build:dictionary:ja (scripts/build-japanese-dictionary.ts) para volver a cargar el japonés.
-const DB_FILE = path.join(ASSETS_DIR, 'dictionary-v2.db');
+// también build:dictionary:ja y build:dictionary:es para volver a cargar el japonés y sus significados en español.
+const DB_FILE = path.join(ASSETS_DIR, 'dictionary-v3.db');
 
 const TONE_MAP: Record<string, string[]> = {
   'a': ['ā', 'á', 'ǎ', 'à'],

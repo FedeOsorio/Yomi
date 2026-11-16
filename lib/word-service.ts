@@ -9,7 +9,6 @@ import { conjugationTypeOf } from './japanese-conjugation';
 import { JLPT_KANJI_READINGS } from './jlpt-data';
 import { DictionaryEntry } from './search-engine';
 import { createNewSrsItem } from './srs-engine';
-import { registerWordInDictionary } from './phonetic-dictionary';
 
 import * as crypto from 'expo-crypto';
 import { isMediaPlaceholder } from './media-service';
@@ -286,13 +285,8 @@ export async function saveCustomWord(
     const lang = deckRow[0]?.languageCode || '';
     const isJapanese = lang.toLowerCase().startsWith('ja') || containsJapanese(cleanText);
 
-    if (isJapanese) {
-      if (!cleanReading || cleanReading === cleanText) {
-        cleanReading = await resolveJapaneseReading(cleanText);
-      }
-      if (cleanReading) {
-        registerWordInDictionary(cleanText, cleanReading);
-      }
+    if (isJapanese && (!cleanReading || cleanReading === cleanText)) {
+      cleanReading = await resolveJapaneseReading(cleanText);
     }
   } catch (err) {
     console.warn('[word-service] Error resolving reading for Japanese custom word:', cleanText, err);
@@ -350,13 +344,8 @@ export async function saveGenericWord(
     const lang = deckRow[0]?.languageCode || '';
     const isJapanese = lang.toLowerCase().startsWith('ja') || containsJapanese(cleanText);
 
-    if (isJapanese) {
-      if (!cleanReading || cleanReading === cleanText) {
-        cleanReading = await resolveJapaneseReading(cleanText);
-      }
-      if (cleanReading) {
-        registerWordInDictionary(cleanText, cleanReading);
-      }
+    if (isJapanese && (!cleanReading || cleanReading === cleanText)) {
+      cleanReading = await resolveJapaneseReading(cleanText);
     }
   } catch (err) {
     console.warn('[word-service] Error resolving reading for Japanese word:', cleanText, err);
@@ -529,10 +518,6 @@ export async function saveBatchCustomCards(
     });
 
     await db.insert(srsItems).values(srsInsert);
-
-    if (finalReading) {
-      registerWordInDictionary(cleanQ, finalReading);
-    }
 
     existingSet.add(key);
     inserted++;

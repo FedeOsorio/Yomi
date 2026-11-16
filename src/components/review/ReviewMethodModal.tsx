@@ -21,16 +21,17 @@ export interface ReviewMethodModalProps {
     textMuted: string;
   };
   onClose: () => void;
-  onSelectMethod: (method: 'text' | 'voice') => void;
+  onSelectClassic: () => void;
   onSelectConjugation?: () => void;
 }
 
+/** Cómo estudiar un mazo de japonés: el repaso clásico o la práctica de conjugaciones. */
 export const ReviewMethodModal = memo(function ReviewMethodModal({
   visible,
   pendingSelection,
   colors,
   onClose,
-  onSelectMethod,
+  onSelectClassic,
   onSelectConjugation,
 }: ReviewMethodModalProps) {
   const isJapanese = pendingSelection?.languageCode === 'ja-JP';
@@ -71,7 +72,7 @@ export const ReviewMethodModal = memo(function ReviewMethodModal({
           <TouchableOpacity
             style={[styles.methodOptionCard, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}
             activeOpacity={0.8}
-            onPress={() => onSelectMethod('text')}
+            onPress={onSelectClassic}
           >
             <View style={[styles.methodIconBox, { backgroundColor: colors.surface }]}>
               <Ionicons name="create-outline" size={24} color={colors.text} />
@@ -87,36 +88,7 @@ export const ReviewMethodModal = memo(function ReviewMethodModal({
             </View>
           </TouchableOpacity>
 
-          {/* Opción 2: Modo Manos Libres (Micrófono) */}
-          <TouchableOpacity
-            style={[
-              styles.methodOptionCard,
-              {
-                backgroundColor: colors.primary + '12',
-                borderColor: colors.primary,
-                opacity: 1,
-              },
-            ]}
-            activeOpacity={0.8}
-            onPress={() => onSelectMethod('voice')}
-          >
-            <View style={[styles.methodIconBox, { backgroundColor: colors.primary }]}>
-              <Ionicons name="mic" size={24} color="#FFF" />
-            </View>
-            <View style={styles.methodTextCol}>
-              <View style={styles.methodTitleRow}>
-                <Text style={[styles.methodTitle, { color: colors.text, marginBottom: 0 }]} numberOfLines={1}>{t('review.handsFreeMode')}</Text>
-              </View>
-              <Text style={[styles.methodDesc, { color: colors.textMuted }]} numberOfLines={2}>
-                {t('review.voiceMethodDesc')}
-              </Text>
-            </View>
-            <View style={styles.trailingIconBox}>
-              <Ionicons name="chevron-forward" size={18} color={colors.primary} />
-            </View>
-          </TouchableOpacity>
-
-          {/* Opción 3: Práctica de Conjugaciones (Solo mazos de japonés) */}
+          {/* Opción 2: Práctica de Conjugaciones (Solo mazos de japonés) */}
           {isJapanese && onSelectConjugation && (
             <>
               <View style={[styles.sectionDivider, { backgroundColor: colors.border }]} />
@@ -202,7 +174,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     marginBottom: Spacing.sm,
-    // Altura fija: las tres opciones miden lo mismo aunque sus textos tengan distinto largo
+    // Altura fija: las opciones miden lo mismo aunque sus textos tengan distinto largo
     height: 84,
   },
   methodIconBox: {
@@ -218,11 +190,6 @@ const styles = StyleSheet.create({
     marginRight: Spacing.sm,
     justifyContent: 'center',
   },
-  methodTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 2,
-  },
   methodTitle: {
     fontSize: 15,
     fontWeight: 'bold',
@@ -237,17 +204,6 @@ const styles = StyleSheet.create({
     height: 24,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  newBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 6,
-    marginLeft: 6,
-  },
-  newBadgeText: {
-    color: '#FFF',
-    fontSize: 9,
-    fontWeight: 'bold',
   },
   sectionDivider: {
     height: 1,

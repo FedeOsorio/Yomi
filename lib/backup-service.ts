@@ -1,6 +1,6 @@
 import { db } from '../db';
 import { decks, words, sentences, sentenceWords, srsItems, folders } from '../db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { Share, Platform } from 'react-native';
@@ -440,13 +440,54 @@ export function parseBackupFile(content: string): YomiFullBackupPackage {
   throw new Error('El archivo no corresponde a una copia de seguridad de Yomi (no contiene mazos ni palabras reconocibles).');
 }
 
+/** Filas por INSERT: lejos del límite de parámetros de SQLite aun con la tabla de más columnas (srsItems, 16). */
+const INSERT_CHUNK = 200;
+
+/** Inserta muchas filas de a INSERT_CHUNK por consulta (en lugar de una consulta por fila). */
+async function insertInChunks<T>(rows: T[], insert: (chunk: T[]) => Promise<unknown>): Promise<void> {
+  for (let i = 0; i < rows.length; i += INSERT_CHUNK) await insert(rows.slice(i, i + INSERT_CHUNK));
+}
+
+/** Ids que ya están en la base (para combinar sin preguntar fila por fila). */
+async function existingIds(table: typeof words | typeof sentences | typeof srsItems): Promise<Set<string>> {
+  const rows = await db.select({ id: table.id }).from(table);
+  return new Set(rows.map((r) => r.id));
+}
+
 /**
  * Restaura los datos del paquete de respaldo en SQLite manteniendo intactas las tarjetas SRS y sus progresos FSRS.
+ * Todo corre en una transacción: si algo falla, la base queda como estaba (en "reemplazar", no queda vacía).
  */
 export async function restoreBackupPackage(
   pkg: YomiFullBackupPackage,
   mode: 'replace' | 'merge' = 'replace'
 ): Promise<{ foldersCount: number; decksCount: number; wordsCount: number; srsCount: number }> {
+  let srsCount = 0;
+  await db.$client.withTransactionAsync(async () => {
+    srsCount = await restoreRows(pkg, mode);
+  });
+
+  // Rescatar de la papelera (media/.trash/) cualquier archivo multimedia que vuelva a necesitarse
+  await rescueTrashedMedia();
+  clearDeckAnkiDesignCache();
+
+  // Una copia vieja puede traer datos que ya habíamos reparado: volver a repararlos
+  await runDataRepair(true);
+  backfillMissingReadings();
+
+  // Notificar a todas las pantallas activas que los datos cambiaron para que se actualicen en vivo
+  notifyDataChanged();
+
+  return {
+    foldersCount: Array.isArray(pkg.data.folders) ? pkg.data.folders.length : 0,
+    decksCount: pkg.data.decks.length,
+    wordsCount: pkg.data.words.length,
+    srsCount,
+  };
+}
+
+/** Escribe las filas del paquete. Devuelve cuántas tarjetas SRS quedaron en total. */
+async function restoreRows(pkg: YomiFullBackupPackage, mode: 'replace' | 'merge'): Promise<number> {
   if (mode === 'replace') {
     // Limpieza de datos en cascada: dependencias primero
     await db.delete(sentenceWords);
@@ -549,13 +590,11 @@ export async function restoreBackupPackage(
     }
   }
 
-  // 2. Restaurar Words
-  for (const w of pkg.data.words) {
-    if (mode === 'merge') {
-      const existing = await db.select().from(words).where(eq(words.id, w.id)).limit(1);
-      if (existing.length > 0) continue;
-    }
-    await db.insert(words).values({
+  // 3. Restaurar Words (al combinar, las que ya existen se conservan como están)
+  const keepWords = mode === 'merge' ? await existingIds(words) : new Set<string>();
+  const newWords = pkg.data.words.filter((w) => !keepWords.has(w.id));
+  await insertInChunks(
+    newWords.map((w) => ({
       id: w.id,
       deckId: w.deckId,
       simplified: w.simplified,
@@ -565,114 +604,87 @@ export async function restoreBackupPackage(
       meanings: w.meanings,
       auxiliaryInfo: w.auxiliaryInfo,
       createdAt: new Date(w.createdAt),
-    });
-  }
+    })),
+    (chunk) => db.insert(words).values(chunk)
+  );
 
-  // 3. Restaurar Sentences
+  // 4. Restaurar Sentences
   if (Array.isArray(pkg.data.sentences)) {
-    for (const s of pkg.data.sentences) {
-      if (mode === 'merge') {
-        const existing = await db.select().from(sentences).where(eq(sentences.id, s.id)).limit(1);
-        if (existing.length > 0) continue;
-      }
-      await db.insert(sentences).values({
-        id: s.id,
-        deckId: s.deckId,
-        textContent: s.textContent,
-        readingContent: s.readingContent,
-        translation: s.translation,
-        createdAt: new Date(s.createdAt),
-      });
-    }
+    const keep = mode === 'merge' ? await existingIds(sentences) : new Set<string>();
+    await insertInChunks(
+      pkg.data.sentences
+        .filter((s) => !keep.has(s.id))
+        .map((s) => ({
+          id: s.id,
+          deckId: s.deckId,
+          textContent: s.textContent,
+          readingContent: s.readingContent,
+          translation: s.translation,
+          createdAt: new Date(s.createdAt),
+        })),
+      (chunk) => db.insert(sentences).values(chunk)
+    );
   }
 
-  // 4. Restaurar SentenceWords
+  // 5. Restaurar SentenceWords (las que ya están se ignoran)
   if (Array.isArray(pkg.data.sentenceWords)) {
-    for (const sw of pkg.data.sentenceWords) {
-      try {
-        await db.insert(sentenceWords).values({
-          sentenceId: sw.sentenceId,
-          wordId: sw.wordId,
-        });
-      } catch {}
-    }
+    await insertInChunks(
+      pkg.data.sentenceWords.map((sw) => ({ sentenceId: sw.sentenceId, wordId: sw.wordId })),
+      (chunk) => db.insert(sentenceWords).values(chunk).onConflictDoNothing()
+    );
   }
 
-  // 5. Restaurar SrsItems (FSRS intacto)
+  // 6. Restaurar SrsItems (FSRS intacto)
   if (Array.isArray(pkg.data.srsItems)) {
-    for (const item of pkg.data.srsItems) {
-      if (mode === 'merge') {
-        const existing = await db.select().from(srsItems).where(eq(srsItems.id, item.id)).limit(1);
-        if (existing.length > 0) continue;
-      }
-      await db.insert(srsItems).values({
-        id: item.id,
-        itemType: item.itemType,
-        itemId: item.itemId,
-        displayText: item.displayText,
-        displayReading: item.displayReading,
-        displayMeaning: item.displayMeaning,
-        state: item.state,
-        due: new Date(item.due),
-        stability: item.stability,
-        difficulty: item.difficulty,
-        elapsedDays: item.elapsedDays,
-        scheduledDays: item.scheduledDays,
-        reps: item.reps,
-        lapses: item.lapses,
-        lastReview: item.lastReview ? new Date(item.lastReview) : null,
-        createdAt: new Date(item.createdAt),
-      });
-    }
+    const keep = mode === 'merge' ? await existingIds(srsItems) : new Set<string>();
+    await insertInChunks(
+      pkg.data.srsItems
+        .filter((item) => !keep.has(item.id))
+        .map((item) => ({
+          id: item.id,
+          itemType: item.itemType,
+          itemId: item.itemId,
+          displayText: item.displayText,
+          displayReading: item.displayReading,
+          displayMeaning: item.displayMeaning,
+          state: item.state,
+          due: new Date(item.due),
+          stability: item.stability,
+          difficulty: item.difficulty,
+          elapsedDays: item.elapsedDays,
+          scheduledDays: item.scheduledDays,
+          reps: item.reps,
+          lapses: item.lapses,
+          lastReview: item.lastReview ? new Date(item.lastReview) : null,
+          createdAt: new Date(item.createdAt),
+        })),
+      (chunk) => db.insert(srsItems).values(chunk)
+    );
   }
 
-  // 6. Garantizar que toda palabra tenga su tarjeta SRS (incluso si la copia vino con srsItems vacío)
+  // 7. Garantizar que toda palabra tenga su tarjeta SRS (incluso si la copia vino con srsItems vacío)
+  const withCard = new Set(
+    (await db.select({ itemId: srsItems.itemId }).from(srsItems).where(eq(srsItems.itemType, 'word'))).map((r) => r.itemId)
+  );
   const allCurrentWords = await db.select().from(words);
-  for (const w of allCurrentWords) {
-    const existing = await db
-      .select({ id: srsItems.id })
-      .from(srsItems)
-      .where(and(eq(srsItems.itemType, 'word'), eq(srsItems.itemId, w.id)))
-      .limit(1);
-
-    if (existing.length === 0) {
+  const missingCards = allCurrentWords
+    .filter((w) => !withCard.has(w.id))
+    .map((w) => {
       let displayMeaning = w.meanings;
       try {
         const parsed = JSON.parse(w.meanings);
-        if (Array.isArray(parsed)) {
-          displayMeaning = parsed.join(', ');
-        }
+        if (Array.isArray(parsed)) displayMeaning = parsed.join(', ');
       } catch {}
-
-      const newCard = createNewSrsItem('word', w.id, {
+      return createNewSrsItem('word', w.id, {
         displayText: w.simplified,
         displayReading: w.pinyinDisplay || w.pinyinNumeric || '',
         displayMeaning,
       });
+    });
+  await insertInChunks(missingCards, (chunk) => db.insert(srsItems).values(chunk));
 
-      await db.insert(srsItems).values(newCard);
-    }
-  }
-
-  const totalSrs = await db.select({ id: srsItems.id }).from(srsItems);
-
-  // Rescatar de la papelera (media/.trash/) cualquier archivo multimedia que vuelva a necesitarse
-  await rescueTrashedMedia();
-  clearDeckAnkiDesignCache();
-
-  // Una copia vieja puede traer datos que ya habíamos reparado: volver a repararlos
-  await runDataRepair(true);
-  backfillMissingReadings();
-
-  // Notificar a todas las pantallas activas que los datos cambiaron para que se actualicen en vivo
-  notifyDataChanged();
-
-  return {
-    foldersCount: Array.isArray(pkg.data.folders) ? pkg.data.folders.length : 0,
-    decksCount: pkg.data.decks.length,
-    wordsCount: pkg.data.words.length,
-    srsCount: totalSrs.length,
-  };
+  const [{ total }] = await db.select({ total: sql<number>`count(*)` }).from(srsItems);
+  return Number(total);
 }
 
 /**
