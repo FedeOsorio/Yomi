@@ -73,13 +73,14 @@ export function ReviewCard({
   );
 
   return (
-    <View style={styles.flipContainer}>
-      {/* Texto sutil de guía sobre la tarjeta sin badge ni ícono, sin alterar la posición vertical de la tarjeta */}
-      {!isChecked && isIdeographic && !asksForMeaning && (
-        <Text style={[styles.optionsGuidanceText, { color: colors.textMuted }]}>
+    <View>
+      {/* Guía sobre la tarjeta. Al responder se oculta pero conserva su lugar: así la tarjeta no salta al girar */}
+      {isIdeographic && !asksForMeaning && !isCustomCard && (
+        <Text style={[styles.optionsGuidanceText, { color: colors.textMuted, opacity: isChecked ? 0 : 1 }]}>
           {t('review.answerAnyOption')}
         </Text>
       )}
+    <View style={styles.flipContainer}>
       {/* CARA FRONTAL: Pregunta */}
       <Animated.View
         style={[
@@ -264,6 +265,7 @@ export function ReviewCard({
         )}
       </Animated.View>
     </View>
+    </View>
   );
 }
 
@@ -375,14 +377,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
   },
+  // Ocupa su propio lugar arriba de la tarjeta (con la tarjeta arriba de todo, flotando quedaba bajo la barra de progreso)
   optionsGuidanceText: {
-    position: 'absolute',
-    top: -26,
-    left: 0,
-    right: 0,
     textAlign: 'center',
     fontSize: 13,
     fontWeight: '500',
+    marginBottom: Spacing.sm,
   },
   customFrontBox: {
     flex: 1,

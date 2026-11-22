@@ -74,6 +74,8 @@ export const ja: TranslationSchema = {
     noFolderGeneral: 'フォルダなし (一般)',
     currentFolder: '(現在)',
     deckOptions: 'デッキのオプション',
+    renameDeck: 'デッキ名を変更',
+    renameDeckError: 'デッキ名を変更できませんでした。',
     moveToFolder: 'フォルダへ移動...',
   },
   deckDetail: {

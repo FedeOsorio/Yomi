@@ -503,14 +503,14 @@ function yomiShowAnswer(html) {
       : (typedValue ? '<span class="typeBad">' + yomiEscape(typedValue) + '</span><br>' : '') +
         '<span class="typeMissed">' + yomiEscape(want) + '</span>';
   }
-  // Como Anki: el dorso suele repetir el frente ({{FrontSide}}) y después <hr id=answer>. Se salta hasta ahí
-  // para que se vea la respuesta y no otra vez la imagen o el gif del frente (queda arriba, a un scroll)
-  // Si la tarjeta no entra en la pantalla, se agrega lugar debajo para que la respuesta pueda quedar arriba
+  // La tarjeta se ve desde arriba. El dorso suele repetir el frente ({{FrontSide}}) y después <hr id=answer>:
+  // solo si el frente es tan alto que la respuesta queda fuera de la pantalla, se baja lo justo para que aparezca
+  // en el tercio de arriba. Nunca se agrega espacio en blanco (antes se agregaba una pantalla vacía debajo para
+  // poder subir la respuesta hasta arriba, y con respuestas cortas casi no se veía nada)
   var answer = document.getElementById('answer');
-  document.body.style.minHeight = '';
-  if (answer && document.documentElement.scrollHeight > window.innerHeight) {
-    document.body.style.minHeight = (answer.getBoundingClientRect().top + window.scrollY + window.innerHeight) + 'px';
-    answer.scrollIntoView({ block: 'start' });
+  var answerTop = answer ? answer.getBoundingClientRect().top + window.scrollY : 0;
+  if (answer && answerTop > window.innerHeight - 40) {
+    window.scrollTo(0, answerTop - window.innerHeight / 3);
   } else {
     window.scrollTo(0, 0);
   }

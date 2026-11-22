@@ -226,6 +226,11 @@ export async function deleteFolder(folderId: string): Promise<void> {
   await db.delete(folders).where(eq(folders.id, folderId));
 }
 
+/** Cambia el nombre de un mazo. */
+export async function renameDeck(deckId: string, newName: string): Promise<void> {
+  await db.update(decks).set({ name: newName.trim() }).where(eq(decks.id, deckId));
+}
+
 export async function assignDeckToFolder(deckId: string, folderId: string | null): Promise<void> {
   await db
     .update(decks)
@@ -243,8 +248,9 @@ export async function deleteDeck(deckId: string): Promise<void> {
     await db.delete(decks).where(eq(decks.id, deckId));
   });
 
-  // Limpiar archivos multimedia huérfanos que pertenecían a las palabras eliminadas
-  cleanOrphanMedia().catch((err) => {
+  // Mover a la papelera los archivos multimedia que usaban sus tarjetas. Se espera (la pantalla sigue mostrando
+  // "Eliminando…" y no deja tocar nada) y no traba la app: los archivos se mueven fuera del hilo de JS
+  await cleanOrphanMedia().catch((err) => {
     console.warn('[deckService.deleteDeck] Error limpiando media huérfana:', err);
   });
 }

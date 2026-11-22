@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { Easing, interpolate, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import Svg, { Defs, LinearGradient, Path, Stop } from 'react-native-svg';
@@ -32,8 +33,19 @@ const PRESS_OUT = { duration: 180, easing: Easing.out(Easing.cubic) };
  * Carpeta translúcida y sin bordes: el color se ve como un tinte sobre el fondo.
  * Al presionarla se achica y el bolsillo delantero "se abre" (baja un poco dejando ver la solapa).
  */
+/**
+ * ¿El texto quedó cortado en medio de una palabra? (Android parte la palabra que no entra en un renglón:
+ * "Vocabula / rio"). Un corte es bueno si el renglón termina en espacio o guion.
+ */
+function cutsAWord(lines: string[]): boolean {
+  return lines.slice(0, -1).some((line) => !/[\s\-–]$/.test(line));
+}
+
 export function FolderCard({ folder, deckCount, subfolderCount, textColor, onPress, onLongPress }: FolderCardProps) {
   const color = folder.color || '#3B82F6';
+  // Nombre con una palabra que no entra en el renglón: va en un solo renglón y se achica (en vez de partirla)
+  const [splitsWord, setSplitsWord] = useState(false);
+  useEffect(() => setSplitsWord(false), [folder.name]);
   const gradientId = `folder_grad_${folder.id.replace(/[^a-zA-Z0-9]/g, '_')}`;
   const pressed = useSharedValue(0);
 
@@ -87,7 +99,15 @@ export function FolderCard({ folder, deckCount, subfolderCount, textColor, onPre
               )}
             </View>
 
-            <Text style={[styles.folderTitle, { color: textColor }]} numberOfLines={2}>
+            <Text
+              style={[styles.folderTitle, { color: textColor }]}
+              numberOfLines={splitsWord ? 1 : 2}
+              adjustsFontSizeToFit={splitsWord}
+              minimumFontScale={0.55}
+              onTextLayout={splitsWord ? undefined : (e) => {
+                if (cutsAWord(e.nativeEvent.lines.map((l) => l.text))) setSplitsWord(true);
+              }}
+            >
               {folder.name}
             </Text>
           </View>

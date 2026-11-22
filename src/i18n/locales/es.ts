@@ -74,6 +74,8 @@ export const es: TranslationSchema = {
     noFolderGeneral: 'Sin carpeta (General)',
     currentFolder: '(Actual)',
     deckOptions: 'Opciones del mazo',
+    renameDeck: 'Renombrar mazo',
+    renameDeckError: 'No se pudo cambiar el nombre del mazo.',
     moveToFolder: 'Mover a carpeta...',
   },
   deckDetail: {

@@ -74,6 +74,8 @@ export const pt: TranslationSchema = {
     noFolderGeneral: 'Sem pasta (Geral)',
     currentFolder: '(Atual)',
     deckOptions: 'Opções do baralho',
+    renameDeck: 'Renomear baralho',
+    renameDeckError: 'Não foi possível renomear o baralho.',
     moveToFolder: 'Mover para pasta...',
   },
   deckDetail: {

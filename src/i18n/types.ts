@@ -74,6 +74,8 @@ export interface TranslationSchema {
     noFolderGeneral: string;
     currentFolder: string;
     deckOptions: string;
+    renameDeck: string;
+    renameDeckError: string;
     moveToFolder: string;
   };
   deckDetail: {

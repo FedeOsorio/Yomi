@@ -74,6 +74,8 @@ export const en: TranslationSchema = {
     noFolderGeneral: 'No folder (General)',
     currentFolder: '(Current)',
     deckOptions: 'Deck options',
+    renameDeck: 'Rename deck',
+    renameDeckError: 'Could not rename the deck.',
     moveToFolder: 'Move to folder...',
   },
   deckDetail: {

@@ -22,6 +22,7 @@ import { hasAnkiCardRef, parseAux } from '../../../lib/word-aux';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { ConjugationPracticeModal } from '../../components/ConjugationPracticeModal';
 import { CustomCardData, CustomCardModal } from '../../components/CustomCardModal';
+import { RenameDeckDialog } from '../../components/RenameDeckDialog';
 import { Shadows, Spacing, Typography } from '../../constants/theme';
 import { useTranslation } from '../../i18n';
 import { useImportProgressStore } from '../../stores/importProgressStore';
@@ -466,6 +467,7 @@ export default function DeckDetailScreen() {
   };
 
   const [menuVisible, setMenuVisible] = useState(false);
+  const [renamingDeck, setRenamingDeck] = useState<{ id: string; name: string } | null>(null);
 
   // Mazos de idioma: qué se responde en el repaso (la importación lo fija según el mazo; acá lo decide el usuario)
   const answerMode: DeckAnswerMode = deckInfo?.answerMode === 'meaning' ? 'meaning' : 'reading';
@@ -733,6 +735,17 @@ export default function DeckDetailScreen() {
 
             <TouchableOpacity
               style={[styles.menuDropdownItem, { borderBottomColor: colors.border }]}
+              onPress={() => {
+                setMenuVisible(false);
+                if (id && deckInfo) setRenamingDeck({ id, name: deckInfo.name });
+              }}
+            >
+              <Ionicons name="pencil-outline" size={20} color={colors.primary} style={{ marginRight: 10 }} />
+              <Text style={[styles.menuDropdownText, { color: colors.text }]}>{t('decks.renameDeck')}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.menuDropdownItem, { borderBottomColor: colors.border }]}
               onPress={handleExportDeck}
             >
               <Ionicons name="share-outline" size={20} color="#8B5CF6" style={{ marginRight: 10 }} />
@@ -885,6 +898,12 @@ export default function DeckDetailScreen() {
           {isCustomDeck ? t('deckDetail.addCardFab') : t('deckDetail.addWordFab')}
         </Text>
       </TouchableOpacity>
+
+      <RenameDeckDialog
+        deck={renamingDeck}
+        onClose={() => setRenamingDeck(null)}
+        onRenamed={(name) => setDeckInfo((prev: any) => (prev ? { ...prev, name } : prev))}
+      />
 
       {/* Modal para agregar o editar tarjetas personalizadas */}
       {id && (

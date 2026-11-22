@@ -42,6 +42,7 @@ import { useTheme } from '../../../providers/ThemeProvider';
 import { Shadows, Spacing, Typography } from '../../constants/theme';
 import { FolderFilterBar } from '../../components/FolderFilterBar';
 import { PressableScale } from '../../components/PressableScale';
+import { RenameDeckDialog } from '../../components/RenameDeckDialog';
 import { FolderBreadcrumb } from '../../components/folders/FolderBreadcrumb';
 import { useFolderManager } from '../../hooks/useFolderManager';
 import { useSingleNavigation } from '../../hooks/useSingleNavigation';
@@ -58,6 +59,7 @@ export default function HomeScreen() {
   // Carpeta abierta (null = Inicio, donde se ven todos los mazos)
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [menuVisible, setMenuVisible] = useState(false);
+  const [renamingDeck, setRenamingDeck] = useState<{ id: string; name: string } | null>(null);
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [newDeckName, setNewDeckName] = useState('');
   const [deckType, setDeckType] = useState<'language' | 'custom'>('language');
@@ -234,12 +236,13 @@ export default function HomeScreen() {
     );
   };
 
+  // Android muestra como máximo 3 botones: no hay "Cancelar" (se cierra tocando afuera)
   const handleDeckLongPress = (item: DeckWithWordCount) => {
     Alert.alert(
       item.name,
       t('decks.deckOptions'),
       [
-        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('decks.renameDeck'), onPress: () => setRenamingDeck({ id: item.id, name: item.name }) },
         {
           text: t('decks.moveToFolder'),
           onPress: () => folderManager.openMoveDeck(item),
@@ -249,7 +252,8 @@ export default function HomeScreen() {
           style: 'destructive',
           onPress: () => handleDeleteDeck(item.id, item.name),
         },
-      ]
+      ],
+      { cancelable: true }
     );
   };
 
@@ -405,6 +409,8 @@ export default function HomeScreen() {
       >
         <Ionicons name="add" size={30} color="#FFF" />
       </PressableScale>
+
+      <RenameDeckDialog deck={renamingDeck} onClose={() => setRenamingDeck(null)} onRenamed={() => fetchDecks()} />
 
       {/* Modal de Opciones Rápidas (+) */}
       <Modal

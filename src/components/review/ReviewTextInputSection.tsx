@@ -131,11 +131,16 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 13,
   },
+  // Alto fijo: los caracteres japoneses usan una fuente con renglón más alto que el texto de ayuda, y el campo
+  // crecía al empezar a escribir
   textInput: {
+    height: 50,
     borderRadius: 14,
     paddingHorizontal: Spacing.md,
-    paddingVertical: 13,
+    paddingVertical: 0,
     fontSize: 15,
     borderWidth: 1.5,
+    textAlignVertical: 'center',
+    includeFontPadding: false,
   },
 });

@@ -1,5 +1,6 @@
 import { eq, like, sql } from 'drizzle-orm';
 import { Directory, File, Paths } from 'expo-file-system';
+import { deleteAsync, moveAsync } from 'expo-file-system/legacy';
 import { db } from '../db';
 import { decks, srsItems, words } from '../db/schema';
 import { resolveJapaneseReading } from './japanese-search';
@@ -280,8 +281,9 @@ export async function cleanOrphanMedia(): Promise<void> {
     for (const name of listMediaFiles()) {
       if (name.startsWith('.') || referenced.has(name)) continue;
       try {
-        // Asíncrono: al borrar un mazo grande son miles de archivos y la versión síncrona trababa la app
-        await new File(mediaDir, name).move(new File(trashDir, `${now}__${name}`));
+        // moveAsync corre fuera del hilo de JS: al borrar un mazo grande son miles de archivos, y mover uno por
+        // uno con File.move (que es síncrono aunque se le ponga await) trababa la app
+        await moveAsync({ from: new File(mediaDir, name).uri, to: new File(trashDir, `${now}__${name}`).uri });
         movedToTrash++;
       } catch (e) {
         console.warn(`[DataRepair] Error moviendo archivo huérfano a la papelera (${name}):`, e);
@@ -294,7 +296,7 @@ export async function cleanOrphanMedia(): Promise<void> {
       const trashedAt = parseTrashName(entry.name)?.trashedAt ?? 0;
       if (trashedAt > 0 && now - trashedAt > TRASH_TTL_MS) {
         try {
-          entry.delete();
+          await deleteAsync(entry.uri, { idempotent: true });
           purgedFromTrash++;
         } catch {}
       }
@@ -327,7 +329,7 @@ export async function rescueTrashedMedia(): Promise<number> {
       const dest = new File(mediaDir, fileName);
       if (!(entry instanceof File) || !referenced.has(fileName) || dest.exists) continue;
       try {
-        entry.moveSync(dest);
+        await moveAsync({ from: entry.uri, to: dest.uri }); // fuera del hilo de JS (pueden ser miles)
         rescued++;
       } catch (e) {
         console.warn('[rescueTrashedMedia] Error rescatando archivo de papelera:', entry.name, e);
