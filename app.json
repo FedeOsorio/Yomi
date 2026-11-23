@@ -2,7 +2,7 @@
   "expo": {
     "name": "Yomi",
     "slug": "Yomi",
-    "version": "0.5.1",
+    "version": "0.5.2",
     "orientation": "default",
     "scheme": [
       "yomi",
@@ -12,7 +12,7 @@
     "userInterfaceStyle": "automatic",
     "android": {
       "package": "com.kuyi.yomi",
-      "versionCode": 36,
+      "versionCode": 37,
       "adaptiveIcon": {
         "backgroundColor": "#2563EB",
         "foregroundImage": "./assets/images/adaptive-icon.png"
@@ -111,7 +111,10 @@
           "android": {
             "enableMinifyInReleaseBuilds": true,
             "enableShrinkResourcesInReleaseBuilds": true,
-            "extraProguardRules": "-keep class com.facebook.react.turbomodule.** { *; }\n-keepclassmembers class * {\n    @com.facebook.react.uimanager.annotations.ReactProp <methods>;\n    @com.facebook.react.uimanager.annotations.ReactPropGroup <methods>;\n}\n-dontwarn com.facebook.react.**\n\n-keep class com.swmansion.reanimated.** { *; }\n-keep class com.swmansion.gesturehandler.** { *; }\n-keep class com.swmansion.rnscreens.** { *; }\n-keep class com.swmansion.worklets.** { *; }\n\n-keep class expo.modules.** { *; }\n-dontwarn expo.modules.**\n\n-dontwarn java.awt.**\n\n-keep class com.google.android.play.core.** { *; }\n-keep class com.sudoplz.rninappupdates.** { *; }\n\n-keep class com.learnium.RNDeviceInfo.** { *; }\n-keep class com.horcrux.svg.** { *; }"
+            "extraGradleProperties": {
+              "android.r8.optimizedResourceShrinking": "true"
+            },
+            "extraProguardRules": "-repackageclasses ''\n-keep class com.facebook.react.turbomodule.** { *; }\n-keepclassmembers class * {\n    @com.facebook.react.uimanager.annotations.ReactProp <methods>;\n    @com.facebook.react.uimanager.annotations.ReactPropGroup <methods>;\n}\n-dontwarn com.facebook.react.**\n\n-keep class com.swmansion.reanimated.** { *; }\n-keep class com.swmansion.gesturehandler.** { *; }\n-keep class com.swmansion.rnscreens.** { *; }\n-keep class com.swmansion.worklets.** { *; }\n\n-keep class expo.modules.** { *; }\n-dontwarn expo.modules.**\n\n-dontwarn java.awt.**\n\n-keep class com.google.android.play.core.** { *; }\n-keep class com.sudoplz.rninappupdates.** { *; }\n\n-keep class com.learnium.RNDeviceInfo.** { *; }\n-keep class com.horcrux.svg.** { *; }"
           }
         }
       ],
