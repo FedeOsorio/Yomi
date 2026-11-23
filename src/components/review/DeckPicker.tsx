@@ -47,21 +47,18 @@ export function DeckPicker({ decks, colors, onSelectDeck, onGoToDecks }: DeckPic
             <Text style={styles.gridFlagEmoji}>{langMeta.flag}</Text>
           )}
 
-          {hasDue ? (
-            <Text
-              style={[styles.gridDueText, { color: '#F59E0B' }]}
-              numberOfLines={1}
-            >
-              {dueCount === 1 ? t('review.pendingCount', { count: dueCount }) : t('review.pendingsCount', { count: dueCount })}
-            </Text>
-          ) : (
-            <Text
-              style={[styles.gridDueText, { color: '#10B981' }]}
-              numberOfLines={1}
-            >
-              {t('review.upToDate')}
-            </Text>
-          )}
+          <Text
+            style={[
+              styles.gridDueText,
+              { color: hasDue ? '#F59E0B' : colors.textMuted },
+            ]}
+            numberOfLines={1}
+            adjustsFontSizeToFit={true}
+          >
+            {hasDue
+              ? (dueCount === 1 ? t('review.pendingCard', { count: dueCount }) : t('review.pendingCards', { count: dueCount }))
+              : t('review.upToDate')}
+          </Text>
         </View>
 
         <View style={styles.gridCardBody}>
@@ -74,7 +71,7 @@ export function DeckPicker({ decks, colors, onSelectDeck, onGoToDecks }: DeckPic
           </Text>
         </View>
 
-        <View style={[styles.gridCardFooter, { borderTopColor: colors.border }]}>
+        <View style={styles.gridCardFooter}>
           <Text
             style={[
               styles.gridCardActionText,
@@ -98,18 +95,11 @@ export function DeckPicker({ decks, colors, onSelectDeck, onGoToDecks }: DeckPic
       {decks.length > 0 && (
         <View style={styles.selectionHeader}>
           <Text style={[styles.selectionHeadline, { color: colors.text }]}>{t('review.chooseDeckToReview')}</Text>
-          <View style={[styles.selectionDueBadge, { backgroundColor: (totalDue > 0 ? colors.primary : '#10B981') + '1A' }]}>
-            <Ionicons
-              name={totalDue > 0 ? 'flash' : 'checkmark-circle'}
-              size={14}
-              color={totalDue > 0 ? colors.primary : '#10B981'}
-            />
-            <Text style={[styles.selectionDueText, { color: totalDue > 0 ? colors.primary : '#10B981' }]}>
-              {totalDue > 0
-                ? (totalDue === 1 ? t('review.pendingCard', { count: totalDue }) : t('review.pendingCards', { count: totalDue }))
-                : t('review.allUpToDate')}
-            </Text>
-          </View>
+          <Text style={[styles.selectionSubhead, { color: totalDue > 0 ? colors.primary : colors.textMuted }]}>
+            {totalDue > 0
+              ? (totalDue === 1 ? t('review.pendingCard', { count: totalDue }) : t('review.pendingCards', { count: totalDue }))
+              : t('review.allUpToDate')}
+          </Text>
         </View>
       )}
 
@@ -174,19 +164,10 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: -0.3,
   },
-  selectionDueBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 12,
-    marginTop: 8,
-  },
-  selectionDueText: {
-    fontSize: 13,
-    fontWeight: '700',
+  selectionSubhead: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 4,
   },
   gridColumnWrapper: {
     gap: Spacing.sm,
@@ -198,12 +179,12 @@ const styles = StyleSheet.create({
   },
   gridCard: {
     flex: 1,
-    height: 156,
-    borderRadius: 18,
+    minHeight: 146,
+    borderRadius: 16,
     borderWidth: 1,
-    paddingHorizontal: Spacing.md,
-    paddingTop: 10,
-    paddingBottom: 8,
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 10,
     justifyContent: 'space-between',
     ...Shadows.card,
   },
@@ -217,8 +198,9 @@ const styles = StyleSheet.create({
     includeFontPadding: false,
   },
   gridDueText: {
-    fontSize: 11,
-    fontWeight: '700',
+    fontSize: 12,
+    fontWeight: '600',
+    includeFontPadding: false,
   },
   gridCardBody: {
     marginVertical: Spacing.xs,
@@ -236,8 +218,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingTop: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 6,
   },
   gridCardActionText: {
     fontSize: 12,
