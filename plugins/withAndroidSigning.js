@@ -15,6 +15,7 @@ const withAndroidSigning = (config) => {
       { key: 'YOMI_UPLOAD_KEY_PASSWORD', value: '1b4a25622413a22210e7ff22bb324d03' },
       { key: 'android.enableMinifyInReleaseBuilds', value: 'true' },
       { key: 'android.enableShrinkResourcesInReleaseBuilds', value: 'true' },
+      { key: 'android.r8.optimizedResourceShrinking', value: 'true' },
     ];
 
     signingProps.forEach(({ key, value }) => {
