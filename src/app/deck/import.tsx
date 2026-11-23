@@ -816,7 +816,7 @@ export default function ImportDeckScreen() {
                 ]}
                 placeholder={
                   isCustomMode
-                    ? `${t('importDeck.questionLabel')} ¿Cuáles son las tres leyes de Newton?\n${t('importDeck.answerLabel')} 1. Inercia, 2. Fuerza (F=m*a), 3. Acción y reacción.`
+                    ? `${t('importDeck.questionLabel')} ¿Cuáles son las leyes de Newton?\n${t('importDeck.answerLabel')} 1. Inercia, 2. Fuerza y masa, 3. Acción y reacción.`
                     : `Ejemplo:\n会う\tあう\tto meet\n青い\tao\tblue\n食べる\tたべる\tcomer`
                 }
                 placeholderTextColor={colors.textMuted}

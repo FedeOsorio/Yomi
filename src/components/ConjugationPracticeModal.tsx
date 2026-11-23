@@ -74,7 +74,7 @@ export interface FormPromptDetails {
 }
 
 export const FORM_OPTIONS: Array<{ key: ConjugationFilterForm; label: string; suffix: string }> = [
-  { key: 'all', label: 'Aleatorio (Todas)', suffix: '' },
+  { key: 'all', label: 'Todas las formas', suffix: '' },
   { key: 'te', label: 'Forma -te', suffix: '' },
   { key: 'nakute', label: 'Forma -te negativa', suffix: '' },
   { key: 'ta', label: 'Pasado informal', suffix: '' },

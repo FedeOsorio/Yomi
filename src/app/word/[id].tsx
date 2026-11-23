@@ -1073,9 +1073,6 @@ export default function WordDetailScreen() {
               <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>
                 {isCustomDeck ? `${t('customCard.answerBack')}:` : `${t('wordDetail.meanings')}:`}
               </Text>
-              {!isCustomDeck && (
-                <Text style={[styles.meaningHint, { color: colors.textMuted }]}>{t('wordDetail.meaningsHelp')}</Text>
-              )}
             </View>
             <View style={styles.meaningsContainer}>
               {displayMeaningsList.map((meaning, index) => {
@@ -1240,9 +1237,6 @@ export default function WordDetailScreen() {
               <Ionicons name="library-outline" size={20} color={colors.primary} />
               <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('wordDetail.compounds')}</Text>
             </View>
-            <Text style={[styles.sectionSub, { color: colors.textMuted }]}>
-              {compoundsLoading ? t('wordDetail.queryingDictionary') : t('wordDetail.dictionaryUsageExamples')}
-            </Text>
 
             {compoundsLoading ? (
               <View style={styles.compoundsLoadingBox}>
@@ -1680,24 +1674,26 @@ const styles = StyleSheet.create({
   },
   meaningSelectableItem: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
-    paddingVertical: 8,
-    paddingHorizontal: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     borderRadius: 10,
     borderWidth: 1,
-    marginBottom: 6,
+    marginBottom: 8,
   },
   meaningTouchRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     flex: 1,
   },
   meaningActionsContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    alignSelf: 'flex-start',
     gap: 4,
-    marginLeft: 6,
+    marginLeft: 8,
+    marginTop: 1,
   },
   meaningActionBtn: {
     padding: 6,
@@ -1774,6 +1770,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 10,
+    marginTop: 1,
   },
   meaningItem: {
     flexDirection: 'row',
@@ -1786,7 +1783,7 @@ const styles = StyleSheet.create({
   meaningText: {
     ...Typography.bodySmall,
     fontSize: 14,
-    lineHeight: 20,
+    lineHeight: 22,
     flex: 1,
   },
   sectionCard: {

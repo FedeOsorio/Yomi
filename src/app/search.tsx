@@ -437,13 +437,6 @@ export default function SearchScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Aclaratorio sutil del idioma del mazo (sin icono (i) y con espaciado consistente) */}
-        <View style={styles.searchInstructionRow}>
-          <Text style={[styles.searchInstructionText, { color: colors.textMuted }]}>
-            {getSearchInstruction()}
-          </Text>
-        </View>
-
         {/* Input Único de Reconocimiento */}
         <View style={[styles.inputContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <Ionicons name="search" size={20} color={colors.textMuted} style={styles.searchIcon} />
@@ -460,16 +453,13 @@ export default function SearchScreen() {
           {isSearching && <ActivityIndicator color={colors.primary} style={styles.loader} />}
         </View>
 
-        {/* Estado inicial orientativo cuando el input está vacío */}
+        {/* Estado inicial sutil cuando el input está vacío */}
         {!query.trim() && !isSearching && (
           <View style={[styles.initialStateBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <View style={[styles.initialStateIcon, { backgroundColor: colors.primary + '15' }]}>
-              <Text style={{ fontSize: 28 }}>{currentLangMeta?.flag || '📚'}</Text>
+              <Text style={{ fontSize: 26 }}>{currentLangMeta?.flag || '📚'}</Text>
             </View>
-            <Text style={[styles.initialStateTitle, { color: colors.text }]}>
-              {currentDeck?.name}
-            </Text>
-            <Text style={[styles.initialStateInstruction, { color: colors.primary }]}>
+            <Text style={[styles.initialStateInstruction, { color: colors.text }]}>
               {getSearchInstruction()}
             </Text>
             {getSearchTip() ? (
@@ -568,9 +558,7 @@ export default function SearchScreen() {
                   <View style={styles.wordTextGroup}>
                     <Text style={[styles.japaneseKanji, { color: colors.text }]}>{item.kanji}</Text>
                     {item.reading !== item.kanji && (
-                      <View style={[styles.readingBadge, { backgroundColor: colors.surfaceHighlight }]}>
-                        <Text style={[styles.readingBadgeText, { color: colors.primaryHover }]}>{item.reading}</Text>
-                      </View>
+                      <Text style={[styles.readingInlineText, { color: colors.primaryHover }]}>{item.reading}</Text>
                     )}
                   </View>
 
@@ -623,10 +611,7 @@ export default function SearchScreen() {
                       <View style={styles.wordMainRow}>
                         <View style={styles.wordTextGroup}>
                           <Text style={[styles.char, { color: colors.text }]}>{item.simplified}</Text>
-
-                          <View style={[styles.pinyinContainer, { backgroundColor: colors.surfaceHighlight }]}>
-                            <Text style={[styles.pinyin, { color: colors.primaryHover }]}>{item.pinyinDisplay}</Text>
-                          </View>
+                          <Text style={[styles.pinyinInline, { color: colors.primaryHover }]}>{item.pinyinDisplay}</Text>
                         </View>
 
                         <TouchableOpacity
@@ -964,20 +949,12 @@ const styles = StyleSheet.create({
     includeFontPadding: false,
     paddingBottom: 2
   },
-  readingBadge: {
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(99, 102, 241, 0.25)',
-    marginRight: Spacing.xs,
-    alignSelf: 'center',
-  },
-  readingBadgeText: {
-    fontSize: 13,
+  readingInlineText: {
+    fontSize: 14,
     fontWeight: '600',
     includeFontPadding: false,
-    textAlignVertical: 'center',
+    marginLeft: 6,
+    alignSelf: 'baseline',
   },
   cardBadgesRow: {
     flexDirection: 'row',
@@ -987,11 +964,9 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   categoryBadge: {
-    borderWidth: 1,
-    borderColor: 'rgba(99, 102, 241, 0.35)',
-    paddingHorizontal: 7,
+    paddingHorizontal: 8,
     paddingVertical: 2,
-    borderRadius: 4,
+    borderRadius: 6,
   },
   categoryBadgeText: {
     fontSize: 11,
@@ -1053,12 +1028,10 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   levelBadge: {
-    backgroundColor: 'rgba(59, 130, 246, 0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(59, 130, 246, 0.4)',
-    paddingHorizontal: 6,
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
+    paddingHorizontal: 8,
     paddingVertical: 2,
-    borderRadius: 4,
+    borderRadius: 6,
   },
   levelBadgeText: {
     fontSize: 11,
@@ -1076,22 +1049,12 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     includeFontPadding: false,
   },
-  pinyinContainer: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(99, 102, 241, 0.25)',
-    marginRight: Spacing.xs,
-    alignSelf: 'center',
-    marginTop: 3,
-  },
-  pinyin: {
-    ...Typography.body,
-    fontSize: 13,
+  pinyinInline: {
+    fontSize: 14,
     fontWeight: '500',
     includeFontPadding: false,
-    textAlignVertical: 'center',
+    marginLeft: 6,
+    alignSelf: 'baseline',
   },
   actionButtonsRow: {
     flexDirection: 'row',
@@ -1348,23 +1311,17 @@ const styles = StyleSheet.create({
     marginTop: Spacing.sm,
   },
   initialStateIcon: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: Spacing.sm,
   },
-  initialStateTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    marginBottom: 4,
-    textAlign: 'center',
-  },
   initialStateInstruction: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '600',
-    marginBottom: 6,
+    marginBottom: 4,
     textAlign: 'center',
   },
   initialStateTip: {
