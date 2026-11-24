@@ -1,8 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { and, eq } from 'drizzle-orm';
 import { useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { memo, useCallback, useDeferredValue, useMemo, useState } from 'react';
-import { Alert, ActivityIndicator, Modal, Platform, Pressable, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { memo, useCallback, useDeferredValue, useMemo, useRef, useState } from 'react';
+import { Alert, ActivityIndicator, FlatList, Modal, Platform, Pressable, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { db } from '../../../db';
@@ -192,6 +192,11 @@ export default function DeckDetailScreen() {
     return deckWords.filter((w) => terms.some((term) => w.searchIndex.includes(term)));
   }, [deckWords, deferredQuery, isJapaneseDeck]);
 
+  const filteredWordsRef = useRef(filteredWords);
+  filteredWordsRef.current = filteredWords;
+  const deckInfoRef = useRef(deckInfo);
+  deckInfoRef.current = deckInfo;
+
   // Cálculo dinámico para garantizar exactamente 16px de separación por encima de la barra en cualquier dispositivo
   const tabBottomMargin = Platform.OS === 'android' ? Math.max(insets.bottom + 4, 8) : Math.max(insets.bottom, 6);
   const fabBottomPosition = tabBottomMargin + 60 + 16;
@@ -209,7 +214,21 @@ export default function DeckDetailScreen() {
           .where(and(eq(srsItems.itemType, 'word'), eq(words.deckId, id))),
       ]);
       const deckObj = d.length > 0 ? d[0] : null;
-      if (deckObj) setDeckInfo(deckObj);
+      if (deckObj) {
+        setDeckInfo((prev: any) => {
+          if (
+            prev &&
+            prev.id === deckObj.id &&
+            prev.name === deckObj.name &&
+            prev.languageCode === deckObj.languageCode &&
+            prev.type === deckObj.type &&
+            prev.answerMode === deckObj.answerMode
+          ) {
+            return prev;
+          }
+          return deckObj;
+        });
+      }
       const activeSrsSet = new Set(activeSrs.map((s) => s.itemId));
 
       const isJapaneseDeck = deckObj?.languageCode === 'ja-JP';
@@ -331,7 +350,7 @@ export default function DeckDetailScreen() {
       const deckSignature = `${deckObj?.languageCode}|${deckObj?.type}`;
       const rows = new Map<string, { signature: string; row: any }>();
       const processed = result.map((w) => {
-        const signature = deckSignature + JSON.stringify(w);
+        const signature = `${deckSignature}|${w.id}|${w.simplified}|${w.pinyinDisplay}|${w.meanings}|${w.auxiliaryInfo}`;
         const cached = previous?.rows.get(w.id);
         let row = cached && cached.signature === signature ? cached.row : processWord(w);
         const isInReview = activeSrsSet.has(w.id);
@@ -468,22 +487,34 @@ export default function DeckDetailScreen() {
 
   const handleSpeak = useCallback((text: string, reading?: string, auxiliaryInfo?: string | null) => {
     // Mazo personalizado: cada texto puede estar en cualquier idioma, se detecta por su escritura
-    const lang = isCustomDeck ? detectTextLanguage(text) : (deckInfo?.languageCode || 'zh-CN');
-    speakCard({ displayText: text, displayReading: reading, auxiliaryInfo }, lang, { reading, useCardMedia: isCustomDeck });
-  }, [isCustomDeck, deckInfo?.languageCode]);
+    const curDeck = deckInfoRef.current;
+    const isCustom = curDeck?.type === 'custom';
+    const lang = isCustom ? detectTextLanguage(text) : (curDeck?.languageCode || 'zh-CN');
+    speakCard({ displayText: text, displayReading: reading, auxiliaryInfo }, lang, { reading, useCardMedia: isCustom });
+  }, []);
 
   const handlePressWord = useCallback((wordId: string) => {
     // El detalle navega entre las palabras visibles en este momento (respetando la búsqueda), y las muestra
     // enseguida con lo que ya cargó el listado
     if (id) {
+      const curFiltered = filteredWordsRef.current;
+      const curDeck = deckInfoRef.current;
+      const cached = deckCache.get(id);
+      let wordsMap: Map<string, any>;
+      if (cached && curFiltered.length === cached.list.length) {
+        wordsMap = new Map();
+        for (const [k, v] of cached.rows) wordsMap.set(k, v.row);
+      } else {
+        wordsMap = new Map(curFiltered.map((w) => [w.id, w]));
+      }
       setBrowseList(
         id,
-        filteredWords.map((w) => w.id),
-        { deck: deckInfo, words: new Map(filteredWords.map((w) => [w.id, w])) }
+        curFiltered.map((w) => w.id),
+        { deck: curDeck, words: wordsMap }
       );
     }
     router.push(`/word/${wordId}`);
-  }, [router, id, filteredWords, deckInfo, setBrowseList]);
+  }, [router, id, setBrowseList]);
 
   const renderWordItem = useCallback(({ item }: { item: any }) => (
     <DeckWordCard
@@ -689,7 +720,7 @@ export default function DeckDetailScreen() {
             )}
           </View>
 
-          <Animated.FlatList
+          <FlatList
             data={filteredWords}
             keyExtractor={keyExtractor}
             contentContainerStyle={{ paddingHorizontal: Spacing.md, paddingBottom: 110 }}
@@ -698,7 +729,7 @@ export default function DeckDetailScreen() {
             keyboardDismissMode="on-drag"
             removeClippedSubviews={Platform.OS === 'android'}
             maxToRenderPerBatch={10}
-            windowSize={7}
+            windowSize={5}
             initialNumToRender={10}
             ListEmptyComponent={
               <Animated.View entering={FadeIn.duration(200)} style={styles.noResultsContainer}>

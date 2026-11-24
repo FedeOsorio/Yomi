@@ -4,6 +4,7 @@ import { dictionaryEntries } from '../db/dict-schema';
 import { decks, srsItems, words } from '../db/schema';
 import { cleanHtmlAndAnkiTags, parseAnkiFuriganaSyntax } from './anki-importer';
 import { cleanAndFormatMeanings, extractKanjis, searchJapanese, resolveJapaneseReading, translateBatchToLanguage } from './japanese-search';
+import { searchLocalDictionary } from './japanese-dictionary';
 import { getCurrentUserLanguage } from '../src/i18n';
 import { classifyJapaneseWord, deconjugateJapanese, isJapaneseDictionaryForm, toNormalizedHiragana, COMMON_KANA_NOUNS_AND_EXPRESSIONS, containsJapanese } from './japanese-utils';
 import { conjugationTypeOf } from './japanese-conjugation';
@@ -77,24 +78,37 @@ export async function getCompoundWordsForChar(
   const kanjis = extractKanjis(trimmed);
 
   if (isJapanese) {
+    if (kanjis.length === 0) return [];
     try {
-      const searchKey = kanjis.length >= 2 ? trimmed : (kanjis[0] || trimmed);
-      const results = await searchJapanese(searchKey);
+      if (!dictDb) return [];
+      const searchKey = kanjis.length >= 2 ? trimmed : kanjis[0];
+      const localResults = await searchLocalDictionary(dictDb.$client, [searchKey]);
 
-      const filtered = results.filter((entry) => {
-        if (entry.kanji === trimmed) return false;
-        if (kanjis.length >= 2) {
-          return entry.kanji.includes(trimmed) || kanjis.every((k) => entry.kanji.includes(k));
-        }
-        return entry.kanji.includes(searchKey) && entry.kanji.length >= 2;
-      });
+      const filtered = localResults
+        .filter((entry) => {
+          const mainJap = entry.japanese?.[0];
+          const entryWord = mainJap?.word || '';
+          if (!entryWord || entryWord === trimmed) return false;
+          if (kanjis.length >= 2) {
+            return entryWord.includes(trimmed) || kanjis.every((k) => entryWord.includes(k));
+          }
+          return entryWord.includes(searchKey) && entryWord.length >= 2;
+        })
+        .slice(0, limit)
+        .map((entry) => {
+          const mainJap = entry.japanese[0];
+          const meaningsList = (entry.spanish_senses && entry.spanish_senses.length > 0)
+            ? entry.spanish_senses.flat()
+            : entry.senses.flatMap((s) => s.english_definitions);
+          return {
+            id: entry.slug,
+            simplified: mainJap.word || '',
+            pinyinDisplay: mainJap.reading || '',
+            meanings: JSON.stringify(meaningsList),
+          };
+        });
 
-      return filtered.slice(0, limit).map((entry) => ({
-        id: entry.id,
-        simplified: entry.kanji,
-        pinyinDisplay: entry.reading,
-        meanings: JSON.stringify(entry.meanings),
-      }));
+      return filtered;
     } catch (e) {
       console.warn('Error al buscar palabras compuestas en japonés:', e);
       return [];
