@@ -51,7 +51,6 @@ interface DeckWordCardProps {
   onEdit?: (item: any) => void;
   onToggleReview?: (id: string, shouldAdd: boolean) => void;
   isCustomDeck?: boolean;
-  isJapaneseDeck?: boolean;
 }
 
 const DeckWordCard = memo(function DeckWordCard({
@@ -63,7 +62,6 @@ const DeckWordCard = memo(function DeckWordCard({
   onEdit,
   onToggleReview,
   isCustomDeck,
-  isJapaneseDeck,
 }: DeckWordCardProps) {
   const { t } = useTranslation();
   return (
@@ -89,7 +87,7 @@ const DeckWordCard = memo(function DeckWordCard({
             {item.simplified}
           </Text>
 
-          {!isJapaneseDeck && item.displayReading && item.displayReading !== item.simplified ? (
+          {item.displayReading ? (
             <Text
               style={[styles.readingText, { color: colors.primaryHover }]}
               numberOfLines={1}
@@ -320,6 +318,22 @@ export default function DeckDetailScreen() {
           })()
           : cleanAndFormatMeanings(w.meanings).slice(0, 3);
 
+        const HAS_KANJI = /[\u4e00-\u9faf]/;
+        const hasKanji = HAS_KANJI.test(cleanWord);
+        let displayReading = '';
+        if (isJapaneseDeck) {
+          if (hasKanji) {
+            // Si la palabra está en Kanji, mostrar su lectura en Hiragana
+            displayReading = cleanReading && cleanReading !== cleanWord ? cleanReading : '';
+          } else {
+            // Si la palabra está en Hiragana, mostrar su forma en Kanji si existe
+            const kanjiTarget = aux.originalKanji || (w.traditional && HAS_KANJI.test(w.traditional) ? w.traditional : '');
+            displayReading = kanjiTarget && kanjiTarget !== cleanWord ? kanjiTarget : '';
+          }
+        } else {
+          displayReading = cleanReading && cleanReading !== cleanWord ? cleanReading : '';
+        }
+
         // Texto de búsqueda precalculado: palabra, lectura (también en hiragana), pinyin numérico y significados
         const searchIndex = normalizeForSearch(
           [
@@ -339,7 +353,7 @@ export default function DeckDetailScreen() {
           searchIndex,
           resolvedLevel: level,
           resolvedCategory: category,
-          displayReading: cleanReading,
+          displayReading,
           isConjugable,
           dictionaryForm,
           displayMeanings,
@@ -528,9 +542,8 @@ export default function DeckDetailScreen() {
       onEdit={handleEditCard}
       onToggleReview={handleToggleReview}
       isCustomDeck={isCustomDeck}
-      isJapaneseDeck={isJapaneseDeck}
     />
-  ), [colors, handlePressWord, handleSpeak, handleDeleteWord, handleEditCard, handleToggleReview, isCustomDeck, isJapaneseDeck]);
+  ), [colors, handlePressWord, handleSpeak, handleDeleteWord, handleEditCard, handleToggleReview, isCustomDeck]);
 
   const keyExtractor = useCallback((item: any) => item.id, []);
 
