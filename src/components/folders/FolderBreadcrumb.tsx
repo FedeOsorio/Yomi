@@ -10,7 +10,7 @@ import { useTranslation } from '../../i18n';
 export function FolderBreadcrumb({ path, onNavigate }: { path: Folder[]; onNavigate: (folderId: string | null) => void }) {
   const { t } = useTranslation();
   const { colors } = useTheme();
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<any>(null);
 
   return (
     <View>

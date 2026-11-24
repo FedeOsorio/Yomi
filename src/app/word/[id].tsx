@@ -181,7 +181,7 @@ export default function WordDetailScreen() {
   // --- Navegación entre palabras del mazo deslizando a izquierda / derecha ---
   const currentId = typeof id === 'string' ? id : undefined;
   const { width: screenWidth } = useWindowDimensions();
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<any>(null);
   const swipeDirectionRef = useRef<1 | -1 | 0>(0);
   const translateX = useSharedValue(0);
   const contentOpacity = useSharedValue(1);

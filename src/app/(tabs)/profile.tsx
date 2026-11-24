@@ -418,7 +418,7 @@ export default function ProfileScreen() {
   // Llegada desde el aviso "falta el modelo de voz": scroll hasta la sección de audio y resaltarla
   const { section } = useLocalSearchParams<{ section?: string }>();
   const router = useRouter();
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<any>(null);
   const [audioSectionY, setAudioSectionY] = useState<number | null>(null);
   const [highlightAudio, setHighlightAudio] = useState(false);
 

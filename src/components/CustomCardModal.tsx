@@ -86,9 +86,9 @@ export function CustomCardModal({
       travelDistanceShared.value = Math.round(next * 0.55);
     }
   };
-  const questionInputRef = useRef<TextInput>(null);
-  const answerInputRef = useRef<TextInput>(null);
-  const scrollViewRef = useRef<ScrollView>(null);
+  const questionInputRef = useRef<any>(null);
+  const answerInputRef = useRef<any>(null);
+  const scrollViewRef = useRef<any>(null);
 
   const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 

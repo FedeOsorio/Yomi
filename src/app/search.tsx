@@ -483,7 +483,7 @@ export default function SearchScreen() {
                     ))}
                   </ScrollView>
                 </View>
-              ) : null
+              ) : undefined
             }
             ListEmptyComponent={
               query.trim().length > 0 && !isSearching && kanjiResults.length === 0 ? (
@@ -512,7 +512,7 @@ export default function SearchScreen() {
                     <Text style={styles.manualAddBtnText}>{t('search.saveWordAsCard', { word: query })}</Text>
                   </TouchableOpacity>
                 </View>
-              ) : null
+              ) : undefined
             }
             renderItem={({ item }) => (
               <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>

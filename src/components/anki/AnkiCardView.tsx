@@ -43,7 +43,7 @@ export function AnkiCardView({
   fallback = null,
 }: AnkiCardViewProps) {
   const { isDark, colors } = useTheme();
-  const webRef = useRef<WebView>(null);
+  const webRef = useRef<any>(null);
   const [design, setDesign] = useState<AnkiDeckDesign | null | undefined>(undefined);
   const [pageUri, setPageUri] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);

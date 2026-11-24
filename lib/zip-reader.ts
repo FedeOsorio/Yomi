@@ -45,7 +45,7 @@ export function openZip(fileUri: string): ZipReader {
   const handle = file.open(FileMode.ReadOnly);
   const read = (offset: number, length: number): Uint8Array => {
     handle.offset = offset;
-    return handle.readBytes(length);
+    return handle.readBytesSync(length);
   };
 
   try {

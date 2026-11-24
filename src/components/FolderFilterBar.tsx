@@ -40,7 +40,7 @@ export function FolderFilterBar({
 
   const [dropdownVisible, setDropdownVisible] = useState(false);
   const [dropdownCoords, setDropdownCoords] = useState<{ top: number; right: number }>({ top: 60, right: 16 });
-  const dotsRef = useRef<View>(null);
+  const dotsRef = useRef<any>(null);
 
   const handleToggleDropdown = useCallback(() => {
     if (dropdownVisible) {
@@ -49,7 +49,7 @@ export function FolderFilterBar({
     }
 
     if (dotsRef.current?.measureInWindow) {
-      dotsRef.current.measureInWindow((x, y, width, height) => {
+      dotsRef.current.measureInWindow((x: number, y: number, width: number, height: number) => {
         const screenWidth = Dimensions.get('window').width;
         const topCoord = y && height ? Math.round(y + height + 6) : 60;
         const rightCoord = x && width ? Math.max(16, Math.round(screenWidth - (x + width))) : 16;

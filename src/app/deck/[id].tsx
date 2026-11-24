@@ -82,6 +82,7 @@ const DeckWordCard = memo(function DeckWordCard({
             ]}
             numberOfLines={isCustomDeck ? 2 : 1}
             adjustsFontSizeToFit={!isCustomDeck}
+            minimumFontScale={0.75}
           >
             {item.simplified}
           </Text>
@@ -91,6 +92,7 @@ const DeckWordCard = memo(function DeckWordCard({
               style={[styles.readingText, { color: colors.primaryHover }]}
               numberOfLines={1}
               adjustsFontSizeToFit={true}
+              minimumFontScale={0.8}
             >
               {item.displayReading}
             </Text>
@@ -692,13 +694,12 @@ export default function DeckDetailScreen() {
             keyExtractor={keyExtractor}
             contentContainerStyle={{ paddingHorizontal: Spacing.md, paddingBottom: 110 }}
             renderItem={renderWordItem}
-            itemLayoutAnimation={LinearTransition.duration(200)}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
             removeClippedSubviews={Platform.OS === 'android'}
             maxToRenderPerBatch={10}
-            windowSize={5}
-            initialNumToRender={8}
+            windowSize={7}
+            initialNumToRender={10}
             ListEmptyComponent={
               <Animated.View entering={FadeIn.duration(200)} style={styles.noResultsContainer}>
                 <Ionicons name="search-outline" size={36} color={colors.textMuted} />

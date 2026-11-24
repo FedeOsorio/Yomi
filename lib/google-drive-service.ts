@@ -103,7 +103,7 @@ async function runGoogleLogin(): Promise<GoogleLoginResult> {
     result = await authRequest.promptAsync(Google.discovery);
     console.log('[GoogleAuth] promptAsync returned:', result.type, 'attempt:', attempt);
 
-    const isStateMismatch = result.type === 'error' && result.error?.code === 'state_mismatch';
+    const isStateMismatch = result.type === 'error' && (result.error as any)?.code === 'state_mismatch';
     if (!isStateMismatch) break;
 
     if (attempt >= MAX_AUTH_ATTEMPTS) {

@@ -67,7 +67,7 @@ export default function TabLayout() {
           headerTitle: () => renderYomiHeaderTitle(t('tabs.myCollections')), 
           tabBarLabel: t('tabs.decks'),
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="albums-outline" size={size} color={color} />
+            <Ionicons name="albums-outline" size={size} color={typeof color === 'string' ? color : undefined} />
           ),
         }} 
       />
@@ -77,7 +77,7 @@ export default function TabLayout() {
           headerTitle: () => renderYomiHeaderTitle(t('tabs.srsReview')), 
           tabBarLabel: t('tabs.review'),
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="sparkles-outline" size={size} color={color} />
+            <Ionicons name="sparkles-outline" size={size} color={typeof color === 'string' ? color : undefined} />
           ),
         }} 
       />
@@ -87,7 +87,7 @@ export default function TabLayout() {
           headerTitle: () => renderYomiHeaderTitle(t('tabs.profileAndSettings')), 
           tabBarLabel: t('tabs.profile'),
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="person-outline" size={size} color={color} />
+            <Ionicons name="person-outline" size={size} color={typeof color === 'string' ? color : undefined} />
           ),
         }} 
       />

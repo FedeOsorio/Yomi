@@ -55,7 +55,7 @@ export async function processIncomingBackupFile(uri: string): Promise<boolean> {
       const testFile = new File(targetUri);
       if (testFile.exists && testFile.size >= 4) {
         const handle = testFile.open(FileMode.ReadOnly);
-        const header = handle.readBytes(4);
+        const header = handle.readBytesSync(4);
         handle.close();
         if (header[0] === 0x50 && header[1] === 0x4b) {
           isZip = true;
