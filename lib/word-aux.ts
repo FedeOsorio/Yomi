@@ -26,6 +26,9 @@ export interface WordAux {
   conjugationStreaks?: Record<string, number>;
   dictionaryForm?: { kanji: string; reading: string };
 
+  /** Kanji original si la palabra se guardó o convirtió a Hiragana. */
+  originalKanji?: string;
+
   /** Archivos multimedia asociados a la tarjeta (audio, video, imagen). */
   media?: MediaItem[];
 

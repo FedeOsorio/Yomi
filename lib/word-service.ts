@@ -335,6 +335,7 @@ export async function saveGenericWord(
     level?: string;
     category?: string;
     conjugationEnabled?: boolean;
+    originalKanji?: string;
   }
 ): Promise<void> {
   const wordId = generateUUID();
@@ -362,6 +363,7 @@ export async function saveGenericWord(
     ...(data.level && { level: data.level }),
     ...(data.category && { category: data.category }),
     ...(data.conjugationEnabled !== undefined && { conjugationEnabled: data.conjugationEnabled }),
+    ...(data.originalKanji && { originalKanji: data.originalKanji }),
     meaningLang: getCurrentUserLanguage(),
   });
 
@@ -369,7 +371,7 @@ export async function saveGenericWord(
     id: wordId,
     deckId,
     simplified: cleanText,
-    traditional: cleanText,
+    traditional: data.originalKanji || cleanText,
     pinyinDisplay: cleanReading,
     pinyinNumeric: cleanReading.toLowerCase(),
     meanings: meaningsJson,
@@ -1075,6 +1077,58 @@ export async function updateWordReading(
     );
 
   return { updatedReading: trimmed };
+}
+
+/**
+ * Alterna la escritura de una palabra japonesa entre Kanji y Hiragana (Kana puro).
+ * Si la palabra tiene kanji, se convierte a su lectura en kana y se recuerda el kanji en originalKanji.
+ * Si la palabra está en kana y tiene un kanji recordado, se restaura a su forma con kanji.
+ */
+export async function toggleWordWritingMode(
+  wordId: string
+): Promise<{ newText: string; isKana: boolean; originalKanji?: string } | null> {
+  const existingWords = await db.select().from(words).where(eq(words.id, wordId)).limit(1);
+  if (existingWords.length === 0) return null;
+  const word = existingWords[0];
+  const aux = parseAux(word.auxiliaryInfo);
+  const cleanReading = (word.pinyinDisplay || '').trim();
+
+  const HAS_KANJI = /[\u4e00-\u9faf]/;
+  const currentlyHasKanji = HAS_KANJI.test(word.simplified);
+
+  let newText: string;
+  let isKana: boolean;
+
+  if (currentlyHasKanji) {
+    // Pasar de Kanji a Kana
+    if (!cleanReading) return null;
+    aux.originalKanji = word.simplified;
+    newText = cleanReading;
+    isKana = true;
+  } else {
+    // Pasar de Kana a Kanji
+    const kanjiTarget = aux.originalKanji || (word.traditional && HAS_KANJI.test(word.traditional) ? word.traditional : null);
+    if (!kanjiTarget) return null;
+    newText = kanjiTarget;
+    isKana = false;
+  }
+
+  await db
+    .update(words)
+    .set({
+      simplified: newText,
+      auxiliaryInfo: stringifyAux(aux),
+    })
+    .where(eq(words.id, wordId));
+
+  await db
+    .update(srsItems)
+    .set({
+      displayText: newText,
+    })
+    .where(and(eq(srsItems.itemType, 'word'), eq(srsItems.itemId, wordId)));
+
+  return { newText, isKana, originalKanji: aux.originalKanji };
 }
 
 export interface ConjugableWord {

@@ -254,49 +254,52 @@ export default function SearchScreen() {
   };
 
   // --- GUARDADO RÁPIDO JAPONÉS CON JLPT Y CONJUGACIÓN ---
-  const handleQuickSaveJapanese = async (entry: JapaneseEntry) => {
+  const handleQuickSaveJapanese = async (entry: JapaneseEntry, saveAsKana = false) => {
     if (!selectedDeckId) return;
+
+    const targetText = saveAsKana && entry.reading ? entry.reading : entry.kanji;
+    const targetReading = entry.reading;
 
     const isConjugable =
       Boolean(entry.dictionaryForm) ||
       Boolean(entry.category && (entry.category.startsWith('Verbo') || entry.category.startsWith('Adjetivo')));
 
-    const itemTypeLabel = entry.category?.startsWith('Verbo')
-      ? t('search.itemVerb')
-      : entry.category?.startsWith('Adjetivo')
-        ? t('search.itemAdj')
-        : t('search.itemWord');
-
     const executeSave = async (withConjugation: boolean) => {
       try {
         if (withConjugation && entry.dictionaryForm && entry.kanji !== entry.dictionaryForm.kanji) {
-          // 1. Guardar la tarjeta con la forma exacta que eligió el usuario (ej. 飲みます) sin habilitar conjugación
+          const dictWordText = saveAsKana && entry.dictionaryForm.reading
+            ? entry.dictionaryForm.reading
+            : entry.dictionaryForm.kanji;
+
+          // 1. Guardar la tarjeta con la forma exacta que eligió el usuario (ej. 飲みます o のみます)
           await saveGenericWord(selectedDeckId, {
-            text: entry.kanji,
-            reading: entry.reading,
+            text: targetText,
+            reading: targetReading,
             meanings: JSON.stringify(entry.meanings),
             level: entry.level,
             category: entry.category,
             conjugationEnabled: false,
+            originalKanji: entry.kanji,
           });
 
-          // 2. Guardar también la forma diccionario para la práctica de conjugación (ej. 飲む)
+          // 2. Guardar también la forma diccionario para la práctica de conjugación (ej. 飲む o のむ)
           await saveGenericWord(selectedDeckId, {
-            text: entry.dictionaryForm.kanji,
+            text: dictWordText,
             reading: entry.dictionaryForm.reading,
             meanings: JSON.stringify(entry.dictionaryForm.meanings || entry.meanings),
             level: entry.level,
             category: entry.category,
             conjugationEnabled: true,
+            originalKanji: entry.dictionaryForm.kanji,
           });
 
           const levelLabel = entry.level ? ` [JLPT ${entry.level}]` : '';
           Alert.alert(
             t('search.doubleSaveTitle'),
             t('search.doubleSaveMsg', {
-              word: entry.kanji,
-              reading: entry.reading,
-              dictWord: entry.dictionaryForm.kanji,
+              word: targetText,
+              reading: targetReading,
+              dictWord: dictWordText,
               dictReading: entry.dictionaryForm.reading,
               level: levelLabel,
               deck: currentDeck?.name,
@@ -304,19 +307,21 @@ export default function SearchScreen() {
           );
         } else {
           // Solo habilitar conjugación si es una forma base/diccionario
-          const isBase = isJapaneseDictionaryForm(entry.kanji, entry.reading, entry.category || '');
+          const isBase = isJapaneseDictionaryForm(targetText, targetReading, entry.category || '');
           await saveGenericWord(selectedDeckId, {
-            text: entry.kanji,
-            reading: entry.reading,
+            text: targetText,
+            reading: targetReading,
             meanings: JSON.stringify(entry.meanings),
             level: entry.level,
             category: entry.category,
             conjugationEnabled: withConjugation && isBase,
+            originalKanji: entry.kanji,
           });
           const levelLabel = entry.level ? ` [JLPT ${entry.level}]` : '';
+          const savedToastWord = saveAsKana ? `${targetText}${levelLabel}` : `${entry.kanji} (${entry.reading})${levelLabel}`;
           Alert.alert(
             t('common.success'),
-            t('search.wordSavedToast', { word: `${entry.kanji} (${entry.reading})${levelLabel}` })
+            t('search.wordSavedToast', { word: savedToastWord })
           );
         }
       } catch (e) {
@@ -538,13 +543,22 @@ export default function SearchScreen() {
                   <View style={styles.wordTextGroup}>
                     <Text style={[styles.japaneseKanji, { color: colors.text }]}>{item.kanji}</Text>
                     {item.reading !== item.kanji && (
-                      <Text style={[styles.readingInlineText, { color: colors.primaryHover }]}>{item.reading}</Text>
+                      <View style={styles.readingWithKanaRow}>
+                        <Text style={[styles.readingInlineText, { color: colors.primaryHover }]}>{item.reading}</Text>
+                        <TouchableOpacity
+                          style={[styles.saveKanaBtn, { borderColor: colors.primary }]}
+                          onPress={() => handleQuickSaveJapanese(item, true)}
+                          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                        >
+                          <Text style={[styles.saveKanaBtnText, { color: colors.primary }]}>+ Kana</Text>
+                        </TouchableOpacity>
+                      </View>
                     )}
                   </View>
 
                   <TouchableOpacity
                     style={[styles.saveBtn, { backgroundColor: colors.primary }]}
-                    onPress={() => handleQuickSaveJapanese(item)}
+                    onPress={() => handleQuickSaveJapanese(item, false)}
                     hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                   >
                     <Ionicons name="add" size={22} color="#FFF" />
@@ -933,8 +947,26 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     includeFontPadding: false,
+    alignSelf: 'center',
+  },
+  readingWithKanaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginLeft: 6,
-    alignSelf: 'baseline',
+  },
+  saveKanaBtn: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    marginLeft: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  saveKanaBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    includeFontPadding: false,
   },
   cardBadgesRow: {
     flexDirection: 'row',
