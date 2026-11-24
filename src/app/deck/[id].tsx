@@ -2,8 +2,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { and, eq } from 'drizzle-orm';
 import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { memo, useCallback, useDeferredValue, useMemo, useRef, useState } from 'react';
-import { Alert, ActivityIndicator, FlatList, Modal, Platform, Pressable, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
+import { Alert, FlatList, Modal, Platform, Pressable, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { db } from '../../../db';
 import { decks, srsItems, words } from '../../../db/schema';
@@ -12,19 +12,19 @@ import { speakCard } from '../../../lib/audio-service';
 import { ALL_LANGUAGES, DeckAnswerMode, deleteDeck, setDeckAnswerMode } from '../../../lib/deck-service';
 import { getQuickHskLevel } from '../../../lib/hsk-data';
 import { cleanAndFormatMeanings } from '../../../lib/japanese-search';
-import { classifyJapaneseWord, detectTextLanguage, isJapaneseDictionaryForm, formatJapaneseReading, katakanaToHiragana, romajiToHiragana } from '../../../lib/japanese-utils';
+import { classifyJapaneseWord, detectTextLanguage, formatJapaneseReading, isJapaneseDictionaryForm, katakanaToHiragana, romajiToHiragana } from '../../../lib/japanese-utils';
 import { getQuickJlptLevel } from '../../../lib/jlpt-data';
-import { addCardToReview, deleteWord, removeCardFromReviewByWordId, resolveJapaneseBaseForm } from '../../../lib/word-service';
 import { hasAnkiCardRef, parseAux } from '../../../lib/word-aux';
+import { addCardToReview, deleteWord, removeCardFromReviewByWordId, resolveJapaneseBaseForm } from '../../../lib/word-service';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { ConjugationPracticeModal } from '../../components/ConjugationPracticeModal';
 import { CustomCardData, CustomCardModal } from '../../components/CustomCardModal';
 import { RenameDeckDialog } from '../../components/RenameDeckDialog';
 import { Shadows, Spacing, Typography } from '../../constants/theme';
-import { useTranslation } from '../../i18n';
-import { useImportProgressStore } from '../../stores/importProgressStore';
-import { useDeckBrowseStore } from '../../stores/deckBrowseStore';
 import { useSingleNavigation } from '../../hooks/useSingleNavigation';
+import { useTranslation } from '../../i18n';
+import { useDeckBrowseStore } from '../../stores/deckBrowseStore';
+import { useImportProgressStore } from '../../stores/importProgressStore';
 
 // Minúsculas y sin tildes latinas (á, ü, tonos del pinyin). Se recompone con NFC para no perder el dakuten (が ≠ か).
 const normalizeForSearch = (text: string) =>
@@ -51,6 +51,7 @@ interface DeckWordCardProps {
   onEdit?: (item: any) => void;
   onToggleReview?: (id: string, shouldAdd: boolean) => void;
   isCustomDeck?: boolean;
+  isJapaneseDeck?: boolean;
 }
 
 const DeckWordCard = memo(function DeckWordCard({
@@ -62,6 +63,7 @@ const DeckWordCard = memo(function DeckWordCard({
   onEdit,
   onToggleReview,
   isCustomDeck,
+  isJapaneseDeck,
 }: DeckWordCardProps) {
   const { t } = useTranslation();
   return (
@@ -87,7 +89,7 @@ const DeckWordCard = memo(function DeckWordCard({
             {item.simplified}
           </Text>
 
-          {item.displayReading && item.displayReading !== item.simplified ? (
+          {!isJapaneseDeck && item.displayReading && item.displayReading !== item.simplified ? (
             <Text
               style={[styles.readingText, { color: colors.primaryHover }]}
               numberOfLines={1}
@@ -526,8 +528,9 @@ export default function DeckDetailScreen() {
       onEdit={handleEditCard}
       onToggleReview={handleToggleReview}
       isCustomDeck={isCustomDeck}
+      isJapaneseDeck={isJapaneseDeck}
     />
-  ), [colors, handlePressWord, handleSpeak, handleDeleteWord, handleEditCard, handleToggleReview, isCustomDeck]);
+  ), [colors, handlePressWord, handleSpeak, handleDeleteWord, handleEditCard, handleToggleReview, isCustomDeck, isJapaneseDeck]);
 
   const keyExtractor = useCallback((item: any) => item.id, []);
 

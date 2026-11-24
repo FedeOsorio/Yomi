@@ -39,6 +39,7 @@ import {
   getCompoundWordsForChar,
   getWordDetailWithRelations,
   resolveJapaneseBaseForm,
+  toggleWordWritingMode,
   updateWordMeaningText,
   updateWordReading,
   updateWordSelectedMeanings,
@@ -420,6 +421,44 @@ export default function WordDetailScreen() {
       speakText(trimmed, isJap ? 'ja-JP' : (data.deck?.languageCode || 'zh-CN'), trimmed);
     } catch (e) {
       Alert.alert(t('common.error'), t('wordDetail.failedUpdateReading'));
+    }
+  };
+
+  const handleToggleWritingMode = async () => {
+    if (!data?.word) return;
+    try {
+      const res = await toggleWordWritingMode(data.word.id);
+      if (!res) return;
+      setData((prev) => {
+        if (!prev) return null;
+        const aux = parseAux(prev.word.auxiliaryInfo);
+        if (res.originalKanji) {
+          aux.originalKanji = res.originalKanji;
+        }
+        return {
+          ...prev,
+          word: {
+            ...prev.word,
+            simplified: res.newText,
+            auxiliaryInfo: stringifyAux(aux),
+          },
+          srsItem: prev.srsItem ? { ...prev.srsItem, displayText: res.newText } : null,
+        };
+      });
+      const preview = useDeckBrowseStore.getState().preview;
+      if (preview?.words?.has(data.word.id)) {
+        const row = preview.words.get(data.word.id) as any;
+        if (row) {
+          row.simplified = res.newText;
+          if (res.originalKanji) {
+            const aux = parseAux(row.auxiliaryInfo);
+            aux.originalKanji = res.originalKanji;
+            row.auxiliaryInfo = stringifyAux(aux);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Error al alternar modo de escritura:', e);
     }
   };
 
@@ -826,6 +865,8 @@ export default function WordDetailScreen() {
   const furiganaPairs = parseFurigana(word.simplified, furiganaReading);
   const kanjisList = extractKanjis(word.simplified);
   // Kanji aislado: tocarlo (o el pincel) lo dibuja trazo por trazo en el mismo lugar; otro toque lo devuelve
+  const hasKanji = /[\u4e00-\u9faf]/.test(word.simplified);
+  const canToggleWriting = isJapanese && (hasKanji || Boolean(parsedAux.originalKanji));
   const singleKanji = isIdeographic ? singleKanjiOf(word.simplified) : null;
   const showStrokes = singleKanji !== null && strokeChar === singleKanji;
   const toggleStrokes = () => setStrokeChar(showStrokes ? null : singleKanji);
@@ -971,11 +1012,27 @@ export default function WordDetailScreen() {
                         <Text style={[styles.readingTextBelow, { color: colors.primaryHover }]}>
                           {cleanReading}
                         </Text>
+                      ) : parsedAux.originalKanji && parsedAux.originalKanji !== word.simplified ? (
+                        <Text style={[styles.readingTextBelow, { color: colors.textMuted }]}>
+                          {parsedAux.originalKanji}
+                        </Text>
                       ) : (
                         <View style={{ flex: 1 }} />
                       )}
 
                       <View style={styles.titleActions}>
+                        {canToggleWriting && (
+                          <TouchableOpacity
+                            style={[styles.writingToggleBtn, { borderColor: colors.border }]}
+                            onPress={handleToggleWritingMode}
+                            activeOpacity={0.7}
+                            hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+                          >
+                            <Text style={[styles.writingToggleBtnText, { color: colors.primary }]}>
+                              {hasKanji ? 'Hiragana' : 'Kanji'}
+                            </Text>
+                          </TouchableOpacity>
+                        )}
                         {singleKanji && (
                           <TouchableOpacity
                             style={[styles.smallAudioBtn, showStrokes && { backgroundColor: colors.primary + '20' }]}
@@ -1774,6 +1831,19 @@ const styles = StyleSheet.create({
   customMeaningText: {
     fontSize: 15,
     lineHeight: 20,
+  },
+  writingToggleBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginRight: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  writingToggleBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
   audioBtn: {
     width: 36,
