@@ -85,8 +85,6 @@ export default function FoldersScreen() {
         </TouchableOpacity>
 
         <View style={styles.brandTitleContainer}>
-          <Text style={[styles.brandText, { color: colors.primary }]}>Yomi</Text>
-          <Text style={[styles.brandSep, { color: colors.textMuted }]}> • </Text>
           <Text style={[styles.title, { color: colors.text }]}>{t('folders.manageFolders')}</Text>
         </View>
 

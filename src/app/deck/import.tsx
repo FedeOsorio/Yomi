@@ -496,8 +496,6 @@ export default function ImportDeckScreen() {
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <View style={styles.brandTitleContainer}>
-          <Text style={[styles.brandText, { color: accentColor }]}>Yomi</Text>
-          <Text style={[styles.brandSep, { color: colors.textMuted }]}> • </Text>
           <Text style={[styles.title, { color: colors.text }]}>
             {t('importDeck.title')}
           </Text>

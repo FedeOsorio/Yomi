@@ -42,13 +42,17 @@ import {
   updateWordMeaningText,
   updateWordReading,
   updateWordSelectedMeanings,
+  translateWordMeanings,
+  translateDeckMeanings,
   WordDetailWithRelations,
 } from '../../../lib/word-service';
 import { useTheme } from '../../../providers/ThemeProvider';
-import { parseAux } from '../../../lib/word-aux';
+import { parseAux, stringifyAux } from '../../../lib/word-aux';
+import { detectMeaningsLanguage } from '../../../lib/language-detector';
 import { KanjiStrokeViewer, preloadStrokeSvg } from '../../components/kanji/KanjiStrokeViewer';
 import { Shadows, Spacing, Typography } from '../../constants/theme';
-import { useTranslation } from '../../i18n';
+import { useTranslation, useLanguageStore } from '../../i18n';
+import { SupportedLanguage } from '../../i18n/types';
 import { useDeckBrowseStore } from '../../stores/deckBrowseStore';
 import { useSingleNavigation } from '../../hooks/useSingleNavigation';
 
@@ -152,6 +156,27 @@ export default function WordDetailScreen() {
   const [editReadingText, setEditReadingText] = useState('');
   const [isAudioReady, setIsAudioReady] = useState(false);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [isTranslating, setIsTranslating] = useState(false);
+  const currentLanguage = useLanguageStore((s) => s.currentLanguage);
+
+  const wordMeaningLang = useMemo(() => {
+    if (!data?.word) return null;
+    const aux = parseAux(data.word.auxiliaryInfo);
+    if (aux.meaningLang) return aux.meaningLang as SupportedLanguage;
+    const isCustom = data.deck?.type === 'custom';
+    let meaningsList: string[];
+    if (isCustom) {
+      try {
+        const parsed = JSON.parse(data.word.meanings);
+        meaningsList = Array.isArray(parsed) ? parsed : [String(data.word.meanings)];
+      } catch {
+        meaningsList = [data.word.meanings];
+      }
+    } else {
+      meaningsList = cleanAndFormatMeanings(data.word.meanings);
+    }
+    return detectMeaningsLanguage(meaningsList);
+  }, [data?.word?.auxiliaryInfo, data?.word?.meanings, data?.deck?.type]);
 
   // --- Navegación entre palabras del mazo deslizando a izquierda / derecha ---
   const currentId = typeof id === 'string' ? id : undefined;
@@ -398,6 +423,73 @@ export default function WordDetailScreen() {
     }
   };
 
+  const handleTranslatePress = () => {
+    if (!data) return;
+    const count = siblingIds.length;
+
+    if (count > 1) {
+      Alert.alert(
+        t('wordDetail.translateModalTitle'),
+        t('wordDetail.translateModalMsg'),
+        [
+          { text: t('common.cancel'), style: 'cancel' },
+          {
+            text: t('wordDetail.translateThisWord'),
+            onPress: () => doTranslateWord(),
+          },
+          {
+            text: t('wordDetail.translateAllDeck'),
+            onPress: () => doTranslateDeck(),
+          },
+        ]
+      );
+    } else {
+      doTranslateWord();
+    }
+  };
+
+  const doTranslateWord = async () => {
+    if (!data) return;
+    setIsTranslating(true);
+    try {
+      const res = await translateWordMeanings(data.word.id, currentLanguage, wordMeaningLang || 'en');
+      setData((prev) => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          word: {
+            ...prev.word,
+            meanings: JSON.stringify(res.updatedMeanings),
+            auxiliaryInfo: stringifyAux({
+              ...parseAux(prev.word.auxiliaryInfo),
+              selectedMeanings: res.updatedSelected,
+              meaningLang: currentLanguage,
+            }),
+          },
+        };
+      });
+      setSelectedMeanings(res.updatedSelected);
+    } catch (e) {
+      Alert.alert(t('common.error'), t('wordDetail.translateError'));
+    } finally {
+      setIsTranslating(false);
+    }
+  };
+
+  const doTranslateDeck = async () => {
+    if (!data || !deckId) return;
+    setIsTranslating(true);
+    try {
+      const count = await translateDeckMeanings(deckId, currentLanguage, wordMeaningLang || 'en');
+      await fetchDetail();
+      Alert.alert(t('common.success'), t('wordDetail.translateDeckSuccess', { count }));
+    } catch (e) {
+      Alert.alert(t('common.error'), t('wordDetail.translateError'));
+    } finally {
+      setIsTranslating(false);
+    }
+  };
+
   useEffect(() => {
     fetchDetail();
   }, [id]);
@@ -547,6 +639,12 @@ export default function WordDetailScreen() {
     })()
     : cleanAndFormatMeanings(word.meanings);
 
+  const showTranslateBtn = Boolean(
+    wordMeaningLang &&
+    wordMeaningLang !== currentLanguage &&
+    displayMeaningsList.length > 0
+  );
+
   const lang = deck?.languageCode || 'zh-CN';
   const isChinese = !isCustomDeck && lang.startsWith('zh');
   const isJapanese = !isCustomDeck && lang.startsWith('ja');
@@ -690,6 +788,15 @@ export default function WordDetailScreen() {
     }
   }
 
+  // Dificultad cualitativa entendible para el usuario
+  const getDifficultyLabel = (diff?: number) => {
+    if (diff == null || diff === 0) return t('wordDetail.diffModerate');
+    if (diff < 3.5) return t('wordDetail.diffEasy');
+    if (diff < 6.0) return t('wordDetail.diffModerate');
+    if (diff < 8.0) return t('wordDetail.diffHard');
+    return t('wordDetail.diffVeryHard');
+  };
+
   // Formato amigable de estado FSRS
   const getSrsStateLabel = (stateNum?: number) => {
     switch (stateNum) {
@@ -723,8 +830,6 @@ export default function WordDetailScreen() {
         </TouchableOpacity>
 
         <View style={styles.brandHeaderContainer}>
-          <Text style={[styles.brandText, { color: colors.primary }]}>Yomi</Text>
-          <Text style={[styles.brandSep, { color: colors.textMuted }]}> • </Text>
           <Text style={[styles.deckName, { color: colors.text }]} numberOfLines={1}>
             {isAnkiDesignCard ? t('wordDetail.cardTitle') : isCustomDeck ? t('customCard.editCard') : t('wordDetail.title')}
           </Text>
@@ -1073,6 +1178,23 @@ export default function WordDetailScreen() {
               <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>
                 {isCustomDeck ? `${t('customCard.answerBack')}:` : `${t('wordDetail.meanings')}:`}
               </Text>
+              {showTranslateBtn && (
+                <TouchableOpacity
+                  style={styles.translateHeaderBtn}
+                  onPress={handleTranslatePress}
+                  disabled={isTranslating}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  {isTranslating ? (
+                    <ActivityIndicator size="small" color={colors.primary} />
+                  ) : (
+                    <Text style={[styles.translateHeaderBtnText, { color: colors.primary }]}>
+                      {t('wordDetail.translate')}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              )}
             </View>
             <View style={styles.meaningsContainer}>
               {displayMeaningsList.map((meaning, index) => {
@@ -1286,7 +1408,7 @@ export default function WordDetailScreen() {
 
               <View style={[styles.srsStat, { backgroundColor: colors.surfaceHighlight }]}>
                 <Text style={[styles.srsStatLabel, { color: colors.textMuted }]}>{t('wordDetail.difficulty')}</Text>
-                <Text style={[styles.srsStatValue, { color: colors.text }]}>{srsItem.difficulty?.toFixed(1) || '0.0'}</Text>
+                <Text style={[styles.srsStatValue, { color: colors.text }]}>{getDifficultyLabel(srsItem.difficulty)}</Text>
               </View>
 
               <View style={[styles.srsStat, { backgroundColor: colors.surfaceHighlight }]}>
@@ -1664,6 +1786,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: Spacing.xs,
+  },
+  translateHeaderBtn: {
+    paddingVertical: 2,
+    paddingHorizontal: 4,
+  },
+  translateHeaderBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
   meaningHint: {
     fontSize: 11,

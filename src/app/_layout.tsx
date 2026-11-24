@@ -32,7 +32,6 @@ function RootStack() {
       }}
     >
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen name="search/picker" options={{ presentation: 'modal', title: t('search.pickerTitle') }} />
       <Stack.Screen name="deck/[id]" options={{ headerShown: false }} />
       <Stack.Screen name="deck/import" options={{ headerShown: false }} />
       <Stack.Screen name="word/[id]" options={{ headerShown: false }} />

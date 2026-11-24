@@ -324,25 +324,7 @@ export default function SearchScreen() {
       }
     };
 
-    if (isConjugable) {
-      Alert.alert(
-        t('search.conjugationPromptTitle', { itemType: itemTypeLabel }),
-        t('search.conjugationPromptDetail'),
-        [
-          {
-            text: t('common.cancel'),
-            style: 'cancel',
-            onPress: () => executeSave(false),
-          },
-          {
-            text: t('common.confirm'),
-            onPress: () => executeSave(true),
-          },
-        ]
-      );
-    } else {
-      executeSave(false);
-    }
+    executeSave(isConjugable);
   };
 
   // --- GUARDADO OTROS IDIOMAS ---
@@ -409,8 +391,6 @@ export default function SearchScreen() {
         </TouchableOpacity>
 
         <View style={styles.brandTitleContainer}>
-          <Text style={[styles.brandText, { color: colors.primary }]}>Yomi</Text>
-          <Text style={[styles.brandSep, { color: colors.textMuted }]}> • </Text>
           <Text style={[styles.topTitle, { color: colors.text }]}>{t('search.title')}</Text>
         </View>
       </View>

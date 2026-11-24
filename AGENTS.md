@@ -17,3 +17,8 @@
 - **La práctica de conjugaciones** es una máquina de estados pura en `lib/practice-flow.ts` (la ejecuta `src/components/ConjugationPracticeModal.tsx`; prueba: `npm run test:practice`). La respuesta escrita se evalúa con `matchesConjugationAnswer` (`lib/answer-match.ts`): en una forma conjugada no se tolera duración de vocales, っ ni un sonido distinto (いて ≠ いって, きて ≠ きいて); solo escrituras equivalentes (kanji homófono, katakana, romaji, cifras, おう/おお, ぢ/づ = じ/ず, は/へ/を) y las formas equivalentes de `equivalentConjugations` (じゃ = では, じゃありません = じゃないです, くないです = くありません, en verbos なくて = ないで). PROHIBIDO agregar otras tolerancias: generan falsos aciertos.
 - Antes de cada OTA, y después de tocar las conjugaciones o su evaluación, correr `npm run test:conjugation` y `npm run test:practice`: los dos deben dar "Todo bien".
 - PROHIBIDO editar `node_modules` a mano (sin parches).
+
+## REGLA — DISEÑO LIMPIO Y SIN SOBRECARGA VISUAL (MENOS ES MÁS)
+- **PROHIBIDO agregar iconos decorativos o redundantes a botones de texto** cuando el texto de la acción ya es completamente claro y directo (ej. NO poner icono de globo/idioma a un botón 'Traducir', NO poner emojis o flechas innecesarias).
+- **PROHIBIDO agregar aclaraciones o notas entre paréntesis `( )` en botones, títulos, subtítulos o elementos de interfaz**. El texto debe ser sobrio, conciso y contextual (PROHIBIDO 'Pregunta (Frente)', 'Todo el mazo (50 palabras)', 'Traducir (español)', etc.).
+- **PROHIBIDO crear píldoras o badges con fondo donde la tipografía y el color de acento bastan**. Evitar cajas y bordes pesados innecesarios.

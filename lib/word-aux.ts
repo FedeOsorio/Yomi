@@ -9,6 +9,9 @@ export interface WordAux {
   /** Categoría gramatical (p. ej. "Verbo Godan (-u)", "Sustantivo"). */
   category?: string;
 
+  /** Idioma de los significados (p. ej. "es", "en", "pt", "ja"). */
+  meaningLang?: string;
+
   /** Significados elegidos por el usuario (los que se evalúan y se muestran). */
   selectedMeanings?: string[];
 

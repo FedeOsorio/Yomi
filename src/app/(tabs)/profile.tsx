@@ -134,23 +134,7 @@ export default function ProfileScreen() {
     if (Platform.OS === 'android' && !process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID) {
       Alert.alert(
         t('profile.googleConfigAndroidTitle'),
-        t('profile.googleConfigAndroidMsg'),
-        [
-          { text: t('common.cancel'), style: 'cancel' },
-          {
-            text: t('profile.demoMode'),
-            onPress: async () => {
-              const demoUser: GoogleUserProfile = {
-                email: 'usuario.demo@gmail.com',
-                name: 'Estudiante Yomi (Demo)',
-              };
-              const { setStorageItem } = await import('../../../lib/storage-service');
-              await setStorageItem('yomi_google_user_profile', JSON.stringify(demoUser));
-              useGoogleDriveStore.getState().setGoogleUser(demoUser);
-              Alert.alert(t('profile.demoModeActiveTitle'), t('profile.demoModeActiveMsg'));
-            },
-          },
-        ]
+        t('profile.googleConfigAndroidMsg')
       );
       return;
     }
@@ -824,10 +808,6 @@ export default function ProfileScreen() {
           <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('profile.localBackup')}</Text>
         </View>
 
-        <Text style={[styles.settingSub, { color: colors.textMuted, marginBottom: Spacing.sm }]}>
-          {t('profile.localBackupDesc')}
-        </Text>
-
         <View style={[styles.backupStatusBox, { backgroundColor: colors.surfaceHighlight }]}>
           <Ionicons name="time-outline" size={16} color={colors.textMuted} style={{ marginRight: 6 }} />
           <Text style={[styles.backupStatusText, { color: colors.textMuted }]}>
@@ -868,13 +848,6 @@ export default function ProfileScreen() {
               </>
             )}
           </TouchableOpacity>
-        </View>
-
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginTop: Spacing.sm, backgroundColor: colors.surfaceHighlight, padding: Spacing.sm, borderRadius: 10 }}>
-          <Ionicons name="information-circle-outline" size={16} color={colors.primary} style={{ marginRight: 6, marginTop: 2 }} />
-          <Text style={{ flex: 1, fontSize: 13, color: colors.textMuted, lineHeight: 18 }}>
-            {t('profile.backupMediaNotice')}
-          </Text>
         </View>
       </View>
 

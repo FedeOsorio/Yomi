@@ -8,16 +8,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { db } from '../../../db';
 import { decks, srsItems, words } from '../../../db/schema';
 import { exportDeckToYomiFormat } from '../../../lib/anki-importer';
-import { recoverDeckMediaAsync } from '../../../lib/anki-import-service';
-import { deleteFileQuietly, listMediaFiles, mediaFileName } from '../../../lib/media-service';
-import * as DocumentPicker from 'expo-document-picker';
 import { speakCard } from '../../../lib/audio-service';
 import { ALL_LANGUAGES, DeckAnswerMode, deleteDeck, setDeckAnswerMode } from '../../../lib/deck-service';
 import { getQuickHskLevel } from '../../../lib/hsk-data';
 import { cleanAndFormatMeanings } from '../../../lib/japanese-search';
 import { classifyJapaneseWord, detectTextLanguage, isJapaneseDictionaryForm, formatJapaneseReading, katakanaToHiragana, romajiToHiragana } from '../../../lib/japanese-utils';
 import { getQuickJlptLevel } from '../../../lib/jlpt-data';
-import { addCardToReview, deleteWord, generateConjugationsForDeck, removeCardFromReviewByWordId, resolveJapaneseBaseForm } from '../../../lib/word-service';
+import { addCardToReview, deleteWord, removeCardFromReviewByWordId, resolveJapaneseBaseForm } from '../../../lib/word-service';
 import { hasAnkiCardRef, parseAux } from '../../../lib/word-aux';
 import { useTheme } from '../../../providers/ThemeProvider';
 import { ConjugationPracticeModal } from '../../components/ConjugationPracticeModal';
@@ -140,15 +137,6 @@ const DeckWordCard = memo(function DeckWordCard({
         </Text>
       </View>
 
-      {!isCustomDeck && (
-        <View style={[styles.cardFooter, { borderTopColor: colors.border }]}>
-          <Text style={[styles.viewDetailText, { color: colors.primary }]}>
-            {t('deckDetail.viewDetailAndStroke')}
-          </Text>
-          <Ionicons name="chevron-forward" size={13} color={colors.primary} />
-        </View>
-      )}
-
       {isCustomDeck && !item.isInReview && (
         <TouchableOpacity
           style={[styles.cardFooter, { borderTopColor: colors.border }]}
@@ -183,8 +171,6 @@ export default function DeckDetailScreen() {
   const [customCardModalVisible, setCustomCardModalVisible] = useState(false);
   const [editingCard, setEditingCard] = useState<CustomCardData | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [missingMediaCount, setMissingMediaCount] = useState<number>(0);
-  const [isRecoveringMedia, setIsRecoveringMedia] = useState<boolean>(false);
   const deferredQuery = useDeferredValue(searchQuery);
   const setBrowseList = useDeckBrowseStore((s) => s.setBrowseList);
 
@@ -335,11 +321,6 @@ export default function DeckDetailScreen() {
           dictionaryForm,
           displayMeanings,
           isInReview: activeSrsSet.has(w.id),
-          // Archivos de audio/imagen de la tarjeta (los `missing` nunca vinieron en el .apkg)
-          mediaFiles: (aux.media ?? [])
-            .filter((m) => !m.missing && m.path)
-            .map((m) => mediaFileName(m.path!))
-            .filter(Boolean) as string[],
         };
       };
 
@@ -363,16 +344,6 @@ export default function DeckDetailScreen() {
       deckCache.set(id, { deckInfo: deckObj, list: unchanged ? previous.list : processed, rows });
       setLoaded(true);
       if (!unchanged) setDeckWords(processed);
-
-      // Archivos únicos que faltan en disco y se pueden recuperar (se revisa siempre: recuperarlos cambia el disco, no la base)
-      const missingFiles = new Set<string>();
-      if (processed.some((row) => row.mediaFiles.length > 0)) {
-        const onDisk = listMediaFiles();
-        for (const row of processed) {
-          for (const fileName of row.mediaFiles) if (!onDisk.has(fileName)) missingFiles.add(fileName);
-        }
-      }
-      setMissingMediaCount(missingFiles.size);
     }
   }, [id]);
 
@@ -425,47 +396,6 @@ export default function DeckDetailScreen() {
     }
   }, [fetchWords, t]);
 
-  const handleRecoverMedia = async () => {
-    let pickedUri: string | null = null;
-    try {
-      const res = await DocumentPicker.getDocumentAsync({
-        type: ['*/*'],
-        copyToCacheDirectory: true,
-      });
-      if (res.canceled || !res.assets || res.assets.length === 0) return;
-
-      const file = res.assets[0];
-      pickedUri = file.uri;
-      if (!file.name.toLowerCase().endsWith('.apkg')) {
-        Alert.alert(t('common.error'), t('importDeck.alertInvalidApkgFormat'));
-        return;
-      }
-
-      setIsRecoveringMedia(true);
-      const result = await recoverDeckMediaAsync(id, file.uri);
-      if (result.status === 'noMediaInPackage') {
-        Alert.alert(t('common.notice'), t('deckDetail.noMediaInPackage'));
-        return;
-      }
-      if (result.status === 'noMatchingMedia') {
-        Alert.alert(t('common.notice'), t('deckDetail.noMatchingMedia'));
-        return;
-      }
-
-      Alert.alert(
-        t('importDeck.alertSuccessTitle'),
-        t('deckDetail.mediaRecoveredSuccess', { count: result.recovered }) +
-          (result.failed > 0 ? t('importDeck.mediaSkippedCount', { count: result.failed }) : '')
-      );
-      fetchWords();
-    } catch (err) {
-      Alert.alert(t('common.error'), t('deckDetail.mediaRecoverError'));
-    } finally {
-      setIsRecoveringMedia(false);
-      deleteFileQuietly(pickedUri);
-    }
-  };
-
   const [menuVisible, setMenuVisible] = useState(false);
   const [renamingDeck, setRenamingDeck] = useState<{ id: string; name: string } | null>(null);
 
@@ -482,48 +412,6 @@ export default function DeckDetailScreen() {
       { text: t('deckDetail.answerReading'), onPress: () => choose('reading') },
       { text: t('deckDetail.answerMeaning'), onPress: () => choose('meaning') },
     ]);
-  };
-
-  const handleGenerateConjugations = async () => {
-    setMenuVisible(false);
-    if (!id) return;
-    try {
-      const res = await generateConjugationsForDeck(id);
-      let msg = t('deckDetail.conjugationsCountMsg', {
-        total: res.totalAnalyzed,
-        verbs: res.verbsFound,
-        adjectives: res.adjectivesFound,
-        conjugable: res.totalConjugable,
-      });
-
-      if (res.deconjugatedCount > 0) {
-        msg += t('deckDetail.deconjugatedMsg', { count: res.deconjugatedCount });
-      }
-
-      if (res.totalConjugable === 0) {
-        msg += t('deckDetail.noConjugationsFound');
-      }
-
-      await fetchWords();
-
-      if (res.totalConjugable > 0) {
-        Alert.alert(
-          t('deckDetail.conjugationsGenerated'),
-          msg,
-          [
-            { text: t('common.ok'), style: 'cancel' },
-            {
-              text: t('deckDetail.practiceNow'),
-              onPress: () => setConjugationModalVisible(true),
-            },
-          ]
-        );
-      } else {
-        Alert.alert(t('deckDetail.generateConjugations'), msg);
-      }
-    } catch (e) {
-      Alert.alert(t('common.error'), t('deckDetail.generateConjugationsError'));
-    }
   };
 
   const handleExportDeck = async () => {
@@ -618,8 +506,6 @@ export default function DeckDetailScreen() {
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <View style={styles.brandTitleContainer}>
-          <Text style={[styles.brandText, { color: colors.primary }]}>Yomi</Text>
-          <Text style={[styles.brandSep, { color: colors.textMuted }]}> • </Text>
           {isCustomDeck ? (
             <Ionicons
               name="layers"
@@ -683,29 +569,6 @@ export default function DeckDetailScreen() {
                 <Text style={[styles.menuDropdownText, { color: colors.text }]}>
                   {t('deckDetail.answerModeTitle')}: {answerMode === 'meaning' ? t('deckDetail.answerMeaning') : t('deckDetail.answerReading')}
                 </Text>
-              </TouchableOpacity>
-            )}
-
-            {!isCustomDeck && deckInfo?.languageCode === 'ja-JP' && deckWords.some((w) => w.isConjugable) && (
-              <TouchableOpacity
-                style={[styles.menuDropdownItem, { borderBottomColor: colors.border }]}
-                onPress={() => {
-                  setMenuVisible(false);
-                  setConjugationModalVisible(true);
-                }}
-              >
-                <Ionicons name="sparkles" size={20} color={colors.primary} style={{ marginRight: 10 }} />
-                <Text style={[styles.menuDropdownText, { color: colors.text }]}>{t('deckDetail.conjugationPractice')}</Text>
-              </TouchableOpacity>
-            )}
-
-            {!isCustomDeck && deckInfo?.languageCode === 'ja-JP' && deckWords.length > 0 && (
-              <TouchableOpacity
-                style={[styles.menuDropdownItem, { borderBottomColor: colors.border }]}
-                onPress={handleGenerateConjugations}
-              >
-                <Ionicons name="sparkles-outline" size={20} color={colors.primary} style={{ marginRight: 10 }} />
-                <Text style={[styles.menuDropdownText, { color: colors.text }]}>{t('deckDetail.generateConjugations')}</Text>
               </TouchableOpacity>
             )}
 
@@ -798,33 +661,6 @@ export default function DeckDetailScreen() {
         </View>
       ) : (
         <>
-          {missingMediaCount > 0 && (
-            <View style={[styles.missingMediaBanner, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              <View style={styles.missingMediaTextCol}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Ionicons name="cloud-download-outline" size={18} color="#F59E0B" style={{ marginRight: 6 }} />
-                  <Text style={[styles.missingMediaTitle, { color: colors.text }]}>
-                    {missingMediaCount} {t('deckDetail.missingMediaFiles')}
-                  </Text>
-                </View>
-                <Text style={[styles.missingMediaSubtitle, { color: colors.textMuted }]}>
-                  {t('deckDetail.recoverMediaHint')}
-                </Text>
-              </View>
-              <TouchableOpacity
-                style={[styles.recoverMediaBtn, { backgroundColor: colors.primary }]}
-                disabled={isRecoveringMedia}
-                onPress={handleRecoverMedia}
-              >
-                {isRecoveringMedia ? (
-                  <ActivityIndicator size="small" color="#FFF" />
-                ) : (
-                  <Text style={styles.recoverMediaBtnText}>{t('deckDetail.recoverMedia')}</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          )}
-
           <View style={[styles.searchBar, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <Ionicons name="search" size={18} color={colors.textMuted} />
             <TextInput
@@ -1063,7 +899,7 @@ const styles = StyleSheet.create({
   card: {
     paddingHorizontal: Spacing.md,
     paddingTop: Spacing.md,
-    paddingBottom: Spacing.sm,
+    paddingBottom: Spacing.md,
     borderRadius: 16,
     marginBottom: Spacing.md,
     borderWidth: 1,
@@ -1240,39 +1076,5 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontWeight: 'bold',
     fontSize: 15,
-  },
-  missingMediaBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: Spacing.sm + 4,
-    borderRadius: 14,
-    borderWidth: 1,
-    marginHorizontal: Spacing.md,
-    marginBottom: Spacing.sm,
-    gap: 10,
-  },
-  missingMediaTextCol: {
-    flex: 1,
-  },
-  missingMediaTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  missingMediaSubtitle: {
-    fontSize: 11,
-    marginTop: 2,
-  },
-  recoverMediaBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  recoverMediaBtnText: {
-    color: '#FFF',
-    fontSize: 12,
-    fontWeight: '700',
   },
 });

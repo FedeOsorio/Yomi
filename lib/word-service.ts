@@ -3,7 +3,8 @@ import { db, dictDb } from '../db';
 import { dictionaryEntries } from '../db/dict-schema';
 import { decks, srsItems, words } from '../db/schema';
 import { cleanHtmlAndAnkiTags, parseAnkiFuriganaSyntax } from './anki-importer';
-import { cleanAndFormatMeanings, extractKanjis, searchJapanese, resolveJapaneseReading } from './japanese-search';
+import { cleanAndFormatMeanings, extractKanjis, searchJapanese, resolveJapaneseReading, translateBatchToLanguage } from './japanese-search';
+import { getCurrentUserLanguage } from '../src/i18n';
 import { classifyJapaneseWord, deconjugateJapanese, isJapaneseDictionaryForm, toNormalizedHiragana, COMMON_KANA_NOUNS_AND_EXPRESSIONS, containsJapanese } from './japanese-utils';
 import { conjugationTypeOf } from './japanese-conjugation';
 import { JLPT_KANJI_READINGS } from './jlpt-data';
@@ -237,7 +238,11 @@ export async function saveWords(
     }
 
     const wordId = generateUUID();
-    const auxInfo = stringifyAux({ ...(level && { level }), ...(category && { category }) });
+    const auxInfo = stringifyAux({
+      ...(level && { level }),
+      ...(category && { category }),
+      meaningLang: getCurrentUserLanguage(),
+    });
 
     await db.insert(words).values({
       id: wordId,
@@ -297,6 +302,7 @@ export async function saveCustomWord(
     ...(data.level && { level: data.level }),
     ...(data.category && { category: data.category }),
     ...(data.conjugationEnabled !== undefined && { conjugationEnabled: data.conjugationEnabled }),
+    meaningLang: getCurrentUserLanguage(),
   });
 
   await db.insert(words).values({
@@ -356,6 +362,7 @@ export async function saveGenericWord(
     ...(data.level && { level: data.level }),
     ...(data.category && { category: data.category }),
     ...(data.conjugationEnabled !== undefined && { conjugationEnabled: data.conjugationEnabled }),
+    meaningLang: getCurrentUserLanguage(),
   });
 
   await db.insert(words).values({
@@ -740,6 +747,160 @@ export async function updateWordMeaningText(
 }
 
 /**
+ * Traduce los significados de una palabra al idioma objetivo, actualizando
+ * words.meanings, words.auxiliaryInfo (selectedMeanings y meaningLang) y srsItems.displayMeaning.
+ */
+export async function translateWordMeanings(
+  wordId: string,
+  targetLang: string,
+  sourceLang: string = 'en'
+): Promise<{ updatedMeanings: string[]; updatedSelected: string[] }> {
+  const existingWords = await db.select().from(words).where(eq(words.id, wordId)).limit(1);
+  if (existingWords.length === 0) {
+    return { updatedMeanings: [], updatedSelected: [] };
+  }
+
+  const word = existingWords[0];
+  const deckResult = await db.select().from(decks).where(eq(decks.id, word.deckId)).limit(1);
+  const isCustomDeck = deckResult.length > 0 && deckResult[0].type === 'custom';
+
+  let originalList: string[] = [];
+  if (isCustomDeck) {
+    try {
+      const parsed = JSON.parse(word.meanings);
+      originalList = Array.isArray(parsed) ? parsed : [String(word.meanings)];
+    } catch {
+      originalList = [word.meanings];
+    }
+  } else {
+    originalList = cleanAndFormatMeanings(word.meanings);
+  }
+
+  const fromLang = (sourceLang === 'ja' ? 'ja' : (sourceLang === 'es' ? 'es' : (sourceLang === 'pt' ? 'pt' : 'en'))) as 'en' | 'ja';
+  const translated = await translateBatchToLanguage(originalList, targetLang, fromLang);
+
+  const auxObj = parseAux(word.auxiliaryInfo);
+  let newSelected: string[] = [];
+  if (Array.isArray(auxObj.selectedMeanings) && auxObj.selectedMeanings.length > 0) {
+    newSelected = originalList
+      .map((orig, idx) => (auxObj.selectedMeanings!.includes(orig) ? translated[idx] : null))
+      .filter((m): m is string => Boolean(m));
+  }
+  if (newSelected.length === 0) {
+    newSelected = translated;
+  }
+
+  auxObj.selectedMeanings = newSelected;
+  auxObj.meaningLang = targetLang;
+
+  const newMeaningsJson = JSON.stringify(translated);
+  const newSelectedJson = JSON.stringify(newSelected);
+
+  await db.update(words)
+    .set({
+      meanings: newMeaningsJson,
+      auxiliaryInfo: stringifyAux(auxObj),
+    })
+    .where(eq(words.id, wordId));
+
+  await db.update(srsItems)
+    .set({ displayMeaning: newSelectedJson })
+    .where(
+      and(
+        eq(srsItems.itemType, 'word'),
+        eq(srsItems.itemId, wordId)
+      )
+    );
+
+  return { updatedMeanings: translated, updatedSelected: newSelected };
+}
+
+/**
+ * Traduce en lote todos los significados de las palabras de un mazo al idioma objetivo,
+ * actualizando meanings, selectedMeanings y srsItems en una sola transacción.
+ */
+export async function translateDeckMeanings(
+  deckId: string,
+  targetLang: string,
+  sourceLang: string = 'en'
+): Promise<number> {
+  const rows = await db.select().from(words).where(eq(words.deckId, deckId));
+  if (rows.length === 0) return 0;
+
+  const deckResult = await db.select().from(decks).where(eq(decks.id, deckId)).limit(1);
+  const isCustomDeck = deckResult.length > 0 && deckResult[0].type === 'custom';
+
+  const wordItems = rows.map((r) => {
+    let list: string[] = [];
+    if (isCustomDeck) {
+      try {
+        const parsed = JSON.parse(r.meanings);
+        list = Array.isArray(parsed) ? parsed : [String(r.meanings)];
+      } catch {
+        list = [r.meanings];
+      }
+    } else {
+      list = cleanAndFormatMeanings(r.meanings);
+    }
+    const aux = parseAux(r.auxiliaryInfo);
+    return { row: r, list, aux };
+  });
+
+  const allTexts: string[] = [];
+  for (const item of wordItems) {
+    for (const t of item.list) {
+      allTexts.push(t);
+    }
+  }
+
+  const fromLang = (sourceLang === 'ja' ? 'ja' : (sourceLang === 'es' ? 'es' : (sourceLang === 'pt' ? 'pt' : 'en'))) as 'en' | 'ja';
+  const allTranslated = await translateBatchToLanguage(allTexts, targetLang, fromLang);
+
+  let offset = 0;
+  await inTransaction(async () => {
+    for (const item of wordItems) {
+      const count = item.list.length;
+      const translatedSlice = allTranslated.slice(offset, offset + count);
+      offset += count;
+
+      let newSelected: string[] = [];
+      if (Array.isArray(item.aux.selectedMeanings) && item.aux.selectedMeanings.length > 0) {
+        newSelected = item.list
+          .map((orig, idx) => (item.aux.selectedMeanings!.includes(orig) ? translatedSlice[idx] : null))
+          .filter((m): m is string => Boolean(m));
+      }
+      if (newSelected.length === 0) {
+        newSelected = translatedSlice;
+      }
+
+      item.aux.selectedMeanings = newSelected;
+      item.aux.meaningLang = targetLang;
+
+      const meaningsJson = JSON.stringify(translatedSlice);
+      const selectedJson = JSON.stringify(newSelected);
+
+      await db.update(words)
+        .set({
+          meanings: meaningsJson,
+          auxiliaryInfo: stringifyAux(item.aux),
+        })
+        .where(eq(words.id, item.row.id));
+
+      await db.update(srsItems)
+        .set({ displayMeaning: selectedJson })
+        .where(
+          and(
+            eq(srsItems.itemType, 'word'),
+            eq(srsItems.itemId, item.row.id)
+          )
+        );
+    }
+  });
+
+  return rows.length;
+}
+
+/**
  * Inserta un lote masivo de palabras importadas en un mazo, evitando duplicados
  * y generando sus correspondientes tarjetas SRS FSRS.
  */
@@ -788,6 +949,7 @@ export async function saveBatchWords(
       const wordId = generateUUID();
       const auxInfo = stringifyAux({
         ...(item.level && { level: item.level.trim() }),
+        meaningLang: getCurrentUserLanguage(),
         ...item.rawExtras,
         ...(item.media && item.media.length > 0 && { media: item.media }),
       });

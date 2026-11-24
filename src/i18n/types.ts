@@ -23,6 +23,10 @@ export interface TranslationSchema {
     later: string;
     updatingTitle: string;
     updatingSubtitle: string;
+    lang_es: string;
+    lang_en: string;
+    lang_pt: string;
+    lang_ja: string;
   };
   tabs: {
     decks: string;
@@ -271,6 +275,15 @@ export interface TranslationSchema {
     deleteWordConfirm: string;
     wordDeleted: string;
     wordNotFound: string;
+    translate: string;
+    translateMeanings: string;
+    translateModalTitle: string;
+    translateModalMsg: string;
+    translateThisWord: string;
+    translateAllDeck: string;
+    translateSuccess: string;
+    translateDeckSuccess: string;
+    translateError: string;
     level: string;
     category: string;
     baseForm: string;
@@ -288,6 +301,10 @@ export interface TranslationSchema {
     state: string;
     times: string;
     difficulty: string;
+    diffEasy: string;
+    diffModerate: string;
+    diffHard: string;
+    diffVeryHard: string;
     editAnswer: string;
     enterAnswerPlaceholder: string;
     enterMeaningPlaceholder: string;
