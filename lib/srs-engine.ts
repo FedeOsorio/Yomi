@@ -175,10 +175,8 @@ export function calculateReviewRating(
   isIdeographic: boolean
 ): Rating {
   if (isIdeographic) {
-    if (isReadingCorrect && isMeaningCorrect) {
+    if (isReadingCorrect || isMeaningCorrect) {
       return Rating.Good;
-    } else if (isReadingCorrect || isMeaningCorrect) {
-      return Rating.Hard;
     } else {
       return Rating.Again;
     }

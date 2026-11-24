@@ -1,4 +1,4 @@
-import { memo, useRef, useState } from 'react';
+import { memo, useState } from 'react';
 import { StyleSheet, Text, TextInput, View } from 'react-native';
 import { useReviewStore } from '../../stores/reviewStore';
 import { Spacing, Typography } from '../../constants/theme';
@@ -20,9 +20,8 @@ export interface ReviewTextInputSectionProps {
 }
 
 /**
- * Componente enfocado para el formulario de respuestas en Modo Clásico (Teclado).
- * Aísla las suscripciones de inputReading e inputMeaning para que las pulsaciones
- * de teclado se reflejen de forma instantánea sin re-renderizar la pantalla de Review completa.
+ * Componente enfocado para el formulario de respuestas en Modo Clásico con un solo input.
+ * Permite responder indistintamente la lectura o el significado de la palabra.
  */
 export const ReviewTextInputSection = memo(function ReviewTextInputSection({
   isIdeographic,
@@ -36,75 +35,53 @@ export const ReviewTextInputSection = memo(function ReviewTextInputSection({
   const setInputReading = useReviewStore((s) => s.setInputReading);
   const setInputMeaning = useReviewStore((s) => s.setInputMeaning);
 
-  const meaningInputRef = useRef<TextInput>(null);
-  const [focusedField, setFocusedField] = useState<'reading' | 'meaning' | null>(null);
+  const [isFocused, setIsFocused] = useState(false);
 
   const { t } = useTranslation();
-  const isJapanese = (languageCode || '').startsWith('ja');
-  const isChinese = (languageCode || '').startsWith('zh');
 
-  const readingPlaceholder = isJapanese
-    ? t('review.placeholderReadingJa')
-    : isChinese
-      ? t('review.placeholderReadingZh')
-      : t('review.pronunciation');
+  const textValue = inputReading || inputMeaning || '';
+  const handleChangeText = (val: string) => {
+    setInputReading(val);
+    setInputMeaning(val);
+  };
+
+  const label = meaningOnly
+    ? t('review.whatWordMeans')
+    : isIdeographic
+      ? t('review.answerLabel')
+      : t('review.whatWordMeans');
+
+  const placeholder = meaningOnly
+    ? t('review.placeholderMeaning')
+    : isIdeographic
+      ? t('review.placeholderUnified')
+      : t('review.placeholderMeaning');
 
   return (
     <View style={styles.inputsSection}>
-      {isIdeographic && !meaningOnly && (
-        <View style={styles.inputGroup}>
-          <View style={styles.labelRow}>
-            <Text style={[styles.inputLabel, { color: colors.text }]}>
-              {t('review.howPronounced')}
-            </Text>
-          </View>
-          <TextInput
-            style={[
-              styles.textInput,
-              {
-                backgroundColor: colors.surfaceHighlight,
-                color: colors.text,
-                borderColor: focusedField === 'reading' ? colors.primary : colors.border,
-              },
-            ]}
-            placeholder={readingPlaceholder}
-            placeholderTextColor={colors.textMuted}
-            value={inputReading}
-            onChangeText={setInputReading}
-            onFocus={() => setFocusedField('reading')}
-            onBlur={() => setFocusedField(null)}
-            autoCapitalize="none"
-            autoCorrect={false}
-            returnKeyType="next"
-            onSubmitEditing={() => meaningInputRef.current?.focus()}
-            blurOnSubmit={false}
-          />
-        </View>
-      )}
-
       <View style={styles.inputGroup}>
         <View style={styles.labelRow}>
           <Text style={[styles.inputLabel, { color: colors.text }]}>
-            {isIdeographic && !meaningOnly ? t('review.whatMeans') : t('review.whatWordMeans')}
+            {label}
           </Text>
         </View>
         <TextInput
-          ref={meaningInputRef}
           style={[
             styles.textInput,
             {
               backgroundColor: colors.surfaceHighlight,
               color: colors.text,
-              borderColor: focusedField === 'meaning' ? colors.primary : colors.border,
+              borderColor: isFocused ? colors.primary : colors.border,
             },
           ]}
-          placeholder={t('review.placeholderMeaning')}
+          placeholder={placeholder}
           placeholderTextColor={colors.textMuted}
-          value={inputMeaning}
-          onChangeText={setInputMeaning}
-          onFocus={() => setFocusedField('meaning')}
-          onBlur={() => setFocusedField(null)}
+          value={textValue}
+          onChangeText={handleChangeText}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
           autoCapitalize="none"
+          autoCorrect={false}
           returnKeyType="done"
           onSubmitEditing={onSubmit}
         />
@@ -131,8 +108,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 13,
   },
-  // Alto fijo: los caracteres japoneses usan una fuente con renglón más alto que el texto de ayuda, y el campo
-  // crecía al empezar a escribir
   textInput: {
     height: 50,
     borderRadius: 14,

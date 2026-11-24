@@ -185,6 +185,8 @@ export interface TranslationSchema {
     check: string;
     nextCard: string;
     answerAnyOption: string;
+    answerLabel: string;
+    placeholderUnified: string;
     howPronounced: string;
     whatMeans: string;
     whatWordMeans: string;

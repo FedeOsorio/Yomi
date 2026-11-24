@@ -789,8 +789,10 @@ export default function WordDetailScreen() {
   }
 
   // Dificultad cualitativa entendible para el usuario
-  const getDifficultyLabel = (diff?: number) => {
-    if (diff == null || diff === 0) return t('wordDetail.diffModerate');
+  const getDifficultyLabel = (diff?: number, reps?: number, state?: number) => {
+    if (!reps || reps === 0 || state === State.New || diff == null || diff === 0) {
+      return '—';
+    }
     if (diff < 3.5) return t('wordDetail.diffEasy');
     if (diff < 6.0) return t('wordDetail.diffModerate');
     if (diff < 8.0) return t('wordDetail.diffHard');
@@ -1408,7 +1410,7 @@ export default function WordDetailScreen() {
 
               <View style={[styles.srsStat, { backgroundColor: colors.surfaceHighlight }]}>
                 <Text style={[styles.srsStatLabel, { color: colors.textMuted }]}>{t('wordDetail.difficulty')}</Text>
-                <Text style={[styles.srsStatValue, { color: colors.text }]}>{getDifficultyLabel(srsItem.difficulty)}</Text>
+                <Text style={[styles.srsStatValue, { color: colors.text }]}>{getDifficultyLabel(srsItem.difficulty, srsItem.reps, srsItem.state)}</Text>
               </View>
 
               <View style={[styles.srsStat, { backgroundColor: colors.surfaceHighlight }]}>
@@ -1764,7 +1766,7 @@ const styles = StyleSheet.create({
   },
   customMeaningText: {
     fontSize: 15,
-    lineHeight: 22,
+    lineHeight: 20,
   },
   audioBtn: {
     width: 36,
@@ -1804,9 +1806,9 @@ const styles = StyleSheet.create({
   },
   meaningSelectableItem: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 10,
+    paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 10,
     borderWidth: 1,
@@ -1814,16 +1816,14 @@ const styles = StyleSheet.create({
   },
   meaningTouchRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     flex: 1,
   },
   meaningActionsContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'flex-start',
     gap: 4,
     marginLeft: 8,
-    marginTop: 1,
   },
   meaningActionBtn: {
     padding: 6,
@@ -1900,7 +1900,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 10,
-    marginTop: 1,
   },
   meaningItem: {
     flexDirection: 'row',
@@ -1913,7 +1912,7 @@ const styles = StyleSheet.create({
   meaningText: {
     ...Typography.bodySmall,
     fontSize: 14,
-    lineHeight: 22,
+    lineHeight: 20,
     flex: 1,
   },
   sectionCard: {

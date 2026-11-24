@@ -194,28 +194,33 @@ export default function ReviewScreen() {
     }
 
     const { inputReading, inputMeaning } = useReviewStore.getState();
+    const userText = (inputReading || inputMeaning || '').trim();
+
     // Palabra en kana: la lectura está a la vista, se evalúa solo el significado
     if (asksForMeaning(currentCard)) {
-      const isCorrect = checkMeaningMatch(getCardMeaningTargets(currentCard), inputMeaning);
+      const isCorrect = checkMeaningMatch(getCardMeaningTargets(currentCard), userText);
       revealAnswer({ isReadingCorrect: isCorrect, isMeaningCorrect: isCorrect, computedRating: isCorrect ? Rating.Good : Rating.Again });
       return;
     }
     const isReadingCorrect = isIdeographic
-      ? checkReadingMatch(currentCard.displayReading, inputReading) ||
-      (altKanjiReadings ? checkReadingMatch(altKanjiReadings, inputReading) : false)
-      : true;
-    const isMeaningCorrect = checkMeaningMatch(targetMeanings, inputMeaning);
+      ? checkReadingMatch(currentCard.displayReading, userText) ||
+      (altKanjiReadings ? checkReadingMatch(altKanjiReadings, userText) : false)
+      : false;
+    const isMeaningCorrect = checkMeaningMatch(targetMeanings, userText);
+
+    // Con un solo input: responder correctamente la lectura O el significado aprueba la tarjeta
+    const isMatch = isReadingCorrect || isMeaningCorrect;
 
     let voiceScore: CardEvaluation['voiceScore'];
-    if (lang.startsWith('zh') && inputReading) {
-      const res = calculateChineseAccuracyScore(inputReading, currentCard.displayText, currentCard.displayReading);
+    if (lang.startsWith('zh') && userText) {
+      const res = calculateChineseAccuracyScore(userText, currentCard.displayText, currentCard.displayReading);
       voiceScore = { score: res.score, label: res.label, breakdown: res.breakdown };
     }
 
     revealAnswer({
-      isReadingCorrect,
-      isMeaningCorrect,
-      computedRating: calculateReviewRating(isReadingCorrect, isMeaningCorrect, isIdeographic),
+      isReadingCorrect: isMatch,
+      isMeaningCorrect: isMatch,
+      computedRating: isMatch ? Rating.Good : Rating.Again,
       voiceScore,
     });
   };
